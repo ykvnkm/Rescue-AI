@@ -1,9 +1,48 @@
+# secrets
 .env
+.env.*.local
+
+# python
 __pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-.venv/
+.coverage
+coverage.xml
+htmlcov/
+
+# editor/os
+.DS_Store
+.idea/
+.vscode/
+
+# builds
 dist/
 build/
+*.egg-info/
+
+# logs & runtime
 *.log
+runtime/
+tmp/
+
+# datasets / artifacts
+datasets/
+artifacts/
+models/
+checkpoints/
+runs/
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+*.pb
+*.ckpt
+*.h5
+*.pkl
+*.joblib
