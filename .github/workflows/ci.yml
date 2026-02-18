@@ -14,34 +14,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
+        run: uv sync --extra dev
 
       - name: Run black
-        run: black --check services tests
+        run: uv run black --check services tests
 
       - name: Run isort
-        run: isort --check-only services tests
+        run: uv run isort --check-only services tests
 
       - name: Run flake8
-        run: flake8 services tests
+        run: uv run flake8 services tests
 
       - name: Run mypy
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: mypy services tests
+        run: uv run mypy services tests
 
       - name: Run pylint
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: pylint services tests
+        run: uv run pylint services tests
 
   test:
     runs-on: ubuntu-latest
@@ -50,17 +51,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
+        run: uv sync --extra dev
 
       - name: Run tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: pytest
+        run: uv run pytest
