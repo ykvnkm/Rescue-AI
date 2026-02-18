@@ -1,3 +1,24 @@
+[project]
+name = "rescue-ai"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.115.8",
+  "uvicorn[standard]==0.30.6",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.3.4",
+  "pytest-cov==6.0.0",
+  "httpx==0.27.2",
+  "black==24.10.0",
+  "flake8==7.1.1",
+  "isort==5.13.2",
+  "mypy==1.11.2",
+  "pylint==3.3.1",
+]
+
 [tool.black]
 line-length = 88
 target-version = ["py312"]
