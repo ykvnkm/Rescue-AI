@@ -1,3 +1,5 @@
+"""Pytest configuration helpers."""
+
 import sys
 from pathlib import Path
 
