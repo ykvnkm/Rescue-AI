@@ -21,9 +21,7 @@
 
 1. Ускорение обнаружения - модель сокращает время до первого подтверждения цели оператором **TtFC** (Time-to-First-Confirm):
 
-$$  
-TtFC = t_{\text{confirm}} - t_{\text{start}},  
-$$
+\Delta TtFC = \frac{\operatorname{median}(TtFC_{\text{hand}}) - \operatorname{median}(TtFC_{\text{model}})}{\operatorname{median}(TtFC_{\text{hand}})}
 
 - $t_{\text{confirm}}$ - момент, когда оператор впервые подтверждает «это человек»,
 - $t_{\text{start}}$ - начало мониторинга.
