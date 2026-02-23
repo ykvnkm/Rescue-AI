@@ -249,6 +249,31 @@ def test_get_alerts_filtered_by_mission() -> None:
     assert payload[0]["mission_id"] == mission_a
 
 
+def test_get_alert_details() -> None:
+    mission_id = client.post("/v1/missions").json()["mission_id"]
+    alert = memory_store.add_alert(
+        mission_id=mission_id,
+        frame_id=10,
+        ts_sec=1.1,
+        score=0.91,
+    )
+
+    response = client.get(f"/v1/alerts/{alert.alert_id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["alert_id"] == alert.alert_id
+    assert payload["mission_id"] == mission_id
+    assert payload["status"] == "queued"
+
+
+def test_get_alert_details_not_found() -> None:
+    response = client.get("/v1/alerts/not-exists")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Alert not found"
+
+
 def test_confirm_and_reject_alert() -> None:
     mission_id = client.post("/v1/missions").json()["mission_id"]
     alert_confirm = memory_store.add_alert(
