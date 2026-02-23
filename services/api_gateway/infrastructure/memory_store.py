@@ -14,22 +14,44 @@ class FrameRecord(TypedDict):
     gt_person_present: bool
 
 
+class MissionAlertState(TypedDict):
+    """Per-mission state for alert generation policy."""
+
+    recent_hit_timestamps: list[float]
+    last_alert_ts: float | None
+    active_alert: bool
+    last_target_seen_ts: float | None
+
+
 MISSIONS: dict[str, Mission] = {}
 ALERTS: dict[str, Alert] = {}
 FRAMES: dict[str, list[FrameRecord]] = {}
-ALERT_SCORE_THRESHOLD = 0.8
+ALERT_POLICY_STATE: dict[str, MissionAlertState] = {}
+
+ALERT_SCORE_THRESHOLD = 0.2
+ALERT_WINDOW_SEC = 1.0
+ALERT_QUORUM = 3
+ALERT_COOLDOWN_SEC = 5.0
+ALERT_GAP_END_SEC = 1.0
 
 
 def reset_state() -> None:
     MISSIONS.clear()
     ALERTS.clear()
     FRAMES.clear()
+    ALERT_POLICY_STATE.clear()
 
 
 def create_mission() -> Mission:
     mission = Mission(mission_id=str(uuid4()), status="created")
     MISSIONS[mission.mission_id] = mission
     FRAMES[mission.mission_id] = []
+    ALERT_POLICY_STATE[mission.mission_id] = {
+        "recent_hit_timestamps": [],
+        "last_alert_ts": None,
+        "active_alert": False,
+        "last_target_seen_ts": None,
+    }
     return mission
 
 
@@ -55,6 +77,25 @@ def add_alert(
     return alert
 
 
+def _touch_policy_state(mission_id: str) -> MissionAlertState:
+    state = ALERT_POLICY_STATE.setdefault(
+        mission_id,
+        {
+            "recent_hit_timestamps": [],
+            "last_alert_ts": None,
+            "active_alert": False,
+            "last_target_seen_ts": None,
+        },
+    )
+    return state
+
+
+def _passes_cooldown(last_alert_ts: float | None, current_ts: float) -> bool:
+    if last_alert_ts is None:
+        return True
+    return (current_ts - last_alert_ts) >= ALERT_COOLDOWN_SEC
+
+
 def ingest_frame(
     mission_id: str,
     frame_id: int,
@@ -70,15 +111,46 @@ def ingest_frame(
         }
     )
 
-    if score < ALERT_SCORE_THRESHOLD:
+    state = _touch_policy_state(mission_id=mission_id)
+    is_hit = score >= ALERT_SCORE_THRESHOLD
+
+    state["recent_hit_timestamps"] = [
+        ts for ts in state["recent_hit_timestamps"] if (ts_sec - ts) <= ALERT_WINDOW_SEC
+    ]
+
+    if not is_hit:
+        if (
+            state["active_alert"]
+            and state["last_target_seen_ts"] is not None
+            and (ts_sec - state["last_target_seen_ts"]) > ALERT_GAP_END_SEC
+        ):
+            state["active_alert"] = False
         return None
 
-    return add_alert(
+    state["recent_hit_timestamps"].append(ts_sec)
+    state["last_target_seen_ts"] = ts_sec
+
+    if state["active_alert"]:
+        return None
+
+    hits_in_window = len(state["recent_hit_timestamps"])
+    cooldown_ok = _passes_cooldown(
+        last_alert_ts=state["last_alert_ts"],
+        current_ts=ts_sec,
+    )
+
+    if hits_in_window < ALERT_QUORUM or not cooldown_ok:
+        return None
+
+    alert = add_alert(
         mission_id=mission_id,
         frame_id=frame_id,
         ts_sec=ts_sec,
         score=score,
     )
+    state["last_alert_ts"] = ts_sec
+    state["active_alert"] = True
+    return alert
 
 
 def list_alerts(mission_id: str | None = None) -> list[Alert]:

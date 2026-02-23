@@ -79,7 +79,7 @@ def main() -> None:
     parser.add_argument("--api-base", default="http://127.0.0.1:8000")
     parser.add_argument("--fps", type=float, default=2.0)
     parser.add_argument("--high-score", type=float, default=0.95)
-    parser.add_argument("--low-score", type=float, default=0.2)
+    parser.add_argument("--low-score", type=float, default=0.05)
     args = parser.parse_args()
 
     frames_dir = Path(args.frames_dir)
