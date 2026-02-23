@@ -24,7 +24,13 @@ def mission_exists(mission_id: str) -> bool:
     return mission_id in MISSIONS
 
 
-def add_alert(mission_id: str, frame_id: int, ts_sec: float, score: float) -> Alert:
+def add_alert(
+    mission_id: str,
+    frame_id: int,
+    ts_sec: float,
+    score: float,
+) -> Alert:
+
     alert = Alert(
         alert_id=str(uuid4()),
         mission_id=mission_id,
