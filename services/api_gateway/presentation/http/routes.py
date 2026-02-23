@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 from services.api_gateway.infrastructure.memory_store import (
     create_mission,
+    get_alert,
     ingest_frame,
     list_alerts,
     list_gt_episodes,
@@ -97,6 +98,22 @@ def get_alerts(mission_id: str | None = None) -> list[dict[str, object]]:
         }
         for alert in alerts
     ]
+
+
+@router.get("/v1/alerts/{alert_id}")
+def get_alert_details(alert_id: str) -> dict[str, object]:
+    alert = get_alert(alert_id)
+    if alert is None:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {
+        "alert_id": alert.alert_id,
+        "mission_id": alert.mission_id,
+        "frame_id": alert.frame_id,
+        "ts_sec": alert.ts_sec,
+        "score": alert.score,
+        "status": alert.status,
+        "reviewed_by": alert.reviewed_by,
+    }
 
 
 @router.post("/v1/alerts/{alert_id}/confirm")

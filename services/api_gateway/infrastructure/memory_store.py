@@ -30,9 +30,9 @@ ALERT_POLICY_STATE: dict[str, MissionAlertState] = {}
 
 ALERT_SCORE_THRESHOLD = 0.2
 ALERT_WINDOW_SEC = 1.0
-ALERT_QUORUM = 3
-ALERT_COOLDOWN_SEC = 5.0
-ALERT_GAP_END_SEC = 1.0
+ALERT_QUORUM = 2
+ALERT_COOLDOWN_SEC = 3.0
+ALERT_GAP_END_SEC = 0.5
 
 
 def reset_state() -> None:
@@ -158,6 +158,10 @@ def list_alerts(mission_id: str | None = None) -> list[Alert]:
     if mission_id is None:
         return alerts
     return [alert for alert in alerts if alert.mission_id == mission_id]
+
+
+def get_alert(alert_id: str) -> Alert | None:
+    return ALERTS.get(alert_id)
 
 
 def update_alert_status(
