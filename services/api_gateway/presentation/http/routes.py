@@ -101,11 +101,14 @@ def get_alerts(mission_id: str | None = None) -> list[dict[str, object]]:
 
 @router.post("/v1/alerts/{alert_id}/confirm")
 def confirm_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
-    alert = update_alert_status(
-        alert_id=alert_id,
-        status="reviewed_confirmed",
-        reviewed_by=payload.reviewed_by,
-    )
+    try:
+        alert = update_alert_status(
+            alert_id=alert_id,
+            status="reviewed_confirmed",
+            reviewed_by=payload.reviewed_by,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
     return {
@@ -117,11 +120,14 @@ def confirm_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
 
 @router.post("/v1/alerts/{alert_id}/reject")
 def reject_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
-    alert = update_alert_status(
-        alert_id=alert_id,
-        status="reviewed_rejected",
-        reviewed_by=payload.reviewed_by,
-    )
+    try:
+        alert = update_alert_status(
+            alert_id=alert_id,
+            status="reviewed_rejected",
+            reviewed_by=payload.reviewed_by,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
     return {

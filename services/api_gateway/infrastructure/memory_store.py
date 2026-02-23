@@ -165,9 +165,15 @@ def update_alert_status(
     status: str,
     reviewed_by: str | None,
 ) -> Alert | None:
+    allowed_target_statuses = {"reviewed_confirmed", "reviewed_rejected"}
+
     alert = ALERTS.get(alert_id)
     if alert is None:
         return None
+    if status not in allowed_target_statuses:
+        raise ValueError("Invalid target status")
+    if alert.status != "queued":
+        raise ValueError("Alert already reviewed")
     alert.status = status
     alert.reviewed_by = reviewed_by
     return alert
