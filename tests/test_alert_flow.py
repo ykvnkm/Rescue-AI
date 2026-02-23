@@ -22,22 +22,48 @@ def test_create_mission() -> None:
     assert payload["mission_id"]
 
 
-def test_ingest_frame_creates_alert_when_score_high() -> None:
+def test_ingest_frame_creates_alert_after_quorum() -> None:
     mission_id = client.post("/v1/missions").json()["mission_id"]
 
-    response = client.post(
+    first_response = client.post(
         "/v1/frames",
         json={
             "mission_id": mission_id,
             "frame_id": 1,
-            "ts_sec": 0.5,
+            "ts_sec": 0.0,
             "score": 0.95,
             "gt_person_present": True,
         },
     )
+    second_response = client.post(
+        "/v1/frames",
+        json={
+            "mission_id": mission_id,
+            "frame_id": 2,
+            "ts_sec": 0.4,
+            "score": 0.93,
+            "gt_person_present": True,
+        },
+    )
+    third_response = client.post(
+        "/v1/frames",
+        json={
+            "mission_id": mission_id,
+            "frame_id": 3,
+            "ts_sec": 0.8,
+            "score": 0.90,
+            "gt_person_present": True,
+        },
+    )
 
-    assert response.status_code == 200
-    payload = response.json()
+    assert first_response.status_code == 200
+    assert first_response.json()["alert_created"] is False
+
+    assert second_response.status_code == 200
+    assert second_response.json()["alert_created"] is False
+
+    assert third_response.status_code == 200
+    payload = third_response.json()
     assert payload["accepted"] is True
     assert payload["alert_created"] is True
     assert isinstance(payload["alert_id"], str)
@@ -52,7 +78,7 @@ def test_ingest_frame_without_alert_when_score_low() -> None:
             "mission_id": mission_id,
             "frame_id": 2,
             "ts_sec": 1.0,
-            "score": 0.30,
+            "score": 0.10,
             "gt_person_present": False,
         },
     )
@@ -62,6 +88,124 @@ def test_ingest_frame_without_alert_when_score_low() -> None:
     assert payload["accepted"] is True
     assert payload["alert_created"] is False
     assert payload["alert_id"] is None
+
+
+def test_alert_cooldown_and_gap_end() -> None:
+    mission_id = client.post("/v1/missions").json()["mission_id"]
+
+    responses = [
+        client.post(
+            "/v1/frames",
+            json={
+                "mission_id": mission_id,
+                "frame_id": 1,
+                "ts_sec": 0.0,
+                "score": 0.95,
+                "gt_person_present": True,
+            },
+        ),
+        client.post(
+            "/v1/frames",
+            json={
+                "mission_id": mission_id,
+                "frame_id": 2,
+                "ts_sec": 0.3,
+                "score": 0.95,
+                "gt_person_present": True,
+            },
+        ),
+        client.post(
+            "/v1/frames",
+            json={
+                "mission_id": mission_id,
+                "frame_id": 3,
+                "ts_sec": 0.6,
+                "score": 0.95,
+                "gt_person_present": True,
+            },
+        ),
+        client.post(
+            "/v1/frames",
+            json={
+                "mission_id": mission_id,
+                "frame_id": 4,
+                "ts_sec": 2.0,
+                "score": 0.05,
+                "gt_person_present": False,
+            },
+        ),
+        client.post(
+            "/v1/frames",
+            json={
+                "mission_id": mission_id,
+                "frame_id": 5,
+                "ts_sec": 2.1,
+                "score": 0.95,
+                "gt_person_present": True,
+            },
+        ),
+        client.post(
+            "/v1/frames",
+            json={
+                "mission_id": mission_id,
+                "frame_id": 6,
+                "ts_sec": 2.3,
+                "score": 0.95,
+                "gt_person_present": True,
+            },
+        ),
+        client.post(
+            "/v1/frames",
+            json={
+                "mission_id": mission_id,
+                "frame_id": 7,
+                "ts_sec": 2.5,
+                "score": 0.95,
+                "gt_person_present": True,
+            },
+        ),
+        client.post(
+            "/v1/frames",
+            json={
+                "mission_id": mission_id,
+                "frame_id": 8,
+                "ts_sec": 5.8,
+                "score": 0.95,
+                "gt_person_present": True,
+            },
+        ),
+        client.post(
+            "/v1/frames",
+            json={
+                "mission_id": mission_id,
+                "frame_id": 9,
+                "ts_sec": 6.0,
+                "score": 0.95,
+                "gt_person_present": True,
+            },
+        ),
+        client.post(
+            "/v1/frames",
+            json={
+                "mission_id": mission_id,
+                "frame_id": 10,
+                "ts_sec": 6.2,
+                "score": 0.95,
+                "gt_person_present": True,
+            },
+        ),
+    ]
+
+    assert responses[0].json()["alert_created"] is False
+    assert responses[1].json()["alert_created"] is False
+    assert responses[2].json()["alert_created"] is True
+    assert responses[3].json()["alert_created"] is False
+    assert responses[4].json()["alert_created"] is False
+    assert responses[5].json()["alert_created"] is False
+    assert responses[6].json()["alert_created"] is False
+    assert responses[7].json()["alert_created"] is False
+    assert responses[8].json()["alert_created"] is False
+    assert responses[9].json()["alert_created"] is True
 
 
 def test_ingest_frame_mission_not_found() -> None:
