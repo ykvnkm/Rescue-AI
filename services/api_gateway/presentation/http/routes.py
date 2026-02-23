@@ -3,7 +3,9 @@ from pydantic import BaseModel
 
 from services.api_gateway.infrastructure.memory_store import (
     create_mission,
+    ingest_frame,
     list_alerts,
+    mission_exists,
     update_alert_status,
 )
 
@@ -12,6 +14,13 @@ router = APIRouter()
 
 class ReviewRequest(BaseModel):
     reviewed_by: str | None = None
+
+
+class FrameIngestRequest(BaseModel):
+    mission_id: str
+    frame_id: int
+    ts_sec: float
+    score: float
 
 
 @router.get("/health")
@@ -35,6 +44,28 @@ def create_mission_endpoint() -> dict[str, str]:
     return {
         "mission_id": mission.mission_id,
         "status": mission.status,
+    }
+
+
+@router.post("/v1/frames")
+def ingest_frame_endpoint(payload: FrameIngestRequest) -> dict[str, object]:
+    if not mission_exists(payload.mission_id):
+        raise HTTPException(status_code=404, detail="Mission not found")
+
+    alert = ingest_frame(
+        mission_id=payload.mission_id,
+        frame_id=payload.frame_id,
+        ts_sec=payload.ts_sec,
+        score=payload.score,
+    )
+
+    return {
+        "mission_id": payload.mission_id,
+        "frame_id": payload.frame_id,
+        "ts_sec": payload.ts_sec,
+        "accepted": True,
+        "alert_created": alert is not None,
+        "alert_id": alert.alert_id if alert else None,
     }
 
 

@@ -6,6 +6,7 @@ from libs.core.domain.entities import Alert, Mission
 
 MISSIONS: dict[str, Mission] = {}
 ALERTS: dict[str, Alert] = {}
+ALERT_SCORE_THRESHOLD = 0.8
 
 
 def reset_state() -> None:
@@ -19,6 +20,11 @@ def create_mission() -> Mission:
     mission = Mission(mission_id=str(uuid4()), status="created")
     MISSIONS[mission.mission_id] = mission
     return mission
+
+
+def mission_exists(mission_id: str) -> bool:
+    """Check that mission exists in storage."""
+    return mission_id in MISSIONS
 
 
 def add_alert(
@@ -38,6 +44,23 @@ def add_alert(
     )
     ALERTS[alert.alert_id] = alert
     return alert
+
+
+def ingest_frame(
+    mission_id: str,
+    frame_id: int,
+    ts_sec: float,
+    score: float,
+) -> Alert | None:
+    """Process frame metadata and create alert when score passes threshold."""
+    if score < ALERT_SCORE_THRESHOLD:
+        return None
+    return add_alert(
+        mission_id=mission_id,
+        frame_id=frame_id,
+        ts_sec=ts_sec,
+        score=score,
+    )
 
 
 def list_alerts(mission_id: str | None = None) -> list[Alert]:

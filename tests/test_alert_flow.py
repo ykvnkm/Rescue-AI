@@ -22,6 +22,61 @@ def test_create_mission() -> None:
     assert payload["mission_id"]
 
 
+def test_ingest_frame_creates_alert_when_score_high() -> None:
+    mission_id = client.post("/v1/missions").json()["mission_id"]
+
+    response = client.post(
+        "/v1/frames",
+        json={
+            "mission_id": mission_id,
+            "frame_id": 1,
+            "ts_sec": 0.5,
+            "score": 0.95,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["accepted"] is True
+    assert payload["alert_created"] is True
+    assert isinstance(payload["alert_id"], str)
+
+
+def test_ingest_frame_without_alert_when_score_low() -> None:
+    mission_id = client.post("/v1/missions").json()["mission_id"]
+
+    response = client.post(
+        "/v1/frames",
+        json={
+            "mission_id": mission_id,
+            "frame_id": 2,
+            "ts_sec": 1.0,
+            "score": 0.30,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["accepted"] is True
+    assert payload["alert_created"] is False
+    assert payload["alert_id"] is None
+
+
+def test_ingest_frame_mission_not_found() -> None:
+    response = client.post(
+        "/v1/frames",
+        json={
+            "mission_id": "not-exists",
+            "frame_id": 3,
+            "ts_sec": 1.5,
+            "score": 0.90,
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Mission not found"
+
+
 def test_get_alerts_filtered_by_mission() -> None:
     mission_a = client.post("/v1/missions").json()["mission_id"]
     mission_b = client.post("/v1/missions").json()["mission_id"]
