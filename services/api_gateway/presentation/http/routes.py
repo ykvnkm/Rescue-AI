@@ -91,7 +91,11 @@ def confirm_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
     )
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
-    return {"alert_id": alert.alert_id, "status": alert.status, "reviewed_by": alert.reviewed_by}
+    return {
+        "alert_id": alert.alert_id,
+        "status": alert.status,
+        "reviewed_by": alert.reviewed_by,
+    }
 
 
 @router.post("/v1/alerts/{alert_id}/reject")
@@ -103,4 +107,8 @@ def reject_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
     )
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
-    return {"alert_id": alert.alert_id, "status": alert.status, "reviewed_by": alert.reviewed_by}
+    return {
+        "alert_id": alert.alert_id,
+        "status": alert.status,
+        "reviewed_by": alert.reviewed_by,
+    }
