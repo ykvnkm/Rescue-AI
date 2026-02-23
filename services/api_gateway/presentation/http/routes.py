@@ -5,6 +5,7 @@ from services.api_gateway.infrastructure.memory_store import (
     create_mission,
     ingest_frame,
     list_alerts,
+    list_gt_episodes,
     mission_exists,
     update_alert_status,
 )
@@ -21,6 +22,7 @@ class FrameIngestRequest(BaseModel):
     frame_id: int
     ts_sec: float
     score: float
+    gt_person_present: bool | None = None
 
 
 @router.get("/health")
@@ -44,6 +46,19 @@ def create_mission_endpoint() -> dict[str, str]:
     return {"mission_id": mission.mission_id, "status": mission.status}
 
 
+@router.get("/v1/missions/{mission_id}/episodes")
+def get_mission_episodes(mission_id: str) -> dict[str, object]:
+    if not mission_exists(mission_id):
+        raise HTTPException(status_code=404, detail="Mission not found")
+
+    episodes = list_gt_episodes(mission_id)
+    return {
+        "mission_id": mission_id,
+        "episodes_total": len(episodes),
+        "episodes": episodes,
+    }
+
+
 @router.post("/v1/frames")
 def ingest_frame_endpoint(payload: FrameIngestRequest) -> dict[str, object]:
     if not mission_exists(payload.mission_id):
@@ -54,7 +69,9 @@ def ingest_frame_endpoint(payload: FrameIngestRequest) -> dict[str, object]:
         frame_id=payload.frame_id,
         ts_sec=payload.ts_sec,
         score=payload.score,
+        gt_person_present=payload.gt_person_present,
     )
+
     return {
         "mission_id": payload.mission_id,
         "frame_id": payload.frame_id,
