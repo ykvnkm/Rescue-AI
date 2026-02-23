@@ -37,10 +37,14 @@ def add_alert(mission_id: str, frame_id: int, ts_sec: float, score: float) -> Al
     return alert
 
 
-def ingest_frame(mission_id: str, frame_id: int, ts_sec: float, score: float) -> Alert | None:
+def ingest_frame(
+    mission_id: str, frame_id: int, ts_sec: float, score: float
+) -> Alert | None:
     if score < ALERT_SCORE_THRESHOLD:
         return None
-    return add_alert(mission_id=mission_id, frame_id=frame_id, ts_sec=ts_sec, score=score)
+    return add_alert(
+        mission_id=mission_id, frame_id=frame_id, ts_sec=ts_sec, score=score
+    )
 
 
 def list_alerts(mission_id: str | None = None) -> list[Alert]:
@@ -50,7 +54,9 @@ def list_alerts(mission_id: str | None = None) -> list[Alert]:
     return [alert for alert in alerts if alert.mission_id == mission_id]
 
 
-def update_alert_status(alert_id: str, status: str, reviewed_by: str | None) -> Alert | None:
+def update_alert_status(
+    alert_id: str, status: str, reviewed_by: str | None
+) -> Alert | None:
     alert = ALERTS.get(alert_id)
     if alert is None:
         return None
