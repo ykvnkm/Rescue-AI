@@ -289,6 +289,29 @@ def test_confirm_not_found() -> None:
     assert response.json()["detail"] == "Alert not found"
 
 
+def test_review_processed_alert_returns_409() -> None:
+    mission_id = client.post("/v1/missions").json()["mission_id"]
+    alert = memory_store.add_alert(
+        mission_id=mission_id,
+        frame_id=1,
+        ts_sec=0.5,
+        score=0.95,
+    )
+
+    first_response = client.post(
+        f"/v1/alerts/{alert.alert_id}/confirm",
+        json={"reviewed_by": "operator_1"},
+    )
+    second_response = client.post(
+        f"/v1/alerts/{alert.alert_id}/reject",
+        json={"reviewed_by": "operator_2"},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 409
+    assert second_response.json()["detail"] == "Alert already reviewed"
+
+
 def test_mission_episodes() -> None:
     mission_id = client.post("/v1/missions").json()["mission_id"]
 
