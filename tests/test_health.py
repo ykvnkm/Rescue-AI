@@ -28,4 +28,4 @@ def test_version_ok() -> None:
 def test_ui_index_ok() -> None:
     response = client.get("/")
     assert response.status_code == 200
-    assert "Pilot Control Panel" in response.text
+    assert "Pilot Alert Console" in response.text

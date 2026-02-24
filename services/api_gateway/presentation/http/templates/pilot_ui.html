@@ -5,142 +5,341 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Pilot Control UI</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; max-width: 1100px; }
-    h1,h2 { margin: 10px 0; }
-    .row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
-    .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-    input, button, select { padding: 6px 8px; }
-    table { border-collapse: collapse; width: 100%; margin-top: 8px; }
-    th, td { border: 1px solid #ddd; padding: 6px; font-size: 14px; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .small { font-size: 12px; color: #555; }
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --line: #374151;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --ok: #22c55e;
+      --bad: #ef4444;
+      --btn: #2563eb;
+    }
+    body {
+      font-family: Inter, Arial, sans-serif;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    h1, h2 { margin: 0 0 12px 0; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+      align-items: center;
+    }
+    input, button {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 14px;
+    }
+    button {
+      cursor: pointer;
+      background: var(--btn);
+      border-color: #1d4ed8;
+    }
+    button.secondary {
+      background: var(--panel-2);
+      border-color: var(--line);
+    }
+    button.reject {
+      background: #991b1b;
+      border-color: #7f1d1d;
+    }
+    input { min-width: 110px; }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 6px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 6px;
+      font-size: 13px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #0b1220; }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+    }
+    .queued { background: #1e3a8a; }
+    .confirmed { background: #166534; }
+    .rejected { background: #7f1d1d; }
+    .status {
+      white-space: pre-wrap;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
   </style>
 </head>
 <body>
-  <h1>Pilot Control Panel</h1>
-  <p class="small">Управление миссией, очередью алертов и отчетом без curl.</p>
+  <div class="wrap">
+    <h1>Pilot Alert Console</h1>
+    <div class="muted">
+      Поток кадров можно подавать автоматически из папки через
+      <span class="mono">scripts/replay_frames.py --mission-id ...</span>.
+      Здесь оператор подтверждает/отклоняет алерты в процессе их появления.
+    </div>
 
-  <div class="card">
-    <h2>1) Mission</h2>
-    <div class="row">
-      <input id="sourceName" placeholder="source_name" value="pilot-set" />
-      <input id="totalFrames" type="number" min="0" value="0" />
-      <input id="fps" type="number" min="0" step="0.1" value="2.0" />
-      <button onclick="createMission()">Create mission</button>
-    </div>
-    <div class="row">
-      <input id="missionId" class="mono" placeholder="mission_id" style="min-width:520px" />
-      <button onclick="startMission()">Start</button>
-      <button onclick="completeMission()">Complete</button>
-      <button onclick="loadReport()">Load report</button>
-    </div>
-    <div id="missionStatus" class="small"></div>
-  </div>
+    <div class="grid">
+      <div class="card">
+        <h2>1) Mission</h2>
+        <div class="row">
+          <input id="sourceName" value="pilot-set" placeholder="source_name" />
+          <input id="totalFrames" type="number" min="0" value="0" />
+          <input id="fps" type="number" min="0" step="0.1" value="2.0" />
+          <button onclick="createMission()">Create</button>
+          <button class="secondary" onclick="startMission()">Start</button>
+          <button class="secondary" onclick="completeMission()">Complete</button>
+          <button class="secondary" onclick="loadReport()">Report</button>
+        </div>
+        <div class="row">
+          <input id="missionId" class="mono" style="min-width:520px" placeholder="mission_id" />
+          <label><input id="autoRefresh" type="checkbox" checked /> auto-refresh alerts</label>
+        </div>
+        <div id="missionStatus" class="status"></div>
+      </div>
 
-  <div class="card">
-    <h2>2) Ingest frame</h2>
-    <div class="row">
-      <input id="frameId" type="number" min="0" value="0" />
-      <input id="tsSec" type="number" min="0" step="0.1" value="0" />
-      <input id="imageUri" value="s3://frames/demo/frame.jpg" style="min-width:320px" />
-      <label><input id="gtPresent" type="checkbox" /> gt_person_present</label>
-      <button onclick="ingestFrame()">Send frame</button>
-    </div>
-    <div class="row">
-      <input id="bbox" value="10,10,40,40" style="min-width:220px" />
-      <input id="score" type="number" min="0" max="1" step="0.01" value="0.95" />
-      <input id="label" value="person" />
-      <input id="modelName" value="yolo8n" />
-      <label><input id="withDetection" type="checkbox" checked /> with detection</label>
-    </div>
-    <div id="ingestStatus" class="small"></div>
-  </div>
+      <div class="card">
+        <h2>2) Auto stream from folder</h2>
+        <div class="row">
+          <input id="framesDir" style="min-width:520px" placeholder="/abs/path/to/frames" />
+        </div>
+        <div class="row">
+          <input id="labelsDir" style="min-width:520px" placeholder="/abs/path/to/labels (optional)" />
+        </div>
+        <div class="row">
+          <input id="streamFps" type="number" min="0.1" step="0.1" value="2.0" />
+          <input id="streamHighScore" type="number" min="0" max="1" step="0.01" value="0.95" />
+          <input id="streamLowScore" type="number" min="0" max="1" step="0.01" value="0.05" />
+          <button onclick="startStream()">Start stream</button>
+          <button class="secondary" onclick="refreshStreamStatus()">Refresh stream status</button>
+        </div>
+        <div id="streamStatus" class="status"></div>
+      </div>
 
-  <div class="card">
-    <h2>3) Alerts queue</h2>
-    <div class="row">
-      <input id="reviewedBy" value="operator_1" />
-      <input id="decisionReason" placeholder="decision_reason" value="manual review" style="min-width:220px" />
-      <button onclick="refreshAlerts()">Refresh</button>
-      <label><input id="autoRefresh" type="checkbox" checked /> auto-refresh (2s)</label>
-    </div>
-    <table>
-      <thead>
-        <tr>
-          <th>alert_id</th><th>frame</th><th>ts</th><th>score</th><th>bbox</th><th>status</th><th>action</th>
-        </tr>
-      </thead>
-      <tbody id="alertsBody"></tbody>
-    </table>
-  </div>
+      <div class="card">
+        <h2>3) Manual frame ingest (debug)</h2>
+        <div class="row">
+          <input id="frameId" type="number" min="0" value="0" />
+          <input id="tsSec" type="number" min="0" step="0.1" value="0" />
+          <input id="imageUri" value="s3://frames/demo/frame.jpg" style="min-width:320px" />
+          <label><input id="gtPresent" type="checkbox" /> gt_person_present</label>
+        </div>
+        <div class="row">
+          <input id="bbox" value="10,10,40,40" class="mono" style="min-width:180px" />
+          <input id="score" type="number" min="0" max="1" step="0.01" value="0.95" />
+          <input id="label" value="person" />
+          <input id="modelName" value="yolo8n" />
+          <input id="explanation" value="model detected person" style="min-width:220px" />
+          <label><input id="withDetection" type="checkbox" checked /> with detection</label>
+          <button onclick="ingestFrame()">Send frame</button>
+        </div>
+        <div id="ingestStatus" class="status"></div>
+      </div>
 
-  <div class="card">
-    <h2>4) Mission report</h2>
-    <pre id="reportBox" class="mono small">{}</pre>
+      <div class="card">
+        <h2>4) Alert queue (operator decisions in real time)</h2>
+        <div class="row">
+          <input id="reviewedBy" value="operator_1" />
+          <input id="decisionReason" value="manual review" style="min-width:220px" />
+          <button class="secondary" onclick="refreshAlerts()">Refresh now</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>alert_id</th>
+              <th>frame</th>
+              <th>frame/ts</th>
+              <th>score + bbox</th>
+              <th>explanation</th>
+              <th>status</th>
+              <th>action</th>
+            </tr>
+          </thead>
+          <tbody id="alertsBody"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>5) Mission report</h2>
+        <pre id="reportBox" class="mono muted">{}</pre>
+      </div>
+    </div>
   </div>
 
 <script>
 const api = '';
+const alertSeenAt = new Map();
+
 function missionId() {
   return document.getElementById('missionId').value.trim();
 }
+
+function nowSec() {
+  return Date.now() / 1000;
+}
+
+function ensureAlertSeen(alert) {
+  if (!alertSeenAt.has(alert.alert_id)) {
+    alertSeenAt.set(alert.alert_id, nowSec());
+  }
+}
+
+function buildStatusPill(status) {
+  if (status === 'queued') return `<span class="pill queued">queued</span>`;
+  if (status === 'reviewed_confirmed') return `<span class="pill confirmed">confirmed</span>`;
+  if (status === 'reviewed_rejected') return `<span class="pill rejected">rejected</span>`;
+  return status;
+}
+
 async function createMission() {
   const payload = {
     source_name: document.getElementById('sourceName').value,
     total_frames: Number(document.getElementById('totalFrames').value),
-    fps: Number(document.getElementById('fps').value)
+    fps: Number(document.getElementById('fps').value),
   };
-  const r = await fetch(api + '/v1/missions', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+  const r = await fetch(api + '/v1/missions', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  });
   const data = await r.json();
   document.getElementById('missionId').value = data.mission_id || '';
-  document.getElementById('missionStatus').textContent = JSON.stringify(data);
+  document.getElementById('missionStatus').textContent = JSON.stringify(data, null, 2);
   refreshAlerts();
 }
+
 async function startMission() {
-  const r = await fetch(api + `/v1/missions/${missionId()}/start`, {method:'POST'});
-  document.getElementById('missionStatus').textContent = JSON.stringify(await r.json());
+  const r = await fetch(api + `/v1/missions/${missionId()}/start`, {method: 'POST'});
+  document.getElementById('missionStatus').textContent = JSON.stringify(await r.json(), null, 2);
 }
+
 async function completeMission() {
-  const r = await fetch(api + `/v1/missions/${missionId()}/complete`, {method:'POST'});
-  document.getElementById('missionStatus').textContent = JSON.stringify(await r.json());
+  const r = await fetch(api + `/v1/missions/${missionId()}/complete`, {method: 'POST'});
+  document.getElementById('missionStatus').textContent = JSON.stringify(await r.json(), null, 2);
 }
+
+async function startStream() {
+  const id = missionId();
+  if (!id) {
+    alert('Create mission first');
+    return;
+  }
+  const framesDir = document.getElementById('framesDir').value.trim();
+  if (!framesDir) {
+    alert('frames_dir is required');
+    return;
+  }
+  const labelsDir = document.getElementById('labelsDir').value.trim();
+  const payload = {
+    frames_dir: framesDir,
+    labels_dir: labelsDir || null,
+    fps: Number(document.getElementById('streamFps').value),
+    high_score: Number(document.getElementById('streamHighScore').value),
+    low_score: Number(document.getElementById('streamLowScore').value),
+    api_base: window.location.origin,
+  };
+  const r = await fetch(api + `/v1/missions/${id}/stream/start`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  });
+  document.getElementById('streamStatus').textContent = JSON.stringify(await r.json(), null, 2);
+}
+
+async function refreshStreamStatus() {
+  const id = missionId();
+  if (!id) return;
+  const r = await fetch(api + `/v1/missions/${id}/stream/status`);
+  document.getElementById('streamStatus').textContent = JSON.stringify(await r.json(), null, 2);
+}
+
 function parseBbox(text) {
   const arr = text.split(',').map(x => Number(x.trim()));
   if (arr.length !== 4 || arr.some(x => Number.isNaN(x))) return null;
   return arr;
 }
+
 async function ingestFrame() {
   const detections = [];
   if (document.getElementById('withDetection').checked) {
     const bbox = parseBbox(document.getElementById('bbox').value);
-    if (!bbox) { alert('bbox must be 4 numbers: x1,y1,x2,y2'); return; }
+    if (!bbox) { alert('bbox must be x1,y1,x2,y2'); return; }
     detections.push({
       bbox,
       score: Number(document.getElementById('score').value),
       label: document.getElementById('label').value,
-      model_name: document.getElementById('modelName').value
+      model_name: document.getElementById('modelName').value,
+      explanation: document.getElementById('explanation').value,
     });
   }
+
   const payload = {
     frame_id: Number(document.getElementById('frameId').value),
     ts_sec: Number(document.getElementById('tsSec').value),
     image_uri: document.getElementById('imageUri').value,
     gt_person_present: document.getElementById('gtPresent').checked,
     gt_episode_id: null,
-    detections
+    detections,
   };
-  const r = await fetch(api + `/v1/missions/${missionId()}/frames`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-  document.getElementById('ingestStatus').textContent = JSON.stringify(await r.json());
+
+  const r = await fetch(api + `/v1/missions/${missionId()}/frames`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  });
+  document.getElementById('ingestStatus').textContent = JSON.stringify(await r.json(), null, 2);
   refreshAlerts();
 }
-async function decision(alertId, action) {
+
+async function decision(alertId, action, tsSec) {
+  const seenAt = alertSeenAt.get(alertId) || nowSec();
+  const reaction = Math.max(nowSec() - seenAt, 0);
+  const reviewedAtSec = Number(tsSec) + reaction;
   const payload = {
     reviewed_by: document.getElementById('reviewedBy').value,
-    decision_reason: document.getElementById('decisionReason').value
+    reviewed_at_sec: Number(reviewedAtSec.toFixed(3)),
+    decision_reason: document.getElementById('decisionReason').value,
   };
-  await fetch(api + `/v1/alerts/${alertId}/${action}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+  await fetch(api + `/v1/alerts/${alertId}/${action}`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  });
   refreshAlerts();
 }
+
 async function refreshAlerts() {
   const id = missionId();
   if (!id) return;
@@ -148,29 +347,39 @@ async function refreshAlerts() {
   const alerts = await r.json();
   const body = document.getElementById('alertsBody');
   body.innerHTML = '';
+
   for (const alert of alerts) {
+    ensureAlertSeen(alert);
     const row = document.createElement('tr');
     const actions = alert.status === 'queued'
-      ? `<button onclick="decision('${alert.alert_id}','confirm')">confirm</button> <button onclick="decision('${alert.alert_id}','reject')">reject</button>`
-      : '<span class="small">reviewed</span>';
+      ? `<button onclick="decision('${alert.alert_id}','confirm',${alert.ts_sec})">confirm</button>
+         <button class="reject" onclick="decision('${alert.alert_id}','reject',${alert.ts_sec})">reject</button>`
+      : '<span class="muted">reviewed</span>';
+
     row.innerHTML = `
       <td class="mono">${alert.alert_id}</td>
-      <td>${alert.frame_id}</td>
-      <td>${alert.ts_sec}</td>
-      <td>${alert.score}</td>
-      <td class="mono">${(alert.bbox || []).join(',')}</td>
-      <td>${alert.status}</td>
-      <td>${actions}</td>`;
+      <td><img src="/v1/alerts/${alert.alert_id}/frame" alt="frame" width="160" onerror="this.style.display='none'" /></td>
+      <td>${alert.frame_id}<br/><span class="muted">ts=${alert.ts_sec}</span></td>
+      <td>${alert.score}<br/><span class="mono">${(alert.bbox || []).join(', ')}</span></td>
+      <td>${alert.explanation || ''}</td>
+      <td>${buildStatusPill(alert.status)}</td>
+      <td>${actions}</td>
+    `;
     body.appendChild(row);
   }
 }
+
 async function loadReport() {
   const r = await fetch(api + `/v1/missions/${missionId()}/report`);
   const data = await r.json();
   document.getElementById('reportBox').textContent = JSON.stringify(data, null, 2);
 }
+
 setInterval(() => {
-  if (document.getElementById('autoRefresh').checked) refreshAlerts();
+  if (document.getElementById('autoRefresh').checked) {
+    refreshAlerts();
+    refreshStreamStatus();
+  }
 }, 2000);
 </script>
 </body>

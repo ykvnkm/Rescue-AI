@@ -1,5 +1,7 @@
 """Pilot alert flow API tests."""
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -27,23 +29,10 @@ def _create_mission() -> str:
     return response.json()["mission_id"]
 
 
-def _ingest_frame(
-    mission_id: str,
-    frame_id: int,
-    ts_sec: float,
-    gt_person_present: bool,
-    detections: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
+def _ingest_frame(mission_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     response = client.post(
         f"/v1/missions/{mission_id}/frames",
-        json={
-            "frame_id": frame_id,
-            "ts_sec": ts_sec,
-            "image_uri": f"s3://frames/{mission_id}/{frame_id}.jpg",
-            "gt_person_present": gt_person_present,
-            "gt_episode_id": None,
-            "detections": detections or [],
-        },
+        json=payload,
     )
     assert response.status_code == 200
     return response.json()
@@ -65,18 +54,22 @@ def test_ingest_frame_creates_alert_with_bbox() -> None:
     mission_id = _create_mission()
 
     result = _ingest_frame(
-        mission_id=mission_id,
-        frame_id=1,
-        ts_sec=0.5,
-        gt_person_present=True,
-        detections=[
-            {
-                "bbox": [10.0, 20.0, 50.0, 80.0],
-                "score": 0.91,
-                "label": "person",
-                "model_name": "yolo8n",
-            }
-        ],
+        mission_id,
+        {
+            "frame_id": 1,
+            "ts_sec": 0.5,
+            "image_uri": f"s3://frames/{mission_id}/1.jpg",
+            "gt_person_present": True,
+            "gt_episode_id": None,
+            "detections": [
+                {
+                    "bbox": [10.0, 20.0, 50.0, 80.0],
+                    "score": 0.91,
+                    "label": "person",
+                    "model_name": "yolo8n",
+                }
+            ],
+        },
     )
 
     assert result["alerts_created"] == 1
@@ -87,22 +80,27 @@ def test_ingest_frame_creates_alert_with_bbox() -> None:
     payload = details.json()
     assert payload["bbox"] == [10.0, 20.0, 50.0, 80.0]
     assert payload["status"] == "queued"
+    assert payload["explanation"] is None
 
 
 def test_low_score_detection_not_promoted_to_alert() -> None:
     mission_id = _create_mission()
 
     result = _ingest_frame(
-        mission_id=mission_id,
-        frame_id=1,
-        ts_sec=0.0,
-        gt_person_present=False,
-        detections=[
-            {
-                "bbox": [1.0, 1.0, 2.0, 2.0],
-                "score": 0.1,
-            }
-        ],
+        mission_id,
+        {
+            "frame_id": 1,
+            "ts_sec": 0.0,
+            "image_uri": f"s3://frames/{mission_id}/1.jpg",
+            "gt_person_present": False,
+            "gt_episode_id": None,
+            "detections": [
+                {
+                    "bbox": [1.0, 1.0, 2.0, 2.0],
+                    "score": 0.1,
+                }
+            ],
+        },
     )
 
     assert result["alerts_created"] == 0
@@ -113,11 +111,15 @@ def test_list_alerts_with_status_filter() -> None:
     mission_id = _create_mission()
 
     ingest_result = _ingest_frame(
-        mission_id=mission_id,
-        frame_id=1,
-        ts_sec=0.0,
-        gt_person_present=True,
-        detections=[{"bbox": [10, 10, 20, 20], "score": 0.95}],
+        mission_id,
+        {
+            "frame_id": 1,
+            "ts_sec": 0.0,
+            "image_uri": f"s3://frames/{mission_id}/1.jpg",
+            "gt_person_present": True,
+            "gt_episode_id": None,
+            "detections": [{"bbox": [10, 10, 20, 20], "score": 0.95}],
+        },
     )
     alert_id = ingest_result["alert_ids"][0]
 
@@ -145,11 +147,15 @@ def test_list_alerts_with_status_filter() -> None:
 def test_review_processed_alert_returns_409() -> None:
     mission_id = _create_mission()
     ingest_result = _ingest_frame(
-        mission_id=mission_id,
-        frame_id=1,
-        ts_sec=0.0,
-        gt_person_present=True,
-        detections=[{"bbox": [10, 10, 20, 20], "score": 0.95}],
+        mission_id,
+        {
+            "frame_id": 1,
+            "ts_sec": 0.0,
+            "image_uri": f"s3://frames/{mission_id}/1.jpg",
+            "gt_person_present": True,
+            "gt_episode_id": None,
+            "detections": [{"bbox": [10, 10, 20, 20], "score": 0.95}],
+        },
     )
     alert_id = ingest_result["alert_ids"][0]
 
@@ -171,30 +177,48 @@ def test_mission_report_metrics() -> None:
     mission_id = _create_mission()
 
     first_alert = _ingest_frame(
-        mission_id=mission_id,
-        frame_id=0,
-        ts_sec=0.0,
-        gt_person_present=True,
-        detections=[{"bbox": [10, 10, 20, 20], "score": 0.95}],
+        mission_id,
+        {
+            "frame_id": 0,
+            "ts_sec": 0.0,
+            "image_uri": f"s3://frames/{mission_id}/0.jpg",
+            "gt_person_present": True,
+            "gt_episode_id": None,
+            "detections": [{"bbox": [10, 10, 20, 20], "score": 0.95}],
+        },
     )["alert_ids"][0]
     _ingest_frame(
-        mission_id=mission_id,
-        frame_id=1,
-        ts_sec=1.0,
-        gt_person_present=False,
+        mission_id,
+        {
+            "frame_id": 1,
+            "ts_sec": 1.0,
+            "image_uri": f"s3://frames/{mission_id}/1.jpg",
+            "gt_person_present": False,
+            "gt_episode_id": None,
+            "detections": [],
+        },
     )
     second_alert = _ingest_frame(
-        mission_id=mission_id,
-        frame_id=2,
-        ts_sec=2.0,
-        gt_person_present=True,
-        detections=[{"bbox": [30, 30, 50, 50], "score": 0.96}],
+        mission_id,
+        {
+            "frame_id": 2,
+            "ts_sec": 2.0,
+            "image_uri": f"s3://frames/{mission_id}/2.jpg",
+            "gt_person_present": True,
+            "gt_episode_id": None,
+            "detections": [{"bbox": [30, 30, 50, 50], "score": 0.96}],
+        },
     )["alert_ids"][0]
     _ingest_frame(
-        mission_id=mission_id,
-        frame_id=3,
-        ts_sec=3.0,
-        gt_person_present=False,
+        mission_id,
+        {
+            "frame_id": 3,
+            "ts_sec": 3.0,
+            "image_uri": f"s3://frames/{mission_id}/3.jpg",
+            "gt_person_present": False,
+            "gt_episode_id": None,
+            "detections": [],
+        },
     )
 
     confirm_response = client.post(
@@ -240,5 +264,62 @@ def test_mission_not_found_returns_404() -> None:
 
 def test_report_not_found_returns_404() -> None:
     response = client.get("/v1/missions/not-exists/report")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Mission not found"
+
+
+def test_alert_frame_endpoint_returns_image() -> None:
+    mission_id = _create_mission()
+    with TemporaryDirectory() as temp_dir:
+        frame_path = Path(temp_dir) / "frame_0001.jpg"
+        frame_path.write_bytes(b"\xff\xd8\xff\xd9")
+
+        alert_id = _ingest_frame(
+            mission_id,
+            {
+                "frame_id": 1,
+                "ts_sec": 0.5,
+                "image_uri": str(frame_path),
+                "gt_person_present": True,
+                "gt_episode_id": None,
+                "detections": [{"bbox": [10, 10, 20, 20], "score": 0.95}],
+            },
+        )["alert_ids"][0]
+
+        image_response = client.get(f"/v1/alerts/{alert_id}/frame")
+        assert image_response.status_code == 200
+        assert image_response.headers["content-type"].startswith("image/jpeg")
+
+
+def test_stream_status_defaults_to_not_running() -> None:
+    mission_id = _create_mission()
+    response = client.get(f"/v1/missions/{mission_id}/stream/status")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mission_id"] == mission_id
+    assert payload["running"] is False
+    assert payload["processed_frames"] == 0
+    assert payload["total_frames"] == 0
+
+
+def test_stream_start_returns_400_for_missing_directory() -> None:
+    mission_id = _create_mission()
+    response = client.post(
+        f"/v1/missions/{mission_id}/stream/start",
+        json={
+            "frames_dir": "/path/not/found",
+            "labels_dir": None,
+            "fps": 2.0,
+            "high_score": 0.95,
+            "low_score": 0.05,
+            "api_base": "http://127.0.0.1:8000",
+        },
+    )
+    assert response.status_code == 400
+    assert "frames dir not found" in response.json()["detail"]
+
+
+def test_stream_status_missing_mission_returns_404() -> None:
+    response = client.get("/v1/missions/not-exists/stream/status")
     assert response.status_code == 404
     assert response.json()["detail"] == "Mission not found"

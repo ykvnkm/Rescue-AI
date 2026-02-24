@@ -1,10 +1,18 @@
+import mimetypes
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from libs.core.application.pilot_service import DetectionInput
 from libs.core.domain.entities import Alert, FrameEvent
 from services.api_gateway.dependencies import get_pilot_service
+from services.api_gateway.infrastructure.stream_runner import (
+    build_stream_config,
+    get_stream_state,
+    start_stream,
+)
 from services.api_gateway.presentation.http.ui_page import build_ui_html
 
 router = APIRouter()
@@ -21,6 +29,7 @@ class DetectionRequest(BaseModel):
     score: float = Field(ge=0.0, le=1.0)
     label: str = "person"
     model_name: str = "yolo8n"
+    explanation: str | None = None
 
 
 class FrameIngestRequest(BaseModel):
@@ -36,6 +45,15 @@ class ReviewRequest(BaseModel):
     reviewed_by: str | None = None
     reviewed_at_sec: float | None = Field(default=None, ge=0.0)
     decision_reason: str | None = None
+
+
+class StreamStartRequest(BaseModel):
+    frames_dir: str
+    labels_dir: str | None = None
+    fps: float = Field(default=2.0, gt=0.0)
+    high_score: float = Field(default=0.95, ge=0.0, le=1.0)
+    low_score: float = Field(default=0.05, ge=0.0, le=1.0)
+    api_base: str = "http://127.0.0.1:8000"
 
 
 @router.get("/health")
@@ -99,6 +117,67 @@ def complete_mission(mission_id: str) -> dict[str, str]:
     return {"mission_id": mission.mission_id, "status": mission.status}
 
 
+@router.post("/v1/missions/{mission_id}/stream/start")
+def start_mission_stream(
+    mission_id: str,
+    payload: StreamStartRequest,
+) -> dict[str, object]:
+    service = get_pilot_service()
+    if service.get_mission(mission_id) is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+
+    try:
+        config = build_stream_config(
+            mission_id=mission_id,
+            options={
+                "frames_dir": payload.frames_dir,
+                "labels_dir": payload.labels_dir,
+                "fps": payload.fps,
+                "high_score": payload.high_score,
+                "low_score": payload.low_score,
+                "api_base": payload.api_base,
+            },
+        )
+        state = start_stream(config)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    return {
+        "mission_id": state.mission_id,
+        "running": state.running,
+        "processed_frames": state.processed_frames,
+        "total_frames": state.total_frames,
+        "last_frame_name": state.last_frame_name,
+        "error": state.error,
+    }
+
+
+@router.get("/v1/missions/{mission_id}/stream/status")
+def get_mission_stream_status(mission_id: str) -> dict[str, object]:
+    service = get_pilot_service()
+    if service.get_mission(mission_id) is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+
+    state = get_stream_state(mission_id)
+    if state is None:
+        return {
+            "mission_id": mission_id,
+            "running": False,
+            "processed_frames": 0,
+            "total_frames": 0,
+            "last_frame_name": None,
+            "error": None,
+        }
+    return {
+        "mission_id": state.mission_id,
+        "running": state.running,
+        "processed_frames": state.processed_frames,
+        "total_frames": state.total_frames,
+        "last_frame_name": state.last_frame_name,
+        "error": state.error,
+    }
+
+
 @router.post("/v1/missions/{mission_id}/frames")
 def ingest_frame_endpoint(
     mission_id: str,
@@ -111,6 +190,7 @@ def ingest_frame_endpoint(
             score=item.score,
             label=item.label,
             model_name=item.model_name,
+            explanation=item.explanation,
         )
         for item in payload.detections
     ]
@@ -157,6 +237,27 @@ def get_alert_details(alert_id: str) -> dict[str, object]:
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
     return _alert_to_dict(alert)
+
+
+@router.get("/v1/alerts/{alert_id}/frame")
+def get_alert_frame(alert_id: str) -> FileResponse:
+    service = get_pilot_service()
+    alert = service.get_alert(alert_id)
+    if alert is None:
+        raise HTTPException(status_code=404, detail="Alert not found")
+
+    frame_path = Path(alert.image_uri)
+    if not frame_path.is_absolute():
+        raise HTTPException(status_code=400, detail="Frame URI is not local path")
+    if not frame_path.exists():
+        raise HTTPException(status_code=404, detail="Frame file not found")
+
+    media_type, _ = mimetypes.guess_type(frame_path.name)
+    return FileResponse(
+        path=frame_path,
+        media_type=media_type or "application/octet-stream",
+        filename=frame_path.name,
+    )
 
 
 @router.post("/v1/alerts/{alert_id}/confirm")
@@ -219,6 +320,7 @@ def _alert_to_dict(alert: Alert) -> dict[str, object]:
         "score": alert.detection.score,
         "label": alert.detection.label,
         "model_name": alert.detection.model_name,
+        "explanation": alert.detection.explanation,
         "status": alert.lifecycle.status,
         "reviewed_by": alert.lifecycle.reviewed_by,
         "reviewed_at_sec": alert.lifecycle.reviewed_at_sec,

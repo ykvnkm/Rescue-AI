@@ -29,6 +29,7 @@ class DetectionInput:
     score: float
     label: str = "person"
     model_name: str = "yolo8n"
+    explanation: str | None = None
 
 
 class PilotService:
@@ -74,7 +75,6 @@ class PilotService:
         self,
         frame_event: FrameEvent,
         detections: list[DetectionInput],
-        decision_reason: str | None = None,
     ) -> list[Alert]:
         if self._missions.get(frame_event.mission_id) is None:
             raise ValueError("Mission not found")
@@ -96,11 +96,9 @@ class PilotService:
                     score=detection.score,
                     label=detection.label,
                     model_name=detection.model_name,
+                    explanation=detection.explanation,
                 ),
-                lifecycle=AlertLifecycle(
-                    status="queued",
-                    decision_reason=decision_reason,
-                ),
+                lifecycle=AlertLifecycle(status="queued"),
             )
             self._alerts.add(alert)
             created_alerts.append(alert)

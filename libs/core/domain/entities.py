@@ -34,6 +34,7 @@ class DetectionData:
     score: float
     label: str
     model_name: str
+    explanation: Optional[str] = None
 
 
 @dataclass
