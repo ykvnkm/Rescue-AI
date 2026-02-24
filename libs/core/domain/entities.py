@@ -7,7 +7,52 @@ class Mission:
     """Mission state entity."""
 
     mission_id: str
+    source_name: str
     status: str
+    created_at: str
+    total_frames: int
+    fps: float
+
+
+@dataclass
+class FrameEvent:
+    """Frame event stored for mission timeline and GT episodes."""
+
+    mission_id: str
+    frame_id: int
+    ts_sec: float
+    image_uri: str
+    gt_person_present: bool
+    gt_episode_id: str | None
+
+
+@dataclass
+class DetectionData:
+    """Detection payload attached to an alert."""
+
+    bbox: tuple[float, float, float, float]
+    score: float
+    label: str
+    model_name: str
+    explanation: Optional[str] = None
+
+
+@dataclass
+class AlertEvidence:
+    """Detection evidence aggregated for alert card."""
+
+    people_detected: int
+    primary_detection: DetectionData
+
+
+@dataclass
+class AlertLifecycle:
+    """Lifecycle data for alert review state."""
+
+    status: str
+    reviewed_by: Optional[str] = None
+    reviewed_at_sec: Optional[float] = None
+    decision_reason: Optional[str] = None
 
 
 @dataclass
@@ -18,6 +63,6 @@ class Alert:
     mission_id: str
     frame_id: int
     ts_sec: float
-    score: float
-    status: str
-    reviewed_by: Optional[str] = None
+    image_uri: str
+    evidence: AlertEvidence
+    lifecycle: AlertLifecycle

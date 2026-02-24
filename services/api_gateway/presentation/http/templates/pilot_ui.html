@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Rescue Drone Station</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0f1f;
+      --panel: #10182b;
+      --panel-2: #0f1a30;
+      --accent: #f97316;
+      --accent-2: #fb923c;
+      --ok: #22c55e;
+      --bad: #ef4444;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+      --radius: 18px;
+      --outline: rgba(148, 163, 184, 0.15);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0 24px 32px;
+      background:
+        radial-gradient(circle at 15% 10%, rgba(249,115,22,0.18), transparent 40%),
+        radial-gradient(circle at 85% 0%, rgba(251,146,60,0.16), transparent 42%),
+        linear-gradient(180deg, rgba(15,23,42,0.9), rgba(10,15,31,0.95)),
+        repeating-linear-gradient(90deg, rgba(148,163,184,0.08) 0, rgba(148,163,184,0.08) 1px, transparent 1px, transparent 32px),
+        var(--bg);
+      color: var(--text);
+      font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+    header { padding: 26px 0 14px; }
+    h1 {
+      margin: 0;
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      font-family: 'Space Grotesk', sans-serif;
+      text-align: center;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+    .card {
+      background: linear-gradient(155deg, rgba(19,28,48,0.95), rgba(12,18,34,0.9));
+      border: 1px solid var(--outline);
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(6px);
+    }
+    .card h3 {
+      margin: 0 0 12px;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .field { margin-bottom: 10px; }
+    .field label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    input {
+      width: 100%;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: rgba(15,23,42,0.7);
+      border-radius: 10px;
+      color: var(--text);
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+    .btn {
+      width: 100%;
+      border: none;
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: linear-gradient(120deg, var(--accent), var(--accent-2));
+      color: #07121e;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 8px;
+      box-shadow: 0 12px 30px rgba(249,115,22,0.35);
+    }
+    .btn.secondary {
+      background: rgba(15,23,42,0.8);
+      color: var(--text);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      box-shadow: none;
+    }
+    .status {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: pre-wrap;
+      min-height: 32px;
+    }
+    .console {
+      min-height: 730px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .frame-wrap {
+      position: relative;
+      width: 100%;
+      min-height: 520px;
+      background: rgba(6, 11, 22, 0.9);
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    #alertFrame {
+      width: 100%;
+      max-height: 520px;
+      object-fit: contain;
+      display: none;
+    }
+    #bboxOverlay {
+      position: absolute;
+      border: 3px solid #ef4444;
+      box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.4);
+      pointer-events: none;
+      display: none;
+    }
+    #emptyState {
+      color: var(--muted);
+      font-size: 20px;
+      text-align: center;
+    }
+    .meta-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .meta-item {
+      background: rgba(15,23,42,0.75);
+      border: 1px solid rgba(148,163,184,0.2);
+      border-radius: 12px;
+      padding: 10px 12px;
+    }
+    .meta-item .k {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+      display: block;
+    }
+    .meta-item .v {
+      font-size: 15px;
+      font-weight: 600;
+      font-family: 'Space Grotesk', sans-serif;
+      word-break: break-word;
+    }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 4px;
+    }
+    .action-btn {
+      border: none;
+      border-radius: 14px;
+      padding: 16px;
+      font-size: 22px;
+      font-weight: 700;
+      cursor: pointer;
+      color: #08111f;
+      font-family: 'Space Grotesk', sans-serif;
+      box-shadow: 0 14px 30px rgba(0,0,0,0.35);
+    }
+    .action-btn.confirm { background: linear-gradient(120deg, #22c55e, #16a34a); }
+    .action-btn.reject { background: linear-gradient(120deg, #ef4444, #dc2626); color: #fff; }
+    .report-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      background: rgba(15,23,42,0.75);
+      border: 1px solid rgba(148,163,184,0.2);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .report-table td {
+      border-bottom: 1px solid rgba(148,163,184,0.15);
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+    .report-table tr:last-child td { border-bottom: none; }
+    .report-table td:first-child { color: var(--muted); width: 65%; }
+    .report-table td:last-child { font-weight: 700; text-align: right; }
+    @media (max-width: 1100px) {
+      .layout { grid-template-columns: 1fr; }
+      .meta-row { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Rescue Drone Station</h1>
+</header>
+
+<div class="layout">
+  <aside class="card">
+    <h3>Параметры миссии</h3>
+    <div class="field">
+      <label>Путь к папке с кадрами</label>
+      <input id="framesDir" placeholder="/abs/path/to/frames" />
+    </div>
+    <div class="field">
+      <label>Путь к папке с аннотациями (опционально)</label>
+      <input id="labelsDir" placeholder="/abs/path/to/labels" />
+    </div>
+
+    <button class="btn" onclick="startMissionFlow()">Начать миссию</button>
+    <button class="btn secondary" onclick="completeMission()">Закончить миссию</button>
+    <button class="btn secondary" onclick="loadReport()">Отчет по миссии</button>
+
+    <div class="status" id="missionStatus"></div>
+  </aside>
+
+  <section class="card console">
+    <div class="frame-wrap">
+      <div id="emptyState">Ожидание алертов…</div>
+      <img id="alertFrame" alt="alert frame" />
+      <div id="bboxOverlay"></div>
+    </div>
+
+    <div class="meta-row">
+      <div class="meta-item">
+        <span class="k">Время алерта</span>
+        <span class="v" id="metaTime">—</span>
+      </div>
+      <div class="meta-item">
+        <span class="k">Обнаружено людей</span>
+        <span class="v" id="metaPeople">—</span>
+      </div>
+      <div class="meta-item">
+        <span class="k">Статус</span>
+        <span class="v" id="metaStatus">—</span>
+      </div>
+      <div class="meta-item">
+        <span class="k">Score</span>
+        <span class="v" id="metaScore">—</span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="action-btn confirm" onclick="reviewCurrent('confirm')">Подтвердить</button>
+      <button class="action-btn reject" onclick="reviewCurrent('reject')">Отклонить</button>
+    </div>
+
+    <div class="card" style="padding:12px; margin-top:4px;">
+      <h3 style="margin-bottom:8px;">Отчет по миссии</h3>
+      <table class="report-table">
+        <tbody>
+          <tr><td>Всего эпизодов</td><td id="rEpisodesTotal">—</td></tr>
+          <tr><td>Найдено эпизодов</td><td id="rEpisodesFound">—</td></tr>
+          <tr><td>Полнота по эпизодам</td><td id="rRecall">—</td></tr>
+          <tr><td>Время до первого подтверждения (с)</td><td id="rTtfc">—</td></tr>
+          <tr><td>Всего алертов</td><td id="rAlertsTotal">—</td></tr>
+          <tr><td>Подтверждено</td><td id="rConfirmed">—</td></tr>
+          <tr><td>Отклонено</td><td id="rRejected">—</td></tr>
+          <tr><td>Ложных тревог в минуту</td><td id="rFpMin">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script>
+const api = '';
+const alertSeenAt = new Map();
+let currentAlert = null;
+let currentMissionId = '';
+
+function nowSec() {
+  return Date.now() / 1000;
+}
+
+function missionId() {
+  return currentMissionId;
+}
+
+function setMissionStatus(text) {
+  document.getElementById('missionStatus').textContent = text;
+}
+
+function formatWallTime(iso) {
+  if (!iso) return '—';
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return iso;
+  return dt.toLocaleString('ru-RU');
+}
+
+function resetAlertView() {
+  currentAlert = null;
+  document.getElementById('emptyState').style.display = 'block';
+  document.getElementById('alertFrame').style.display = 'none';
+  document.getElementById('bboxOverlay').style.display = 'none';
+  document.getElementById('metaTime').textContent = '—';
+  document.getElementById('metaPeople').textContent = '—';
+  document.getElementById('metaStatus').textContent = '—';
+  document.getElementById('metaScore').textContent = '—';
+}
+
+async function startMissionFlow() {
+  const framesDir = document.getElementById('framesDir').value.trim();
+  if (!framesDir) {
+    alert('Укажите путь к папке с кадрами');
+    return;
+  }
+  const labelsDir = document.getElementById('labelsDir').value.trim();
+  const payload = {
+    source_name: 'pilot-mission',
+    fps: 2.0,
+    frames_dir: framesDir,
+    labels_dir: labelsDir || null,
+    high_score: 0.95,
+    low_score: 0.05,
+    api_base: window.location.origin,
+  };
+
+  const response = await fetch(api + '/v1/missions/start-flow', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    setMissionStatus(data.detail || 'Ошибка запуска миссии');
+    return;
+  }
+
+  currentMissionId = data.mission_id;
+  setMissionStatus(`Миссия запущена: ${data.mission_id}`);
+  await refreshAlerts();
+}
+
+async function completeMission() {
+  if (!missionId()) return;
+  const response = await fetch(api + `/v1/missions/${missionId()}/complete`, {
+    method: 'POST',
+  });
+  const data = await response.json();
+  setMissionStatus(JSON.stringify(data));
+}
+
+function drawBbox(alert) {
+  const frame = document.getElementById('alertFrame');
+  const overlay = document.getElementById('bboxOverlay');
+  const bbox = alert.bbox || [];
+  if (bbox.length !== 4 || !frame.naturalWidth || !frame.naturalHeight) {
+    overlay.style.display = 'none';
+    return;
+  }
+
+  const [x1, y1, x2, y2] = bbox.map(Number);
+  const scaleX = frame.clientWidth / frame.naturalWidth;
+  const scaleY = frame.clientHeight / frame.naturalHeight;
+
+  overlay.style.left = `${x1 * scaleX}px`;
+  overlay.style.top = `${y1 * scaleY}px`;
+  overlay.style.width = `${Math.max((x2 - x1) * scaleX, 0)}px`;
+  overlay.style.height = `${Math.max((y2 - y1) * scaleY, 0)}px`;
+  overlay.style.display = 'block';
+}
+
+function renderAlert(alert) {
+  currentAlert = alert;
+  if (!alertSeenAt.has(alert.alert_id)) {
+    alertSeenAt.set(alert.alert_id, nowSec());
+  }
+
+  document.getElementById('emptyState').style.display = 'none';
+  const frame = document.getElementById('alertFrame');
+  frame.style.display = 'block';
+  frame.onload = () => drawBbox(alert);
+  frame.src = `/v1/alerts/${alert.alert_id}/frame`;
+
+  document.getElementById('metaTime').textContent = formatWallTime(alert.alert_time_iso);
+  document.getElementById('metaPeople').textContent = String(alert.people_detected ?? 1);
+  document.getElementById('metaStatus').textContent = alert.status;
+  document.getElementById('metaScore').textContent = String(alert.score ?? '—');
+}
+
+async function refreshAlerts() {
+  if (!missionId()) {
+    resetAlertView();
+    return;
+  }
+  const response = await fetch(api + `/v1/alerts?mission_id=${encodeURIComponent(missionId())}&status=queued`);
+  const alerts = await response.json();
+  if (!alerts.length) {
+    resetAlertView();
+    return;
+  }
+  renderAlert(alerts[0]);
+}
+
+async function reviewCurrent(action) {
+  if (!currentAlert) return;
+
+  const seenAt = alertSeenAt.get(currentAlert.alert_id) || nowSec();
+  const reaction = Math.max(nowSec() - seenAt, 0);
+  const reviewedAtSec = Number((Number(currentAlert.ts_sec) + reaction).toFixed(3));
+
+  await fetch(api + `/v1/alerts/${currentAlert.alert_id}/${action}`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      reviewed_by: 'operator',
+      reviewed_at_sec: reviewedAtSec,
+      decision_reason: action === 'confirm' ? 'manual confirm' : 'manual reject',
+    }),
+  });
+
+  await refreshAlerts();
+}
+
+function setReportRow(id, value) {
+  document.getElementById(id).textContent = value ?? '—';
+}
+
+async function loadReport() {
+  if (!missionId()) return;
+  const response = await fetch(api + `/v1/missions/${missionId()}/report`);
+  const report = await response.json();
+
+  setReportRow('rEpisodesTotal', report.episodes_total);
+  setReportRow('rEpisodesFound', report.episodes_found);
+  setReportRow('rRecall', report.recall_event);
+  setReportRow('rTtfc', report.ttfc_sec);
+  setReportRow('rAlertsTotal', report.alerts_total);
+  setReportRow('rConfirmed', report.alerts_confirmed);
+  setReportRow('rRejected', report.alerts_rejected);
+  setReportRow('rFpMin', report.fp_per_minute);
+}
+
+setInterval(() => {
+  refreshAlerts();
+}, 1200);
+</script>
+</body>
+</html>
