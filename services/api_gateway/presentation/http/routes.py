@@ -18,12 +18,6 @@ from services.api_gateway.presentation.http.ui_page import build_ui_html
 router = APIRouter()
 
 
-class MissionCreateRequest(BaseModel):
-    source_name: str = "pilot-dataset"
-    total_frames: int = Field(default=0, ge=0)
-    fps: float = Field(default=0.0, ge=0.0)
-
-
 class DetectionRequest(BaseModel):
     bbox: tuple[float, float, float, float]
     score: float = Field(ge=0.0, le=1.0)
@@ -47,10 +41,11 @@ class ReviewRequest(BaseModel):
     decision_reason: str | None = None
 
 
-class StreamStartRequest(BaseModel):
+class MissionStartFlowRequest(BaseModel):
+    source_name: str = "pilot-dataset"
+    fps: float = Field(default=2.0, gt=0.0)
     frames_dir: str
     labels_dir: str | None = None
-    fps: float = Field(default=2.0, gt=0.0)
     high_score: float = Field(default=0.95, ge=0.0, le=1.0)
     low_score: float = Field(default=0.05, ge=0.0, le=1.0)
     api_base: str = "http://127.0.0.1:8000"
@@ -81,33 +76,6 @@ def version() -> dict[str, str]:
     return {"version": "0.1.0"}
 
 
-@router.post("/v1/missions")
-def create_mission_endpoint(payload: MissionCreateRequest) -> dict[str, object]:
-    service = get_pilot_service()
-    mission = service.create_mission(
-        source_name=payload.source_name,
-        total_frames=payload.total_frames,
-        fps=payload.fps,
-    )
-    return {
-        "mission_id": mission.mission_id,
-        "source_name": mission.source_name,
-        "status": mission.status,
-        "created_at": mission.created_at,
-        "total_frames": mission.total_frames,
-        "fps": mission.fps,
-    }
-
-
-@router.post("/v1/missions/{mission_id}/start")
-def start_mission(mission_id: str) -> dict[str, str]:
-    service = get_pilot_service()
-    mission = service.start_mission(mission_id)
-    if mission is None:
-        raise HTTPException(status_code=404, detail="Mission not found")
-    return {"mission_id": mission.mission_id, "status": mission.status}
-
-
 @router.post("/v1/missions/{mission_id}/complete")
 def complete_mission(mission_id: str) -> dict[str, str]:
     service = get_pilot_service()
@@ -117,18 +85,18 @@ def complete_mission(mission_id: str) -> dict[str, str]:
     return {"mission_id": mission.mission_id, "status": mission.status}
 
 
-@router.post("/v1/missions/{mission_id}/stream/start")
-def start_mission_stream(
-    mission_id: str,
-    payload: StreamStartRequest,
-) -> dict[str, object]:
+@router.post("/v1/missions/start-flow")
+def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
     service = get_pilot_service()
-    if service.get_mission(mission_id) is None:
-        raise HTTPException(status_code=404, detail="Mission not found")
+    mission = service.create_mission(
+        source_name=payload.source_name,
+        total_frames=0,
+        fps=payload.fps,
+    )
 
     try:
         config = build_stream_config(
-            mission_id=mission_id,
+            mission_id=mission.mission_id,
             options={
                 "frames_dir": payload.frames_dir,
                 "labels_dir": payload.labels_dir,
@@ -138,17 +106,28 @@ def start_mission_stream(
                 "api_base": payload.api_base,
             },
         )
-        state = start_stream(config)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
+    mission.total_frames = len(config.frame_files)
+    started = service.start_mission(mission.mission_id)
+    if started is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    state = start_stream(config)
+
     return {
-        "mission_id": state.mission_id,
-        "running": state.running,
-        "processed_frames": state.processed_frames,
-        "total_frames": state.total_frames,
-        "last_frame_name": state.last_frame_name,
-        "error": state.error,
+        "mission_id": mission.mission_id,
+        "status": started.status,
+        "source_name": mission.source_name,
+        "fps": mission.fps,
+        "total_frames": mission.total_frames,
+        "stream": {
+            "running": state.running,
+            "processed_frames": state.processed_frames,
+            "total_frames": state.total_frames,
+            "last_frame_name": state.last_frame_name,
+            "error": state.error,
+        },
     }
 
 

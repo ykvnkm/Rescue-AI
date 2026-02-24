@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from statistics import median
 from uuid import uuid4
 
 from libs.core.application.contracts import (
@@ -152,7 +153,7 @@ class PilotService:
         )
 
         recall_event = episodes_found / len(episodes) if episodes else 0.0
-        ttfc_sec = min(ttfc_candidates) if ttfc_candidates else None
+        ttfc_sec = median(ttfc_candidates) if ttfc_candidates else None
 
         return {
             "mission_id": mission_id,

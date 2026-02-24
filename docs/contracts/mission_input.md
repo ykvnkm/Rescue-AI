@@ -25,6 +25,18 @@
 3. Один кадр = одно событие Frame Event.
 4. Если `gt_person_present=false`, то `gt_episode_id=null`.
 
+## API Start Contract
+- `POST /v1/missions/start-flow` запускает миссию одним шагом.
+- Обязательные поля:
+  - `frames_dir` (string, абсолютный путь до кадров),
+  - `fps` (float, > 0),
+  - `source_name` (string).
+- Опциональные поля:
+  - `labels_dir` (string | null),
+  - `high_score` (float),
+  - `low_score` (float),
+  - `api_base` (string).
+
 ## PostgreSQL (source of truth)
 - `missions` — метаданные миссии
 - `mission_frames` — реестр кадров/GT (минимально: frame_id, ts_sec, gt flags)

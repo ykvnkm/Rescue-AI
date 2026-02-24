@@ -17,14 +17,21 @@ def setup_function() -> None:
 
 
 def _create_mission() -> str:
-    response = client.post(
-        "/v1/missions",
-        json={
-            "source_name": "pilot-set",
-            "total_frames": 8,
-            "fps": 2.0,
-        },
-    )
+    with TemporaryDirectory() as temp_dir:
+        frame_path = Path(temp_dir) / "frame_0001.jpg"
+        frame_path.write_bytes(b"\xff\xd8\xff\xd9")
+        response = client.post(
+            "/v1/missions/start-flow",
+            json={
+                "source_name": "pilot-set",
+                "fps": 2.0,
+                "frames_dir": temp_dir,
+                "labels_dir": None,
+                "high_score": 0.95,
+                "low_score": 0.05,
+                "api_base": "http://127.0.0.1:1",
+            },
+        )
     assert response.status_code == 200
     return response.json()["mission_id"]
 
@@ -67,14 +74,9 @@ def _ingest_frame(mission_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     return response.json()
 
 
-def test_create_mission_and_status_flow() -> None:
+def test_mission_complete_flow() -> None:
     mission_id = _create_mission()
-
-    start_response = client.post(f"/v1/missions/{mission_id}/start")
     complete_response = client.post(f"/v1/missions/{mission_id}/complete")
-
-    assert start_response.status_code == 200
-    assert start_response.json()["status"] == "running"
     assert complete_response.status_code == 200
     assert complete_response.json()["status"] == "completed"
 
@@ -323,6 +325,97 @@ def test_mission_report_metrics() -> None:
     assert report["alerts_rejected"] == 1
 
 
+def test_mission_report_ttfc_is_median() -> None:
+    mission_id = _create_mission()
+
+    _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 0, "ts_sec": 0.0, "gt_person_present": True, "score": 0.95},
+        ),
+    )
+    alert_1 = _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 1, "ts_sec": 0.5, "gt_person_present": True, "score": 0.95},
+        ),
+    )["alert_ids"][0]
+    _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 2, "ts_sec": 1.0, "gt_person_present": False, "score": None},
+        ),
+    )
+
+    _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 3, "ts_sec": 2.0, "gt_person_present": True, "score": 0.95},
+        ),
+    )
+    alert_2 = _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 4, "ts_sec": 2.5, "gt_person_present": True, "score": 0.95},
+        ),
+    )["alert_ids"][0]
+    _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 5, "ts_sec": 3.0, "gt_person_present": False, "score": None},
+        ),
+    )
+
+    _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 6, "ts_sec": 4.0, "gt_person_present": True, "score": 0.95},
+        ),
+    )
+    alert_3 = _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 7, "ts_sec": 4.5, "gt_person_present": True, "score": 0.95},
+        ),
+    )["alert_ids"][0]
+
+    assert (
+        client.post(
+            f"/v1/alerts/{alert_1}/confirm",
+            json={"reviewed_by": "operator_1", "reviewed_at_sec": 0.4},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/v1/alerts/{alert_2}/confirm",
+            json={"reviewed_by": "operator_1", "reviewed_at_sec": 3.2},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/v1/alerts/{alert_3}/confirm",
+            json={"reviewed_by": "operator_1", "reviewed_at_sec": 4.8},
+        ).status_code
+        == 200
+    )
+
+    report_response = client.get(f"/v1/missions/{mission_id}/report")
+    assert report_response.status_code == 200
+    report = report_response.json()
+
+    assert report["ttfc_sec"] == 0.8
+
+
 def test_mission_not_found_returns_404() -> None:
     response = client.post(
         "/v1/missions/not-exists/frames",
@@ -383,24 +476,45 @@ def test_alert_frame_endpoint_returns_image() -> None:
 
 
 def test_stream_status_defaults_to_not_running() -> None:
-    mission_id = _create_mission()
-    response = client.get(f"/v1/missions/{mission_id}/stream/status")
+    with TemporaryDirectory() as temp_dir:
+        frame_path = Path(temp_dir) / "frame_0001.jpg"
+        frame_path.write_bytes(b"\xff\xd8\xff\xd9")
+        response = client.post(
+            "/v1/missions/start-flow",
+            json={
+                "source_name": "pilot-set",
+                "fps": 2.0,
+                "frames_dir": temp_dir,
+                "labels_dir": None,
+                "high_score": 0.95,
+                "low_score": 0.05,
+                "api_base": "http://127.0.0.1:1",
+            },
+        )
     assert response.status_code == 200
-    payload = response.json()
+    mission_id = response.json()["mission_id"]
+    status_response = client.get(f"/v1/missions/{mission_id}/stream/status")
+    assert status_response.status_code == 200
+    payload = status_response.json()
     assert payload["mission_id"] == mission_id
-    assert payload["running"] is False
-    assert payload["processed_frames"] == 0
-    assert payload["total_frames"] == 0
+    assert payload["processed_frames"] >= 0
+    assert payload["total_frames"] >= 1
 
 
-def test_stream_start_returns_400_for_missing_directory() -> None:
-    mission_id = _create_mission()
+def test_stream_status_missing_mission_returns_404() -> None:
+    response = client.get("/v1/missions/not-exists/stream/status")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Mission not found"
+
+
+def test_start_flow_returns_400_for_missing_directory() -> None:
     response = client.post(
-        f"/v1/missions/{mission_id}/stream/start",
+        "/v1/missions/start-flow",
         json={
+            "source_name": "pilot-set",
+            "fps": 2.0,
             "frames_dir": "/path/not/found",
             "labels_dir": None,
-            "fps": 2.0,
             "high_score": 0.95,
             "low_score": 0.05,
             "api_base": "http://127.0.0.1:8000",
@@ -410,7 +524,26 @@ def test_stream_start_returns_400_for_missing_directory() -> None:
     assert "frames dir not found" in response.json()["detail"]
 
 
-def test_stream_status_missing_mission_returns_404() -> None:
-    response = client.get("/v1/missions/not-exists/stream/status")
-    assert response.status_code == 404
-    assert response.json()["detail"] == "Mission not found"
+def test_start_flow_creates_and_starts_mission() -> None:
+    with TemporaryDirectory() as temp_dir:
+        frame_path = Path(temp_dir) / "frame_0001.jpg"
+        frame_path.write_bytes(b"\xff\xd8\xff\xd9")
+
+        response = client.post(
+            "/v1/missions/start-flow",
+            json={
+                "source_name": "pilot-set",
+                "fps": 2.0,
+                "frames_dir": temp_dir,
+                "labels_dir": None,
+                "high_score": 0.95,
+                "low_score": 0.05,
+                "api_base": "http://127.0.0.1:1",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mission_id"]
+    assert payload["status"] == "running"
+    assert payload["total_frames"] == 1

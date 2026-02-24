@@ -123,10 +123,8 @@
     <h2>Mission</h2>
     <div class="row">
       <input id="sourceName" value="pilot-set" placeholder="source_name" />
-      <input id="totalFrames" type="number" min="0" value="0" />
       <input id="fps" type="number" min="0" step="0.1" value="2.0" />
-      <button onclick="createMission()">Create</button>
-      <button class="secondary" onclick="startMission()">Start</button>
+      <button onclick="startMissionFlow()">Начать миссию</button>
       <button class="secondary" onclick="completeMission()">Complete</button>
       <button class="secondary" onclick="loadReport()">Report</button>
     </div>
@@ -147,7 +145,6 @@
       <input id="streamFps" type="number" min="0.1" step="0.1" value="2.0" />
       <input id="streamHighScore" type="number" min="0" max="1" step="0.01" value="0.95" />
       <input id="streamLowScore" type="number" min="0" max="1" step="0.01" value="0.05" />
-      <button onclick="startStream()">Start stream</button>
       <button class="secondary" onclick="refreshStreamStatus()">Refresh stream status</button>
     </div>
     <div id="streamStatus" class="status"></div>
@@ -207,39 +204,7 @@ function nowSec() {
   return Date.now() / 1000;
 }
 
-async function createMission() {
-  const payload = {
-    source_name: document.getElementById('sourceName').value,
-    total_frames: Number(document.getElementById('totalFrames').value),
-    fps: Number(document.getElementById('fps').value),
-  };
-  const r = await fetch(api + '/v1/missions', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(payload),
-  });
-  const data = await r.json();
-  document.getElementById('missionId').value = data.mission_id || '';
-  document.getElementById('missionStatus').textContent = JSON.stringify(data, null, 2);
-  await refreshAlerts();
-}
-
-async function startMission() {
-  const r = await fetch(api + `/v1/missions/${missionId()}/start`, {method: 'POST'});
-  document.getElementById('missionStatus').textContent = JSON.stringify(await r.json(), null, 2);
-}
-
-async function completeMission() {
-  const r = await fetch(api + `/v1/missions/${missionId()}/complete`, {method: 'POST'});
-  document.getElementById('missionStatus').textContent = JSON.stringify(await r.json(), null, 2);
-}
-
-async function startStream() {
-  const id = missionId();
-  if (!id) {
-    alert('Create mission first');
-    return;
-  }
+async function startMissionFlow() {
   const framesDir = document.getElementById('framesDir').value.trim();
   if (!framesDir) {
     alert('frames_dir is required');
@@ -247,20 +212,29 @@ async function startStream() {
   }
   const labelsDir = document.getElementById('labelsDir').value.trim();
   const payload = {
+    source_name: document.getElementById('sourceName').value,
+    fps: Number(document.getElementById('fps').value),
     frames_dir: framesDir,
     labels_dir: labelsDir || null,
-    fps: Number(document.getElementById('streamFps').value),
     high_score: Number(document.getElementById('streamHighScore').value),
     low_score: Number(document.getElementById('streamLowScore').value),
     api_base: window.location.origin,
   };
-
-  const r = await fetch(api + `/v1/missions/${id}/stream/start`, {
+  const r = await fetch(api + '/v1/missions/start-flow', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload),
   });
-  document.getElementById('streamStatus').textContent = JSON.stringify(await r.json(), null, 2);
+  const data = await r.json();
+  document.getElementById('missionId').value = data.mission_id || '';
+  document.getElementById('missionStatus').textContent = JSON.stringify(data, null, 2);
+  document.getElementById('streamStatus').textContent = JSON.stringify(data.stream || {}, null, 2);
+  await refreshAlerts();
+}
+
+async function completeMission() {
+  const r = await fetch(api + `/v1/missions/${missionId()}/complete`, {method: 'POST'});
+  document.getElementById('missionStatus').textContent = JSON.stringify(await r.json(), null, 2);
 }
 
 async function refreshStreamStatus() {

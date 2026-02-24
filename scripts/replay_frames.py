@@ -96,8 +96,8 @@ def main() -> None:
     parser.add_argument("--api-base", default="http://127.0.0.1:8000")
     parser.add_argument(
         "--mission-id",
-        default="",
-        help="Use existing mission_id (if empty, creates new mission)",
+        required=True,
+        help="Existing mission_id created via /v1/missions/start-flow",
     )
     parser.add_argument("--fps", type=float, default=2.0)
     parser.add_argument("--high-score", type=float, default=0.95)
@@ -122,21 +122,9 @@ def main() -> None:
     if not frame_files:
         raise SystemExit("no frames found")
 
-    mission = (
-        {"mission_id": args.mission_id}
-        if args.mission_id
-        else post_json(
-            f"{args.api_base}/v1/missions",
-            {
-                "source_name": "replay",
-                "total_frames": len(frame_files),
-                "fps": args.fps,
-            },
-        )
-    )
     context = ReplayContext(
         api_base=args.api_base,
-        mission_id=mission["mission_id"],
+        mission_id=args.mission_id,
         high_score=args.high_score,
         low_score=args.low_score,
     )
