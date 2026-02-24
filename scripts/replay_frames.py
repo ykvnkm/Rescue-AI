@@ -51,16 +51,33 @@ def replay_frame(
 ) -> None:
     score = context.high_score if has_label else context.low_score
     payload = {
-        "mission_id": context.mission_id,
         "frame_id": frame_id,
         "ts_sec": ts_sec,
-        "score": score,
+        "image_uri": str(frame_path),
         "gt_person_present": has_label,
+        "gt_episode_id": None,
+        "detections": (
+            [
+                {
+                    "bbox": [10.0, 10.0, 40.0, 40.0],
+                    "score": score,
+                    "label": "person",
+                    "model_name": "yolo8n",
+                    "explanation": "replay-generated",
+                }
+            ]
+            if has_label
+            else []
+        ),
     }
-    response = post_json(f"{context.api_base}/v1/frames", payload)
+    response = post_json(
+        f"{context.api_base}/v1/missions/{context.mission_id}/frames",
+        payload,
+    )
+    extra = f" alert_ids={response['alert_ids']}" if response["alert_ids"] else ""
     print(
         f"[FRAME {frame_id}] {frame_path.name} gt={has_label} "
-        f"-> alert_created={response['alert_created']}"
+        f"-> alerts_created={response['alerts_created']}{extra}"
     )
 
 
@@ -77,6 +94,11 @@ def main() -> None:
         help="Optional path to folder with YOLO txt labels",
     )
     parser.add_argument("--api-base", default="http://127.0.0.1:8000")
+    parser.add_argument(
+        "--mission-id",
+        default="",
+        help="Use existing mission_id (if empty, creates new mission)",
+    )
     parser.add_argument("--fps", type=float, default=2.0)
     parser.add_argument("--high-score", type=float, default=0.95)
     parser.add_argument("--low-score", type=float, default=0.05)
@@ -100,7 +122,18 @@ def main() -> None:
     if not frame_files:
         raise SystemExit("no frames found")
 
-    mission = post_json(f"{args.api_base}/v1/missions", {})
+    mission = (
+        {"mission_id": args.mission_id}
+        if args.mission_id
+        else post_json(
+            f"{args.api_base}/v1/missions",
+            {
+                "source_name": "replay",
+                "total_frames": len(frame_files),
+                "fps": args.fps,
+            },
+        )
+    )
     context = ReplayContext(
         api_base=args.api_base,
         mission_id=mission["mission_id"],
@@ -131,8 +164,7 @@ def main() -> None:
         "Check alerts: " f"{context.api_base}/v1/alerts?mission_id={context.mission_id}"
     )
     print(
-        "Check episodes: "
-        f"{context.api_base}/v1/missions/{context.mission_id}/episodes"
+        "Check report: " f"{context.api_base}/v1/missions/{context.mission_id}/report"
     )
 
 

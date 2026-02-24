@@ -1,227 +1,106 @@
-"""In-memory storage for mission and alert flow (MVP)."""
+"""In-memory repositories used by API gateway."""
 
-from typing import TypedDict
-from uuid import uuid4
+from dataclasses import dataclass, field
 
-from libs.core.domain.entities import Alert, Mission
-
-
-class FrameRecord(TypedDict):
-    """Minimal frame metadata used for GT episode reconstruction."""
-
-    frame_id: int
-    ts_sec: float
-    gt_person_present: bool
+from libs.core.application.contracts import (
+    AlertRepository,
+    FrameEventRepository,
+    MissionRepository,
+    ReviewDecision,
+)
+from libs.core.domain.entities import Alert, FrameEvent, Mission
 
 
-class MissionAlertState(TypedDict):
-    """Per-mission state for alert generation policy."""
+@dataclass
+class InMemoryDatabase:
+    """Simple in-memory state container."""
 
-    recent_hit_timestamps: list[float]
-    last_alert_ts: float | None
-    active_alert: bool
-    last_target_seen_ts: float | None
-
-
-MISSIONS: dict[str, Mission] = {}
-ALERTS: dict[str, Alert] = {}
-FRAMES: dict[str, list[FrameRecord]] = {}
-ALERT_POLICY_STATE: dict[str, MissionAlertState] = {}
-
-ALERT_SCORE_THRESHOLD = 0.2
-ALERT_WINDOW_SEC = 1.0
-ALERT_QUORUM = 2
-ALERT_COOLDOWN_SEC = 3.0
-ALERT_GAP_END_SEC = 0.5
+    missions: dict[str, Mission] = field(default_factory=dict)
+    alerts: dict[str, Alert] = field(default_factory=dict)
+    mission_frames: dict[str, list[FrameEvent]] = field(default_factory=dict)
 
 
-def reset_state() -> None:
-    MISSIONS.clear()
-    ALERTS.clear()
-    FRAMES.clear()
-    ALERT_POLICY_STATE.clear()
+class InMemoryMissionRepository(MissionRepository):
+    """Mission repository backed by in-memory dictionary."""
+
+    def __init__(self, db: InMemoryDatabase) -> None:
+        self._db = db
+
+    def create(self, mission: Mission) -> None:
+        self._db.missions[mission.mission_id] = mission
+        self._db.mission_frames.setdefault(mission.mission_id, [])
+
+    def get(self, mission_id: str) -> Mission | None:
+        return self._db.missions.get(mission_id)
+
+    def update_status(self, mission_id: str, status: str) -> Mission | None:
+        mission = self._db.missions.get(mission_id)
+        if mission is None:
+            return None
+        mission.status = status
+        return mission
 
 
-def create_mission() -> Mission:
-    mission = Mission(mission_id=str(uuid4()), status="created")
-    MISSIONS[mission.mission_id] = mission
-    FRAMES[mission.mission_id] = []
-    ALERT_POLICY_STATE[mission.mission_id] = {
-        "recent_hit_timestamps": [],
-        "last_alert_ts": None,
-        "active_alert": False,
-        "last_target_seen_ts": None,
-    }
-    return mission
+class InMemoryAlertRepository(AlertRepository):
+    """Alert repository backed by in-memory dictionary."""
 
-
-def mission_exists(mission_id: str) -> bool:
-    return mission_id in MISSIONS
-
-
-def add_alert(
-    mission_id: str,
-    frame_id: int,
-    ts_sec: float,
-    score: float,
-) -> Alert:
-    alert = Alert(
-        alert_id=str(uuid4()),
-        mission_id=mission_id,
-        frame_id=frame_id,
-        ts_sec=ts_sec,
-        score=score,
-        status="queued",
-    )
-    ALERTS[alert.alert_id] = alert
-    return alert
-
-
-def _touch_policy_state(mission_id: str) -> MissionAlertState:
-    state = ALERT_POLICY_STATE.setdefault(
-        mission_id,
-        {
-            "recent_hit_timestamps": [],
-            "last_alert_ts": None,
-            "active_alert": False,
-            "last_target_seen_ts": None,
-        },
-    )
-    return state
-
-
-def _passes_cooldown(last_alert_ts: float | None, current_ts: float) -> bool:
-    if last_alert_ts is None:
-        return True
-    return (current_ts - last_alert_ts) >= ALERT_COOLDOWN_SEC
-
-
-def ingest_frame(
-    mission_id: str,
-    frame_id: int,
-    ts_sec: float,
-    score: float,
-    gt_person_present: bool | None = None,
-) -> Alert | None:
-    FRAMES.setdefault(mission_id, []).append(
-        {
-            "frame_id": frame_id,
-            "ts_sec": ts_sec,
-            "gt_person_present": bool(gt_person_present),
-        }
-    )
-
-    state = _touch_policy_state(mission_id=mission_id)
-    is_hit = score >= ALERT_SCORE_THRESHOLD
-
-    state["recent_hit_timestamps"] = [
-        ts for ts in state["recent_hit_timestamps"] if (ts_sec - ts) <= ALERT_WINDOW_SEC
-    ]
-
-    if not is_hit:
-        if (
-            state["active_alert"]
-            and state["last_target_seen_ts"] is not None
-            and (ts_sec - state["last_target_seen_ts"]) > ALERT_GAP_END_SEC
-        ):
-            state["active_alert"] = False
-        return None
-
-    state["recent_hit_timestamps"].append(ts_sec)
-    state["last_target_seen_ts"] = ts_sec
-
-    if state["active_alert"]:
-        return None
-
-    hits_in_window = len(state["recent_hit_timestamps"])
-    cooldown_ok = _passes_cooldown(
-        last_alert_ts=state["last_alert_ts"],
-        current_ts=ts_sec,
-    )
-
-    if hits_in_window < ALERT_QUORUM or not cooldown_ok:
-        return None
-
-    alert = add_alert(
-        mission_id=mission_id,
-        frame_id=frame_id,
-        ts_sec=ts_sec,
-        score=score,
-    )
-    state["last_alert_ts"] = ts_sec
-    state["active_alert"] = True
-    return alert
-
-
-def list_alerts(mission_id: str | None = None) -> list[Alert]:
-    alerts = list(ALERTS.values())
-    if mission_id is None:
-        return alerts
-    return [alert for alert in alerts if alert.mission_id == mission_id]
-
-
-def get_alert(alert_id: str) -> Alert | None:
-    return ALERTS.get(alert_id)
-
-
-def update_alert_status(
-    alert_id: str,
-    status: str,
-    reviewed_by: str | None,
-) -> Alert | None:
     allowed_target_statuses = {"reviewed_confirmed", "reviewed_rejected"}
 
-    alert = ALERTS.get(alert_id)
-    if alert is None:
-        return None
-    if status not in allowed_target_statuses:
-        raise ValueError("Invalid target status")
-    if alert.status != "queued":
-        raise ValueError("Alert already reviewed")
-    alert.status = status
-    alert.reviewed_by = reviewed_by
-    return alert
+    def __init__(self, db: InMemoryDatabase) -> None:
+        self._db = db
+
+    def add(self, alert: Alert) -> None:
+        self._db.alerts[alert.alert_id] = alert
+
+    def get(self, alert_id: str) -> Alert | None:
+        return self._db.alerts.get(alert_id)
+
+    def list(
+        self,
+        mission_id: str | None = None,
+        status: str | None = None,
+    ) -> list[Alert]:
+        alerts = list(self._db.alerts.values())
+        if mission_id is not None:
+            alerts = [alert for alert in alerts if alert.mission_id == mission_id]
+        if status is not None:
+            alerts = [alert for alert in alerts if alert.lifecycle.status == status]
+        return sorted(alerts, key=lambda alert: (alert.ts_sec, alert.frame_id))
+
+    def update_status(
+        self,
+        alert_id: str,
+        decision: ReviewDecision,
+    ) -> Alert | None:
+        alert = self._db.alerts.get(alert_id)
+        if alert is None:
+            return None
+        if decision["status"] not in self.allowed_target_statuses:
+            raise ValueError("Invalid target status")
+        if alert.lifecycle.status != "queued":
+            raise ValueError("Alert already reviewed")
+
+        alert.lifecycle.status = decision["status"]
+        alert.lifecycle.reviewed_by = decision["reviewed_by"]
+        alert.lifecycle.reviewed_at_sec = (
+            decision["reviewed_at_sec"]
+            if decision["reviewed_at_sec"] is not None
+            else alert.ts_sec
+        )
+        alert.lifecycle.decision_reason = decision["decision_reason"]
+        return alert
 
 
-def list_gt_episodes(mission_id: str) -> list[dict[str, float | int]]:
-    frames = sorted(
-        FRAMES.get(mission_id, []),
-        key=lambda item: item["frame_id"],
-    )
-    episodes: list[dict[str, float | int]] = []
+class InMemoryFrameEventRepository(FrameEventRepository):
+    """Frame event repository backed by in-memory dictionary."""
 
-    start_frame: FrameRecord | None = None
-    last_true_frame: FrameRecord | None = None
+    def __init__(self, db: InMemoryDatabase) -> None:
+        self._db = db
 
-    for frame in frames:
-        gt_present = frame["gt_person_present"]
-
-        if gt_present:
-            if start_frame is None:
-                start_frame = frame
-            last_true_frame = frame
-            continue
-
-        if start_frame is not None and last_true_frame is not None:
-            episodes.append(
-                {
-                    "start_frame_id": start_frame["frame_id"],
-                    "end_frame_id": last_true_frame["frame_id"],
-                    "start_sec": start_frame["ts_sec"],
-                    "end_sec": last_true_frame["ts_sec"],
-                }
-            )
-            start_frame = None
-            last_true_frame = None
-
-    if start_frame is not None and last_true_frame is not None:
-        episodes.append(
-            {
-                "start_frame_id": start_frame["frame_id"],
-                "end_frame_id": last_true_frame["frame_id"],
-                "start_sec": start_frame["ts_sec"],
-                "end_sec": last_true_frame["ts_sec"],
-            }
+    def add(self, frame_event: FrameEvent) -> None:
+        self._db.mission_frames.setdefault(frame_event.mission_id, []).append(
+            frame_event
         )
 
-    return episodes
+    def list_by_mission(self, mission_id: str) -> list[FrameEvent]:
+        return list(self._db.mission_frames.get(mission_id, []))

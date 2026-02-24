@@ -1,292 +1,165 @@
-"""Mission and alert flow API tests."""
+"""Pilot alert flow API tests."""
+
+from typing import Any
 
 from fastapi.testclient import TestClient
 
 from services.api_gateway.app import app
-from services.api_gateway.infrastructure import memory_store
+from services.api_gateway.dependencies import reset_state
 
 client = TestClient(app)
 
 
 def setup_function() -> None:
-    memory_store.reset_state()
+    reset_state()
 
 
-def _post_frame(
+def _create_mission() -> str:
+    response = client.post(
+        "/v1/missions",
+        json={
+            "source_name": "pilot-set",
+            "total_frames": 4,
+            "fps": 2.0,
+        },
+    )
+    assert response.status_code == 200
+    return response.json()["mission_id"]
+
+
+def _ingest_frame(
     mission_id: str,
     frame_id: int,
     ts_sec: float,
-    score: float,
     gt_person_present: bool,
-) -> dict[str, object]:
+    detections: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     response = client.post(
-        "/v1/frames",
+        f"/v1/missions/{mission_id}/frames",
         json={
-            "mission_id": mission_id,
             "frame_id": frame_id,
-            "ts_sec": round(ts_sec, 3),
-            "score": score,
+            "ts_sec": ts_sec,
+            "image_uri": f"s3://frames/{mission_id}/{frame_id}.jpg",
             "gt_person_present": gt_person_present,
+            "gt_episode_id": None,
+            "detections": detections or [],
         },
     )
     assert response.status_code == 200
     return response.json()
 
 
-def _ingest_hits(
-    mission_id: str,
-    start_frame_id: int,
-    start_ts: float,
-    count: int,
-    step: float,
-) -> list[dict[str, object]]:
-    payloads: list[dict[str, object]] = []
-    for index in range(count):
-        payloads.append(
-            _post_frame(
-                mission_id=mission_id,
-                frame_id=start_frame_id + index,
-                ts_sec=start_ts + index * step,
-                score=0.95,
-                gt_person_present=True,
-            )
-        )
-    return payloads
+def test_create_mission_and_status_flow() -> None:
+    mission_id = _create_mission()
+
+    start_response = client.post(f"/v1/missions/{mission_id}/start")
+    complete_response = client.post(f"/v1/missions/{mission_id}/complete")
+
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "running"
+    assert complete_response.status_code == 200
+    assert complete_response.json()["status"] == "completed"
 
 
-def test_create_mission() -> None:
-    response = client.post("/v1/missions")
+def test_ingest_frame_creates_alert_with_bbox() -> None:
+    mission_id = _create_mission()
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["status"] == "created"
-    assert isinstance(payload["mission_id"], str)
-    assert payload["mission_id"]
-
-
-def test_ingest_frame_creates_alert_after_quorum() -> None:
-    mission_id = client.post("/v1/missions").json()["mission_id"]
-    frame_step = max(memory_store.ALERT_WINDOW_SEC / 4, 0.05)
-    responses = _ingest_hits(
+    result = _ingest_frame(
         mission_id=mission_id,
-        start_frame_id=1,
-        start_ts=0.0,
-        count=memory_store.ALERT_QUORUM + 1,
-        step=frame_step,
+        frame_id=1,
+        ts_sec=0.5,
+        gt_person_present=True,
+        detections=[
+            {
+                "bbox": [10.0, 20.0, 50.0, 80.0],
+                "score": 0.91,
+                "label": "person",
+                "model_name": "yolo8n",
+            }
+        ],
     )
 
-    for payload in responses[: max(memory_store.ALERT_QUORUM - 1, 0)]:
-        assert payload["alert_created"] is False
+    assert result["alerts_created"] == 1
+    alert_id = result["alert_ids"][0]
 
-    assert responses[memory_store.ALERT_QUORUM - 1]["alert_created"] is True
-    assert responses[memory_store.ALERT_QUORUM]["alert_created"] is False
-    assert responses[memory_store.ALERT_QUORUM]["alert_id"] is None
-
-
-def test_ingest_frame_without_alert_when_score_low() -> None:
-    mission_id = client.post("/v1/missions").json()["mission_id"]
-
-    response = client.post(
-        "/v1/frames",
-        json={
-            "mission_id": mission_id,
-            "frame_id": 2,
-            "ts_sec": 1.0,
-            "score": 0.10,
-            "gt_person_present": False,
-        },
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["accepted"] is True
-    assert payload["alert_created"] is False
-    assert payload["alert_id"] is None
-
-
-def test_alert_cooldown_and_gap_end() -> None:
-    mission_id = client.post("/v1/missions").json()["mission_id"]
-    frame_step = max(memory_store.ALERT_WINDOW_SEC / 4, 0.05)
-    near_gap = max(memory_store.ALERT_GAP_END_SEC + 0.1, 0.2)
-    first_batch = _ingest_hits(
-        mission_id=mission_id,
-        start_frame_id=1,
-        start_ts=0.0,
-        count=memory_store.ALERT_QUORUM,
-        step=frame_step,
-    )
-    frame_id = memory_store.ALERT_QUORUM + 1
-
-    first_alert_ts = round((memory_store.ALERT_QUORUM - 1) * frame_step, 3)
-
-    for payload in first_batch[: max(memory_store.ALERT_QUORUM - 1, 0)]:
-        assert payload["alert_created"] is False
-    assert first_batch[memory_store.ALERT_QUORUM - 1]["alert_created"] is True
-
-    gap_break_response = _post_frame(
-        mission_id=mission_id,
-        frame_id=frame_id,
-        ts_sec=first_alert_ts + near_gap,
-        score=0.01,
-        gt_person_present=False,
-    )
-    assert gap_break_response["alert_created"] is False
-    frame_id += 1
-
-    early_margin = (memory_store.ALERT_QUORUM * frame_step) + 0.05
-    early_start_ts = first_alert_ts + memory_store.ALERT_COOLDOWN_SEC - early_margin
-    early_responses = _ingest_hits(
-        mission_id=mission_id,
-        start_frame_id=frame_id,
-        start_ts=early_start_ts,
-        count=memory_store.ALERT_QUORUM,
-        step=frame_step,
-    )
-    frame_id += memory_store.ALERT_QUORUM
-
-    for payload in early_responses:
-        assert payload["alert_created"] is False
-
-    early_end_ts = early_start_ts + (memory_store.ALERT_QUORUM - 1) * frame_step
-    second_start_ts = max(
-        first_alert_ts + memory_store.ALERT_COOLDOWN_SEC + 0.2,
-        early_end_ts + memory_store.ALERT_WINDOW_SEC + 0.1,
-    )
-    second_responses = _ingest_hits(
-        mission_id=mission_id,
-        start_frame_id=frame_id,
-        start_ts=second_start_ts,
-        count=memory_store.ALERT_QUORUM,
-        step=frame_step,
-    )
-
-    for payload in second_responses[: max(memory_store.ALERT_QUORUM - 1, 0)]:
-        assert payload["alert_created"] is False
-    assert second_responses[memory_store.ALERT_QUORUM - 1]["alert_created"] is True
-
-
-def test_ingest_frame_mission_not_found() -> None:
-    response = client.post(
-        "/v1/frames",
-        json={
-            "mission_id": "not-exists",
-            "frame_id": 3,
-            "ts_sec": 1.5,
-            "score": 0.90,
-            "gt_person_present": True,
-        },
-    )
-
-    assert response.status_code == 404
-    assert response.json()["detail"] == "Mission not found"
-
-
-def test_get_alerts_filtered_by_mission() -> None:
-    mission_a = client.post("/v1/missions").json()["mission_id"]
-    mission_b = client.post("/v1/missions").json()["mission_id"]
-
-    memory_store.add_alert(
-        mission_id=mission_a,
-        frame_id=10,
-        ts_sec=1.1,
-        score=0.91,
-    )
-    memory_store.add_alert(
-        mission_id=mission_b,
-        frame_id=20,
-        ts_sec=2.2,
-        score=0.85,
-    )
-
-    response = client.get(f"/v1/alerts?mission_id={mission_a}")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert len(payload) == 1
-    assert payload[0]["mission_id"] == mission_a
-
-
-def test_get_alert_details() -> None:
-    mission_id = client.post("/v1/missions").json()["mission_id"]
-    alert = memory_store.add_alert(
-        mission_id=mission_id,
-        frame_id=10,
-        ts_sec=1.1,
-        score=0.91,
-    )
-
-    response = client.get(f"/v1/alerts/{alert.alert_id}")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["alert_id"] == alert.alert_id
-    assert payload["mission_id"] == mission_id
+    details = client.get(f"/v1/alerts/{alert_id}")
+    assert details.status_code == 200
+    payload = details.json()
+    assert payload["bbox"] == [10.0, 20.0, 50.0, 80.0]
     assert payload["status"] == "queued"
 
 
-def test_get_alert_details_not_found() -> None:
-    response = client.get("/v1/alerts/not-exists")
+def test_low_score_detection_not_promoted_to_alert() -> None:
+    mission_id = _create_mission()
 
-    assert response.status_code == 404
-    assert response.json()["detail"] == "Alert not found"
-
-
-def test_confirm_and_reject_alert() -> None:
-    mission_id = client.post("/v1/missions").json()["mission_id"]
-    alert_confirm = memory_store.add_alert(
+    result = _ingest_frame(
         mission_id=mission_id,
         frame_id=1,
-        ts_sec=0.5,
-        score=0.95,
+        ts_sec=0.0,
+        gt_person_present=False,
+        detections=[
+            {
+                "bbox": [1.0, 1.0, 2.0, 2.0],
+                "score": 0.1,
+            }
+        ],
     )
-    alert_reject = memory_store.add_alert(
+
+    assert result["alerts_created"] == 0
+    assert result["alert_ids"] == []
+
+
+def test_list_alerts_with_status_filter() -> None:
+    mission_id = _create_mission()
+
+    ingest_result = _ingest_frame(
         mission_id=mission_id,
-        frame_id=2,
-        ts_sec=0.8,
-        score=0.60,
+        frame_id=1,
+        ts_sec=0.0,
+        gt_person_present=True,
+        detections=[{"bbox": [10, 10, 20, 20], "score": 0.95}],
     )
+    alert_id = ingest_result["alert_ids"][0]
 
     confirm_response = client.post(
-        f"/v1/alerts/{alert_confirm.alert_id}/confirm",
-        json={"reviewed_by": "operator_1"},
+        f"/v1/alerts/{alert_id}/confirm",
+        json={
+            "reviewed_by": "operator_1",
+            "reviewed_at_sec": 0.4,
+            "decision_reason": "valid target",
+        },
     )
-    reject_response = client.post(
-        f"/v1/alerts/{alert_reject.alert_id}/reject",
-        json={"reviewed_by": "operator_1"},
-    )
-
     assert confirm_response.status_code == 200
-    assert confirm_response.json()["status"] == "reviewed_confirmed"
-    assert reject_response.status_code == 200
-    assert reject_response.json()["status"] == "reviewed_rejected"
 
-
-def test_confirm_not_found() -> None:
-    response = client.post(
-        "/v1/alerts/not-exists/confirm",
-        json={"reviewed_by": "operator_1"},
+    confirmed = client.get(
+        f"/v1/alerts?mission_id={mission_id}&status=reviewed_confirmed"
     )
+    queued = client.get(f"/v1/alerts?mission_id={mission_id}&status=queued")
 
-    assert response.status_code == 404
-    assert response.json()["detail"] == "Alert not found"
+    assert confirmed.status_code == 200
+    assert len(confirmed.json()) == 1
+    assert queued.status_code == 200
+    assert queued.json() == []
 
 
 def test_review_processed_alert_returns_409() -> None:
-    mission_id = client.post("/v1/missions").json()["mission_id"]
-    alert = memory_store.add_alert(
+    mission_id = _create_mission()
+    ingest_result = _ingest_frame(
         mission_id=mission_id,
         frame_id=1,
-        ts_sec=0.5,
-        score=0.95,
+        ts_sec=0.0,
+        gt_person_present=True,
+        detections=[{"bbox": [10, 10, 20, 20], "score": 0.95}],
     )
+    alert_id = ingest_result["alert_ids"][0]
 
     first_response = client.post(
-        f"/v1/alerts/{alert.alert_id}/confirm",
-        json={"reviewed_by": "operator_1"},
+        f"/v1/alerts/{alert_id}/confirm",
+        json={"reviewed_by": "operator_1", "reviewed_at_sec": 0.5},
     )
     second_response = client.post(
-        f"/v1/alerts/{alert.alert_id}/reject",
-        json={"reviewed_by": "operator_2"},
+        f"/v1/alerts/{alert_id}/reject",
+        json={"reviewed_by": "operator_2", "reviewed_at_sec": 0.7},
     )
 
     assert first_response.status_code == 200
@@ -294,68 +167,78 @@ def test_review_processed_alert_returns_409() -> None:
     assert second_response.json()["detail"] == "Alert already reviewed"
 
 
-def test_mission_episodes() -> None:
-    mission_id = client.post("/v1/missions").json()["mission_id"]
+def test_mission_report_metrics() -> None:
+    mission_id = _create_mission()
 
-    frames = [
-        {
+    first_alert = _ingest_frame(
+        mission_id=mission_id,
+        frame_id=0,
+        ts_sec=0.0,
+        gt_person_present=True,
+        detections=[{"bbox": [10, 10, 20, 20], "score": 0.95}],
+    )["alert_ids"][0]
+    _ingest_frame(
+        mission_id=mission_id,
+        frame_id=1,
+        ts_sec=1.0,
+        gt_person_present=False,
+    )
+    second_alert = _ingest_frame(
+        mission_id=mission_id,
+        frame_id=2,
+        ts_sec=2.0,
+        gt_person_present=True,
+        detections=[{"bbox": [30, 30, 50, 50], "score": 0.96}],
+    )["alert_ids"][0]
+    _ingest_frame(
+        mission_id=mission_id,
+        frame_id=3,
+        ts_sec=3.0,
+        gt_person_present=False,
+    )
+
+    confirm_response = client.post(
+        f"/v1/alerts/{first_alert}/confirm",
+        json={"reviewed_by": "operator_1", "reviewed_at_sec": 0.8},
+    )
+    reject_response = client.post(
+        f"/v1/alerts/{second_alert}/reject",
+        json={"reviewed_by": "operator_1", "reviewed_at_sec": 2.5},
+    )
+    assert confirm_response.status_code == 200
+    assert reject_response.status_code == 200
+
+    report_response = client.get(f"/v1/missions/{mission_id}/report")
+    assert report_response.status_code == 200
+    report = report_response.json()
+
+    assert report["mission_id"] == mission_id
+    assert report["episodes_total"] == 2
+    assert report["episodes_found"] == 1
+    assert report["recall_event"] == 0.5
+    assert report["ttfc_sec"] == 0.8
+    assert report["false_alerts_total"] == 1
+    assert report["alerts_total"] == 2
+    assert report["alerts_confirmed"] == 1
+    assert report["alerts_rejected"] == 1
+
+
+def test_mission_not_found_returns_404() -> None:
+    response = client.post(
+        "/v1/missions/not-exists/frames",
+        json={
             "frame_id": 0,
             "ts_sec": 0.0,
-            "score": 0.1,
+            "image_uri": "s3://frames/missing/0.jpg",
             "gt_person_present": False,
+            "gt_episode_id": None,
+            "detections": [],
         },
-        {
-            "frame_id": 1,
-            "ts_sec": 0.5,
-            "score": 0.9,
-            "gt_person_present": True,
-        },
-        {
-            "frame_id": 2,
-            "ts_sec": 1.0,
-            "score": 0.9,
-            "gt_person_present": True,
-        },
-        {
-            "frame_id": 3,
-            "ts_sec": 1.5,
-            "score": 0.2,
-            "gt_person_present": False,
-        },
-        {
-            "frame_id": 4,
-            "ts_sec": 2.0,
-            "score": 0.9,
-            "gt_person_present": True,
-        },
-        {
-            "frame_id": 5,
-            "ts_sec": 2.5,
-            "score": 0.2,
-            "gt_person_present": False,
-        },
-    ]
-
-    for frame in frames:
-        payload = {"mission_id": mission_id, **frame}
-        response = client.post("/v1/frames", json=payload)
-        assert response.status_code == 200
-
-    response = client.get(f"/v1/missions/{mission_id}/episodes")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["episodes_total"] == 2
-
-    episodes = payload["episodes"]
-    assert episodes[0]["start_frame_id"] == 1
-    assert episodes[0]["end_frame_id"] == 2
-    assert episodes[1]["start_frame_id"] == 4
-    assert episodes[1]["end_frame_id"] == 4
+    )
+    assert response.status_code == 404
 
 
-def test_mission_episodes_not_found() -> None:
-    response = client.get("/v1/missions/not-exists/episodes")
-
+def test_report_not_found_returns_404() -> None:
+    response = client.get("/v1/missions/not-exists/report")
     assert response.status_code == 404
     assert response.json()["detail"] == "Mission not found"
