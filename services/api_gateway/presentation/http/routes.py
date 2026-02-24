@@ -1,5 +1,7 @@
 import mimetypes
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -118,6 +120,7 @@ def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
     return {
         "mission_id": mission.mission_id,
         "status": started.status,
+        "created_at": mission.created_at,
         "source_name": mission.source_name,
         "fps": mission.fps,
         "total_frames": mission.total_frames,
@@ -206,7 +209,7 @@ def get_alerts(
 ) -> list[dict[str, object]]:
     service = get_pilot_service()
     alerts = service.list_alerts(mission_id=mission_id, status=status)
-    return [_alert_to_dict(alert) for alert in alerts]
+    return [_alert_to_dict(alert, service=service) for alert in alerts]
 
 
 @router.get("/v1/alerts/{alert_id}")
@@ -215,7 +218,7 @@ def get_alert_details(alert_id: str) -> dict[str, object]:
     alert = service.get_alert(alert_id)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
-    return _alert_to_dict(alert)
+    return _alert_to_dict(alert, service=service)
 
 
 @router.get("/v1/alerts/{alert_id}/frame")
@@ -256,7 +259,7 @@ def confirm_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
         raise HTTPException(status_code=409, detail=str(error)) from error
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
-    return _alert_to_dict(alert)
+    return _alert_to_dict(alert, service=service)
 
 
 @router.post("/v1/alerts/{alert_id}/reject")
@@ -276,7 +279,7 @@ def reject_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
         raise HTTPException(status_code=409, detail=str(error)) from error
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
-    return _alert_to_dict(alert)
+    return _alert_to_dict(alert, service=service)
 
 
 @router.get("/v1/missions/{mission_id}/report")
@@ -288,13 +291,20 @@ def get_mission_report_endpoint(mission_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-def _alert_to_dict(alert: Alert) -> dict[str, object]:
+def _alert_to_dict(alert: Alert, service: Any) -> dict[str, object]:
+    mission = service.get_mission(alert.mission_id)
+    wall_time = _build_alert_wall_time(
+        created_at=mission.created_at if mission is not None else None,
+        offset_sec=alert.ts_sec,
+    )
     return {
         "alert_id": alert.alert_id,
         "mission_id": alert.mission_id,
         "frame_id": alert.frame_id,
         "ts_sec": alert.ts_sec,
+        "alert_time_iso": wall_time,
         "image_uri": alert.image_uri,
+        "people_detected": 1,
         "bbox": list(alert.detection.bbox),
         "score": alert.detection.score,
         "label": alert.detection.label,
@@ -305,3 +315,15 @@ def _alert_to_dict(alert: Alert) -> dict[str, object]:
         "reviewed_at_sec": alert.lifecycle.reviewed_at_sec,
         "decision_reason": alert.lifecycle.decision_reason,
     }
+
+
+def _build_alert_wall_time(created_at: str | None, offset_sec: float) -> str | None:
+    if created_at is None:
+        return None
+    try:
+        base = datetime.fromisoformat(created_at)
+    except ValueError:
+        return None
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=timezone.utc)
+    return (base + timedelta(seconds=offset_sec)).isoformat()

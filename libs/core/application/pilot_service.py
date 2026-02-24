@@ -143,12 +143,12 @@ class PilotService:
         )
 
         mission_duration_sec = frames[-1].ts_sec if frames else 0.0
-        mission_duration_hours = (
-            mission_duration_sec / 3600 if mission_duration_sec > 0 else 0
+        mission_duration_minutes = (
+            mission_duration_sec / 60 if mission_duration_sec > 0 else 0
         )
-        fp_per_hour = (
-            len(rejected_alerts) / mission_duration_hours
-            if mission_duration_hours
+        fp_per_minute = (
+            len(rejected_alerts) / mission_duration_minutes
+            if mission_duration_minutes
             else 0.0
         )
 
@@ -165,7 +165,7 @@ class PilotService:
             "alerts_confirmed": len(confirmed_alerts),
             "alerts_rejected": len(rejected_alerts),
             "false_alerts_total": len(rejected_alerts),
-            "fp_per_hour": round(fp_per_hour, 4),
+            "fp_per_minute": round(fp_per_minute, 4),
             "generated_at": _utc_now_iso(),
         }
 

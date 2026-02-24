@@ -28,4 +28,4 @@ def test_version_ok() -> None:
 def test_ui_index_ok() -> None:
     response = client.get("/")
     assert response.status_code == 200
-    assert "Operator queue" in response.text
+    assert "Rescue Drone Station" in response.text
