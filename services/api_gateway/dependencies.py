@@ -25,3 +25,4 @@ def reset_state() -> None:
     db.missions.clear()
     db.alerts.clear()
     db.mission_frames.clear()
+    pilot_service.reset_runtime_state()

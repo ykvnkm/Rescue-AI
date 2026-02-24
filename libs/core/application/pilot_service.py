@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -19,6 +19,10 @@ from libs.core.domain.entities import (
 )
 
 DEFAULT_SCORE_THRESHOLD = 0.2
+ALERT_WINDOW_SEC = 1.0
+ALERT_QUORUM_K = 2
+ALERT_COOLDOWN_SEC = 2.0
+ALERT_GAP_END_SEC = 1.0
 
 
 @dataclass
@@ -30,6 +34,20 @@ class DetectionInput:
     label: str = "person"
     model_name: str = "yolo8n"
     explanation: str | None = None
+
+
+@dataclass
+class _DetectionHit:
+    ts_sec: float
+    frame_event: FrameEvent
+    detection: DetectionInput
+
+
+@dataclass
+class _MissionAlertState:
+    recent_hits: list[_DetectionHit] = field(default_factory=list)
+    last_alert_ts: float | None = None
+    last_positive_ts: float | None = None
 
 
 class PilotService:
@@ -44,6 +62,7 @@ class PilotService:
         self._missions = mission_repository
         self._alerts = alert_repository
         self._frames = frame_event_repository
+        self._alert_state: dict[str, _MissionAlertState] = {}
 
     def create_mission(
         self,
@@ -81,28 +100,9 @@ class PilotService:
 
         self._frames.add(frame_event)
 
-        created_alerts: list[Alert] = []
-        for detection in detections:
-            if detection.score < DEFAULT_SCORE_THRESHOLD:
-                continue
-            alert = Alert(
-                alert_id=str(uuid4()),
-                mission_id=frame_event.mission_id,
-                frame_id=frame_event.frame_id,
-                ts_sec=frame_event.ts_sec,
-                image_uri=frame_event.image_uri,
-                detection=DetectionData(
-                    bbox=detection.bbox,
-                    score=detection.score,
-                    label=detection.label,
-                    model_name=detection.model_name,
-                    explanation=detection.explanation,
-                ),
-                lifecycle=AlertLifecycle(status="queued"),
-            )
-            self._alerts.add(alert)
-            created_alerts.append(alert)
-        return created_alerts
+        return self._evaluate_alert_rules(
+            frame_event=frame_event, detections=detections
+        )
 
     def list_alerts(
         self,
@@ -120,6 +120,9 @@ class PilotService:
         decision: ReviewDecision,
     ) -> Alert | None:
         return self._alerts.update_status(alert_id=alert_id, decision=decision)
+
+    def reset_runtime_state(self) -> None:
+        self._alert_state.clear()
 
     def get_mission_report(self, mission_id: str) -> dict[str, object]:
         if self._missions.get(mission_id) is None:
@@ -164,6 +167,92 @@ class PilotService:
             "fp_per_hour": round(fp_per_hour, 4),
             "generated_at": _utc_now_iso(),
         }
+
+    def _evaluate_alert_rules(
+        self,
+        frame_event: FrameEvent,
+        detections: list[DetectionInput],
+    ) -> list[Alert]:
+        mission_state = self._alert_state.setdefault(
+            frame_event.mission_id,
+            _MissionAlertState(),
+        )
+        current_ts = frame_event.ts_sec
+        self._drop_expired_hits(mission_state=mission_state, current_ts=current_ts)
+
+        positives = [
+            item
+            for item in detections
+            if item.score >= DEFAULT_SCORE_THRESHOLD and item.label == "person"
+        ]
+        if not positives:
+            if (
+                mission_state.last_positive_ts is not None
+                and current_ts - mission_state.last_positive_ts > ALERT_GAP_END_SEC
+            ):
+                mission_state.recent_hits.clear()
+            return []
+
+        if (
+            mission_state.last_positive_ts is not None
+            and current_ts - mission_state.last_positive_ts > ALERT_GAP_END_SEC
+        ):
+            mission_state.recent_hits.clear()
+
+        best_detection = max(positives, key=lambda item: item.score)
+        mission_state.recent_hits.append(
+            _DetectionHit(
+                ts_sec=current_ts,
+                frame_event=frame_event,
+                detection=best_detection,
+            )
+        )
+        mission_state.last_positive_ts = current_ts
+        self._drop_expired_hits(mission_state=mission_state, current_ts=current_ts)
+
+        if len(mission_state.recent_hits) < ALERT_QUORUM_K:
+            return []
+        if (
+            mission_state.last_alert_ts is not None
+            and current_ts - mission_state.last_alert_ts < ALERT_COOLDOWN_SEC
+        ):
+            return []
+
+        mission_state.last_alert_ts = current_ts
+        return [self._build_alert(frame_event=frame_event, detection=best_detection)]
+
+    @staticmethod
+    def _drop_expired_hits(
+        mission_state: _MissionAlertState,
+        current_ts: float,
+    ) -> None:
+        lower_bound = current_ts - ALERT_WINDOW_SEC
+        mission_state.recent_hits = [
+            hit for hit in mission_state.recent_hits if hit.ts_sec >= lower_bound
+        ]
+
+    def _build_alert(
+        self,
+        frame_event: FrameEvent,
+        detection: DetectionInput,
+    ) -> Alert:
+        alert = Alert(
+            alert_id=str(uuid4()),
+            mission_id=frame_event.mission_id,
+            frame_id=frame_event.frame_id,
+            ts_sec=frame_event.ts_sec,
+            image_uri=frame_event.image_uri,
+            detection=DetectionData(
+                bbox=detection.bbox,
+                score=detection.score,
+                label=detection.label,
+                model_name=detection.model_name,
+                explanation=detection.explanation,
+            ),
+            lifecycle=AlertLifecycle(status="queued"),
+        )
+        self._alerts.add(alert)
+        return alert
 
 
 def _split_reviewed_alerts(alerts: list[Alert]) -> tuple[list[Alert], list[Alert]]:

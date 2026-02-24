@@ -21,12 +21,41 @@ def _create_mission() -> str:
         "/v1/missions",
         json={
             "source_name": "pilot-set",
-            "total_frames": 4,
+            "total_frames": 8,
             "fps": 2.0,
         },
     )
     assert response.status_code == 200
     return response.json()["mission_id"]
+
+
+def _frame_payload(
+    mission_id: str,
+    overrides: dict[str, Any],
+) -> dict[str, Any]:
+    frame_id = int(overrides.get("frame_id", 0))
+    score = overrides.get("score")
+    detections: list[dict[str, Any]] = []
+    if score is not None:
+        detections.append(
+            {
+                "bbox": [10.0, 20.0, 50.0, 80.0],
+                "score": score,
+                "label": "person",
+                "model_name": "yolo8n",
+                "explanation": "test-detection",
+            }
+        )
+
+    return {
+        "frame_id": frame_id,
+        "ts_sec": float(overrides.get("ts_sec", 0.0)),
+        "image_uri": overrides.get("image_uri")
+        or f"s3://frames/{mission_id}/{frame_id}.jpg",
+        "gt_person_present": bool(overrides.get("gt_person_present", False)),
+        "gt_episode_id": overrides.get("gt_episode_id"),
+        "detections": detections,
+    }
 
 
 def _ingest_frame(mission_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -50,37 +79,90 @@ def test_create_mission_and_status_flow() -> None:
     assert complete_response.json()["status"] == "completed"
 
 
-def test_ingest_frame_creates_alert_with_bbox() -> None:
+def test_alert_rule_requires_quorum_k2_in_window() -> None:
     mission_id = _create_mission()
 
-    result = _ingest_frame(
+    first = _ingest_frame(
         mission_id,
-        {
-            "frame_id": 1,
-            "ts_sec": 0.5,
-            "image_uri": f"s3://frames/{mission_id}/1.jpg",
-            "gt_person_present": True,
-            "gt_episode_id": None,
-            "detections": [
-                {
-                    "bbox": [10.0, 20.0, 50.0, 80.0],
-                    "score": 0.91,
-                    "label": "person",
-                    "model_name": "yolo8n",
-                }
-            ],
-        },
+        _frame_payload(
+            mission_id=mission_id,
+            overrides={
+                "frame_id": 1,
+                "ts_sec": 0.0,
+                "gt_person_present": True,
+                "score": 0.95,
+            },
+        ),
+    )
+    second = _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id=mission_id,
+            overrides={
+                "frame_id": 2,
+                "ts_sec": 0.5,
+                "gt_person_present": True,
+                "score": 0.96,
+            },
+        ),
     )
 
-    assert result["alerts_created"] == 1
-    alert_id = result["alert_ids"][0]
+    assert first["alerts_created"] == 0
+    assert second["alerts_created"] == 1
 
-    details = client.get(f"/v1/alerts/{alert_id}")
-    assert details.status_code == 200
-    payload = details.json()
-    assert payload["bbox"] == [10.0, 20.0, 50.0, 80.0]
-    assert payload["status"] == "queued"
-    assert payload["explanation"] is None
+
+def test_alert_rule_applies_cooldown_and_gap_end() -> None:
+    mission_id = _create_mission()
+
+    _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 1, "ts_sec": 0.0, "gt_person_present": True, "score": 0.95},
+        ),
+    )
+    trigger = _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 2, "ts_sec": 0.5, "gt_person_present": True, "score": 0.95},
+        ),
+    )
+    blocked = _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 3, "ts_sec": 1.0, "gt_person_present": True, "score": 0.95},
+        ),
+    )
+
+    assert trigger["alerts_created"] == 1
+    assert blocked["alerts_created"] == 0
+
+    _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 4, "ts_sec": 2.2, "gt_person_present": False, "score": None},
+        ),
+    )
+    after_gap_first = _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 5, "ts_sec": 2.7, "gt_person_present": True, "score": 0.95},
+        ),
+    )
+    after_gap_second = _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 6, "ts_sec": 3.1, "gt_person_present": True, "score": 0.95},
+        ),
+    )
+
+    assert after_gap_first["alerts_created"] == 0
+    assert after_gap_second["alerts_created"] == 1
 
 
 def test_low_score_detection_not_promoted_to_alert() -> None:
@@ -88,19 +170,15 @@ def test_low_score_detection_not_promoted_to_alert() -> None:
 
     result = _ingest_frame(
         mission_id,
-        {
-            "frame_id": 1,
-            "ts_sec": 0.0,
-            "image_uri": f"s3://frames/{mission_id}/1.jpg",
-            "gt_person_present": False,
-            "gt_episode_id": None,
-            "detections": [
-                {
-                    "bbox": [1.0, 1.0, 2.0, 2.0],
-                    "score": 0.1,
-                }
-            ],
-        },
+        _frame_payload(
+            mission_id=mission_id,
+            overrides={
+                "frame_id": 1,
+                "ts_sec": 0.0,
+                "gt_person_present": False,
+                "score": 0.1,
+            },
+        ),
     )
 
     assert result["alerts_created"] == 0
@@ -110,16 +188,19 @@ def test_low_score_detection_not_promoted_to_alert() -> None:
 def test_list_alerts_with_status_filter() -> None:
     mission_id = _create_mission()
 
+    _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 1, "ts_sec": 0.0, "gt_person_present": True, "score": 0.95},
+        ),
+    )
     ingest_result = _ingest_frame(
         mission_id,
-        {
-            "frame_id": 1,
-            "ts_sec": 0.0,
-            "image_uri": f"s3://frames/{mission_id}/1.jpg",
-            "gt_person_present": True,
-            "gt_episode_id": None,
-            "detections": [{"bbox": [10, 10, 20, 20], "score": 0.95}],
-        },
+        _frame_payload(
+            mission_id,
+            {"frame_id": 2, "ts_sec": 0.5, "gt_person_present": True, "score": 0.95},
+        ),
     )
     alert_id = ingest_result["alert_ids"][0]
 
@@ -127,7 +208,7 @@ def test_list_alerts_with_status_filter() -> None:
         f"/v1/alerts/{alert_id}/confirm",
         json={
             "reviewed_by": "operator_1",
-            "reviewed_at_sec": 0.4,
+            "reviewed_at_sec": 0.9,
             "decision_reason": "valid target",
         },
     )
@@ -146,26 +227,30 @@ def test_list_alerts_with_status_filter() -> None:
 
 def test_review_processed_alert_returns_409() -> None:
     mission_id = _create_mission()
+
+    _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 1, "ts_sec": 0.0, "gt_person_present": True, "score": 0.95},
+        ),
+    )
     ingest_result = _ingest_frame(
         mission_id,
-        {
-            "frame_id": 1,
-            "ts_sec": 0.0,
-            "image_uri": f"s3://frames/{mission_id}/1.jpg",
-            "gt_person_present": True,
-            "gt_episode_id": None,
-            "detections": [{"bbox": [10, 10, 20, 20], "score": 0.95}],
-        },
+        _frame_payload(
+            mission_id,
+            {"frame_id": 2, "ts_sec": 0.5, "gt_person_present": True, "score": 0.95},
+        ),
     )
     alert_id = ingest_result["alert_ids"][0]
 
     first_response = client.post(
         f"/v1/alerts/{alert_id}/confirm",
-        json={"reviewed_by": "operator_1", "reviewed_at_sec": 0.5},
+        json={"reviewed_by": "operator_1", "reviewed_at_sec": 0.8},
     )
     second_response = client.post(
         f"/v1/alerts/{alert_id}/reject",
-        json={"reviewed_by": "operator_2", "reviewed_at_sec": 0.7},
+        json={"reviewed_by": "operator_2", "reviewed_at_sec": 1.0},
     )
 
     assert first_response.status_code == 200
@@ -176,58 +261,49 @@ def test_review_processed_alert_returns_409() -> None:
 def test_mission_report_metrics() -> None:
     mission_id = _create_mission()
 
+    _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 0, "ts_sec": 0.0, "gt_person_present": True, "score": 0.95},
+        ),
+    )
     first_alert = _ingest_frame(
         mission_id,
-        {
-            "frame_id": 0,
-            "ts_sec": 0.0,
-            "image_uri": f"s3://frames/{mission_id}/0.jpg",
-            "gt_person_present": True,
-            "gt_episode_id": None,
-            "detections": [{"bbox": [10, 10, 20, 20], "score": 0.95}],
-        },
+        _frame_payload(
+            mission_id,
+            {"frame_id": 1, "ts_sec": 0.5, "gt_person_present": True, "score": 0.95},
+        ),
     )["alert_ids"][0]
     _ingest_frame(
         mission_id,
-        {
-            "frame_id": 1,
-            "ts_sec": 1.0,
-            "image_uri": f"s3://frames/{mission_id}/1.jpg",
-            "gt_person_present": False,
-            "gt_episode_id": None,
-            "detections": [],
-        },
+        _frame_payload(
+            mission_id,
+            {"frame_id": 2, "ts_sec": 1.0, "gt_person_present": False, "score": None},
+        ),
+    )
+    _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 3, "ts_sec": 3.2, "gt_person_present": True, "score": 0.95},
+        ),
     )
     second_alert = _ingest_frame(
         mission_id,
-        {
-            "frame_id": 2,
-            "ts_sec": 2.0,
-            "image_uri": f"s3://frames/{mission_id}/2.jpg",
-            "gt_person_present": True,
-            "gt_episode_id": None,
-            "detections": [{"bbox": [30, 30, 50, 50], "score": 0.96}],
-        },
+        _frame_payload(
+            mission_id,
+            {"frame_id": 4, "ts_sec": 3.6, "gt_person_present": True, "score": 0.95},
+        ),
     )["alert_ids"][0]
-    _ingest_frame(
-        mission_id,
-        {
-            "frame_id": 3,
-            "ts_sec": 3.0,
-            "image_uri": f"s3://frames/{mission_id}/3.jpg",
-            "gt_person_present": False,
-            "gt_episode_id": None,
-            "detections": [],
-        },
-    )
 
     confirm_response = client.post(
         f"/v1/alerts/{first_alert}/confirm",
-        json={"reviewed_by": "operator_1", "reviewed_at_sec": 0.8},
+        json={"reviewed_by": "operator_1", "reviewed_at_sec": 0.9},
     )
     reject_response = client.post(
         f"/v1/alerts/{second_alert}/reject",
-        json={"reviewed_by": "operator_1", "reviewed_at_sec": 2.5},
+        json={"reviewed_by": "operator_1", "reviewed_at_sec": 3.8},
     )
     assert confirm_response.status_code == 200
     assert reject_response.status_code == 200
@@ -240,7 +316,7 @@ def test_mission_report_metrics() -> None:
     assert report["episodes_total"] == 2
     assert report["episodes_found"] == 1
     assert report["recall_event"] == 0.5
-    assert report["ttfc_sec"] == 0.8
+    assert report["ttfc_sec"] == 0.9
     assert report["false_alerts_total"] == 1
     assert report["alerts_total"] == 2
     assert report["alerts_confirmed"] == 1
@@ -274,16 +350,31 @@ def test_alert_frame_endpoint_returns_image() -> None:
         frame_path = Path(temp_dir) / "frame_0001.jpg"
         frame_path.write_bytes(b"\xff\xd8\xff\xd9")
 
+        _ingest_frame(
+            mission_id,
+            _frame_payload(
+                mission_id=mission_id,
+                overrides={
+                    "frame_id": 1,
+                    "ts_sec": 0.0,
+                    "gt_person_present": True,
+                    "score": 0.95,
+                    "image_uri": str(frame_path),
+                },
+            ),
+        )
         alert_id = _ingest_frame(
             mission_id,
-            {
-                "frame_id": 1,
-                "ts_sec": 0.5,
-                "image_uri": str(frame_path),
-                "gt_person_present": True,
-                "gt_episode_id": None,
-                "detections": [{"bbox": [10, 10, 20, 20], "score": 0.95}],
-            },
+            _frame_payload(
+                mission_id=mission_id,
+                overrides={
+                    "frame_id": 2,
+                    "ts_sec": 0.4,
+                    "gt_person_present": True,
+                    "score": 0.95,
+                    "image_uri": str(frame_path),
+                },
+            ),
         )["alert_ids"][0]
 
         image_response = client.get(f"/v1/alerts/{alert_id}/frame")
