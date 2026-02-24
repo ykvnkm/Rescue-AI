@@ -135,16 +135,17 @@ def _run_stream(config: StreamConfig) -> None:
     dt = 1.0 / config.fps if config.fps > 0 else 0.5
     try:
         for idx, frame_path in enumerate(config.frame_files):
-            gt_present = _has_ground_truth(
+            label_rows = _load_label_rows(
                 frame_path=frame_path,
                 labels_dir=config.labels_path,
             )
+            gt_present = bool(label_rows)
             score = config.high_score if gt_present else config.low_score
             payload = _build_frame_payload(
                 frame_id=idx,
                 ts_sec=round(idx * dt, 3),
                 frame_path=frame_path,
-                gt_present=gt_present,
+                label_rows=label_rows,
                 score=score,
             )
             _post_json(
@@ -176,14 +177,15 @@ def _build_frame_payload(
     frame_id: int,
     ts_sec: float,
     frame_path: Path,
-    gt_present: bool,
+    label_rows: list[str],
     score: float,
 ) -> dict[str, object]:
     detections: list[dict[str, object]] = []
-    if gt_present:
+    for index, _ in enumerate(label_rows):
+        offset = float(index * 8)
         detections.append(
             {
-                "bbox": [15.0, 15.0, 60.0, 60.0],
+                "bbox": [15.0 + offset, 15.0 + offset, 60.0 + offset, 60.0 + offset],
                 "score": score,
                 "label": "person",
                 "model_name": "yolo8n",
@@ -195,20 +197,24 @@ def _build_frame_payload(
         "frame_id": frame_id,
         "ts_sec": ts_sec,
         "image_uri": str(frame_path),
-        "gt_person_present": gt_present,
+        "gt_person_present": bool(label_rows),
         "gt_episode_id": None,
         "detections": detections,
     }
 
 
-def _has_ground_truth(frame_path: Path, labels_dir: Path | None) -> bool:
+def _load_label_rows(frame_path: Path, labels_dir: Path | None) -> list[str]:
     if labels_dir is None:
         label_path = frame_path.with_suffix(".txt")
     else:
         label_path = labels_dir / f"{frame_path.stem}.txt"
     if not label_path.exists():
-        return False
-    return label_path.read_text(encoding="utf-8").strip() != ""
+        return []
+    return [
+        row
+        for row in label_path.read_text(encoding="utf-8").splitlines()
+        if row.strip()
+    ]
 
 
 def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:

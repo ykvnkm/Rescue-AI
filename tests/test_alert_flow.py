@@ -113,6 +113,62 @@ def test_alert_rule_requires_quorum_k2_in_window() -> None:
     assert second["alerts_created"] == 1
 
 
+def test_people_detected_matches_bbox_count() -> None:
+    mission_id = _create_mission()
+
+    _ingest_frame(
+        mission_id,
+        {
+            "frame_id": 10,
+            "ts_sec": 10.0,
+            "image_uri": f"s3://frames/{mission_id}/10.jpg",
+            "gt_person_present": True,
+            "gt_episode_id": None,
+            "detections": [
+                {
+                    "bbox": [10.0, 20.0, 40.0, 80.0],
+                    "score": 0.95,
+                    "label": "person",
+                    "model_name": "yolo8n",
+                    "explanation": "person-1",
+                }
+            ],
+        },
+    )
+    second = _ingest_frame(
+        mission_id,
+        {
+            "frame_id": 11,
+            "ts_sec": 10.5,
+            "image_uri": f"s3://frames/{mission_id}/11.jpg",
+            "gt_person_present": True,
+            "gt_episode_id": None,
+            "detections": [
+                {
+                    "bbox": [10.0, 20.0, 40.0, 80.0],
+                    "score": 0.96,
+                    "label": "person",
+                    "model_name": "yolo8n",
+                    "explanation": "person-1",
+                },
+                {
+                    "bbox": [100.0, 120.0, 140.0, 180.0],
+                    "score": 0.91,
+                    "label": "person",
+                    "model_name": "yolo8n",
+                    "explanation": "person-2",
+                },
+            ],
+        },
+    )
+
+    assert second["alerts_created"] == 1
+    alert_id = second["alert_ids"][0]
+    details = client.get(f"/v1/alerts/{alert_id}")
+    assert details.status_code == 200
+    assert details.json()["people_detected"] == 2
+
+
 def test_alert_rule_applies_cooldown_and_gap_end() -> None:
     mission_id = _create_mission()
 
@@ -325,28 +381,50 @@ def test_mission_report_metrics() -> None:
     assert report["alerts_rejected"] == 1
 
 
-def test_mission_report_ttfc_is_median() -> None:
+def test_mission_report_ttfc_uses_first_episode_and_tolerance() -> None:
     mission_id = _create_mission()
 
     _ingest_frame(
         mission_id,
         _frame_payload(
             mission_id,
-            {"frame_id": 0, "ts_sec": 0.0, "gt_person_present": True, "score": 0.95},
+            {"frame_id": 0, "ts_sec": 8.0, "gt_person_present": False, "score": 0.95},
         ),
     )
-    alert_1 = _ingest_frame(
+    alert_outside = _ingest_frame(
         mission_id,
         _frame_payload(
             mission_id,
-            {"frame_id": 1, "ts_sec": 0.5, "gt_person_present": True, "score": 0.95},
+            {"frame_id": 1, "ts_sec": 8.5, "gt_person_present": False, "score": 0.95},
+        ),
+    )["alert_ids"][0]
+
+    _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 2, "ts_sec": 10.0, "gt_person_present": True, "score": None},
+        ),
+    )
+    _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 3, "ts_sec": 12.0, "gt_person_present": True, "score": 0.95},
+        ),
+    )
+    alert_first_episode = _ingest_frame(
+        mission_id,
+        _frame_payload(
+            mission_id,
+            {"frame_id": 4, "ts_sec": 12.3, "gt_person_present": True, "score": 0.95},
         ),
     )["alert_ids"][0]
     _ingest_frame(
         mission_id,
         _frame_payload(
             mission_id,
-            {"frame_id": 2, "ts_sec": 1.0, "gt_person_present": False, "score": None},
+            {"frame_id": 5, "ts_sec": 19.0, "gt_person_present": False, "score": None},
         ),
     )
 
@@ -354,57 +432,42 @@ def test_mission_report_ttfc_is_median() -> None:
         mission_id,
         _frame_payload(
             mission_id,
-            {"frame_id": 3, "ts_sec": 2.0, "gt_person_present": True, "score": 0.95},
+            {"frame_id": 6, "ts_sec": 40.0, "gt_person_present": True, "score": 0.95},
         ),
     )
-    alert_2 = _ingest_frame(
+    alert_second_episode = _ingest_frame(
         mission_id,
         _frame_payload(
             mission_id,
-            {"frame_id": 4, "ts_sec": 2.5, "gt_person_present": True, "score": 0.95},
+            {"frame_id": 7, "ts_sec": 41.0, "gt_person_present": True, "score": 0.95},
         ),
     )["alert_ids"][0]
     _ingest_frame(
         mission_id,
         _frame_payload(
             mission_id,
-            {"frame_id": 5, "ts_sec": 3.0, "gt_person_present": False, "score": None},
+            {"frame_id": 8, "ts_sec": 47.0, "gt_person_present": False, "score": None},
         ),
     )
-
-    _ingest_frame(
-        mission_id,
-        _frame_payload(
-            mission_id,
-            {"frame_id": 6, "ts_sec": 4.0, "gt_person_present": True, "score": 0.95},
-        ),
-    )
-    alert_3 = _ingest_frame(
-        mission_id,
-        _frame_payload(
-            mission_id,
-            {"frame_id": 7, "ts_sec": 4.5, "gt_person_present": True, "score": 0.95},
-        ),
-    )["alert_ids"][0]
 
     assert (
         client.post(
-            f"/v1/alerts/{alert_1}/confirm",
-            json={"reviewed_by": "operator_1", "reviewed_at_sec": 0.4},
+            f"/v1/alerts/{alert_outside}/confirm",
+            json={"reviewed_by": "operator_1", "reviewed_at_sec": 9.0},
         ).status_code
         == 200
     )
     assert (
         client.post(
-            f"/v1/alerts/{alert_2}/confirm",
-            json={"reviewed_by": "operator_1", "reviewed_at_sec": 3.2},
+            f"/v1/alerts/{alert_first_episode}/confirm",
+            json={"reviewed_by": "operator_1", "reviewed_at_sec": 14.8},
         ).status_code
         == 200
     )
     assert (
         client.post(
-            f"/v1/alerts/{alert_3}/confirm",
-            json={"reviewed_by": "operator_1", "reviewed_at_sec": 4.8},
+            f"/v1/alerts/{alert_second_episode}/confirm",
+            json={"reviewed_by": "operator_1", "reviewed_at_sec": 43.0},
         ).status_code
         == 200
     )
@@ -413,7 +476,7 @@ def test_mission_report_ttfc_is_median() -> None:
     assert report_response.status_code == 200
     report = report_response.json()
 
-    assert report["ttfc_sec"] == 0.8
+    assert report["ttfc_sec"] == 4.8
 
 
 def test_mission_not_found_returns_404() -> None:

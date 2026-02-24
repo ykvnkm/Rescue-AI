@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from statistics import median
 from uuid import uuid4
 
 from libs.core.application.contracts import (
@@ -13,6 +12,7 @@ from libs.core.application.contracts import (
 )
 from libs.core.domain.entities import (
     Alert,
+    AlertEvidence,
     AlertLifecycle,
     DetectionData,
     FrameEvent,
@@ -24,6 +24,7 @@ ALERT_WINDOW_SEC = 1.0
 ALERT_QUORUM_K = 2
 ALERT_COOLDOWN_SEC = 2.0
 ALERT_GAP_END_SEC = 1.0
+TTFC_EPISODE_TOLERANCE_SEC = 1.0
 
 
 @dataclass
@@ -137,7 +138,7 @@ class PilotService:
         confirmed_alerts, rejected_alerts = _split_reviewed_alerts(alerts)
 
         episodes = _build_gt_episodes(frames)
-        episodes_found, ttfc_candidates = _collect_episode_coverage(
+        episodes_found, _ = _collect_episode_coverage(
             episodes=episodes,
             confirmed_alerts=confirmed_alerts,
         )
@@ -153,7 +154,11 @@ class PilotService:
         )
 
         recall_event = episodes_found / len(episodes) if episodes else 0.0
-        ttfc_sec = median(ttfc_candidates) if ttfc_candidates else None
+        ttfc_sec = _compute_ttfc_first_episode(
+            episodes=episodes,
+            confirmed_alerts=confirmed_alerts,
+            tolerance_sec=TTFC_EPISODE_TOLERANCE_SEC,
+        )
 
         return {
             "mission_id": mission_id,
@@ -220,7 +225,13 @@ class PilotService:
             return []
 
         mission_state.last_alert_ts = current_ts
-        return [self._build_alert(frame_event=frame_event, detection=best_detection)]
+        return [
+            self._build_alert(
+                frame_event=frame_event,
+                detection=best_detection,
+                people_detected=len(positives),
+            )
+        ]
 
     @staticmethod
     def _drop_expired_hits(
@@ -236,6 +247,7 @@ class PilotService:
         self,
         frame_event: FrameEvent,
         detection: DetectionInput,
+        people_detected: int,
     ) -> Alert:
         alert = Alert(
             alert_id=str(uuid4()),
@@ -243,12 +255,15 @@ class PilotService:
             frame_id=frame_event.frame_id,
             ts_sec=frame_event.ts_sec,
             image_uri=frame_event.image_uri,
-            detection=DetectionData(
-                bbox=detection.bbox,
-                score=detection.score,
-                label=detection.label,
-                model_name=detection.model_name,
-                explanation=detection.explanation,
+            evidence=AlertEvidence(
+                people_detected=people_detected,
+                primary_detection=DetectionData(
+                    bbox=detection.bbox,
+                    score=detection.score,
+                    label=detection.label,
+                    model_name=detection.model_name,
+                    explanation=detection.explanation,
+                ),
             ),
             lifecycle=AlertLifecycle(status="queued"),
         )
@@ -313,6 +328,34 @@ def _collect_episode_coverage(
         if reviewed_times:
             ttfc_candidates.append(min(reviewed_times) - episode_start)
     return episodes_found, ttfc_candidates
+
+
+def _compute_ttfc_first_episode(
+    episodes: list[tuple[float, float]],
+    confirmed_alerts: list[Alert],
+    tolerance_sec: float,
+) -> float | None:
+    if not episodes:
+        return None
+
+    first_start, first_end = episodes[0]
+    window_start = first_start - tolerance_sec
+    window_end = first_end + tolerance_sec
+
+    matching = [
+        alert
+        for alert in confirmed_alerts
+        if window_start <= alert.ts_sec <= window_end
+        and alert.lifecycle.reviewed_at_sec is not None
+    ]
+    if not matching:
+        return None
+
+    first_alert = min(matching, key=lambda item: item.ts_sec)
+    reviewed_at_sec = first_alert.lifecycle.reviewed_at_sec
+    if reviewed_at_sec is None:
+        return None
+    return reviewed_at_sec - first_start
 
 
 def _utc_now_iso() -> str:

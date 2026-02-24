@@ -38,6 +38,14 @@ class DetectionData:
 
 
 @dataclass
+class AlertEvidence:
+    """Detection evidence aggregated for alert card."""
+
+    people_detected: int
+    primary_detection: DetectionData
+
+
+@dataclass
 class AlertLifecycle:
     """Lifecycle data for alert review state."""
 
@@ -56,5 +64,5 @@ class Alert:
     frame_id: int
     ts_sec: float
     image_uri: str
-    detection: DetectionData
+    evidence: AlertEvidence
     lifecycle: AlertLifecycle
