@@ -279,6 +279,8 @@ style S1 fill:transparent,stroke:transparent
 style S4 fill:transparent,stroke:transparent
 ```
 
+**Product schema:** [Открыть product schema](./product_schema.png)
+
 
 ### 2.3. Этапы решения задачи (Data Scientist)
 
