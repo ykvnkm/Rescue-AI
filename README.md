@@ -39,10 +39,8 @@ curl http://127.0.0.1:8000/health
 ### Вариант 2: локально без Docker
 
 ```bash
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python -m uvicorn services.api_gateway.app:app --host 0.0.0.0 --port 8000
+uv sync --extra dev
+uv run python -m uvicorn services.api_gateway.app:app --host 0.0.0.0 --port 8000
 ```
 
 Проверка та же:
@@ -54,6 +52,5 @@ curl http://127.0.0.1:8000/health
 ## Тесты
 
 ```bash
-pip install -r requirements.txt -r requirements-dev.txt
-pytest
+uv run pytest
 ```
