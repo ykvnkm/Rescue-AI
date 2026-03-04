@@ -1,20 +1,6 @@
-"""API gateway entrypoint."""
-
 from fastapi import FastAPI
 
+from services.api_gateway.presentation.http.routes import router
+
 app = FastAPI(title="API")
-
-
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.get("/ready")
-def ready() -> dict[str, str]:
-    return {"status": "ready"}
-
-
-@app.get("/version")
-def version() -> dict[str, str]:
-    return {"version": "0.1.0"}
+app.include_router(router)
