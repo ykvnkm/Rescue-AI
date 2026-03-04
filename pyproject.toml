@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
   "fastapi==0.115.8",
   "uvicorn[standard]==0.30.6",
+  "PyYAML==6.0.2",
 ]
 
 [project.optional-dependencies]
@@ -16,7 +17,11 @@ dev = [
   "flake8==7.1.1",
   "isort==5.13.2",
   "mypy==1.11.2",
+  "types-PyYAML==6.0.12.20250915",
   "pylint==3.3.1",
+]
+inference = [
+  "ultralytics==8.3.57",
 ]
 
 [tool.black]
@@ -29,7 +34,7 @@ line_length = 88
 
 [tool.mypy]
 python_version = "3.12"
-files = ["services", "tests"]
+files = ["services", "libs", "tests"]
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true

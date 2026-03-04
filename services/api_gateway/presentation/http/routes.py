@@ -10,12 +10,14 @@ from pydantic import BaseModel, Field
 from libs.core.application.pilot_service import DetectionInput
 from libs.core.domain.entities import Alert, FrameEvent
 from services.api_gateway.dependencies import get_pilot_service
-from services.api_gateway.infrastructure.stream_runner import (
+from services.api_gateway.presentation.http.ui_page import build_ui_html
+from services.detection_service.application.stream_runner import (
     build_stream_config,
     get_stream_state,
     start_stream,
+    stop_stream,
+    wait_stream_stopped,
 )
-from services.api_gateway.presentation.http.ui_page import build_ui_html
 
 router = APIRouter()
 
@@ -47,9 +49,7 @@ class MissionStartFlowRequest(BaseModel):
     source_name: str = "pilot-dataset"
     fps: float = Field(default=2.0, gt=0.0)
     frames_dir: str
-    labels_dir: str | None = None
-    high_score: float = Field(default=0.95, ge=0.0, le=1.0)
-    low_score: float = Field(default=0.05, ge=0.0, le=1.0)
+    annotations_path: str | None = None
     api_base: str = "http://127.0.0.1:8000"
 
 
@@ -79,12 +79,31 @@ def version() -> dict[str, str]:
 
 
 @router.post("/v1/missions/{mission_id}/complete")
-def complete_mission(mission_id: str) -> dict[str, str]:
+def complete_mission(mission_id: str) -> dict[str, object]:
     service = get_pilot_service()
-    mission = service.complete_mission(mission_id)
+    if service.get_mission(mission_id) is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+
+    stop_stream(mission_id)
+    state = wait_stream_stopped(mission_id)
+
+    completed_frame_id = None
+    if state is not None and state.processed_frames > 0:
+        completed_frame_id = state.processed_frames - 1
+
+    mission = service.complete_mission(
+        mission_id=mission_id,
+        completed_frame_id=completed_frame_id,
+    )
     if mission is None:
         raise HTTPException(status_code=404, detail="Mission not found")
-    return {"mission_id": mission.mission_id, "status": mission.status}
+    report = service.get_mission_report(mission_id)
+    return {
+        "mission_id": mission.mission_id,
+        "status": mission.status,
+        "completed_frame_id": mission.completed_frame_id,
+        "report": report,
+    }
 
 
 @router.post("/v1/missions/start-flow")
@@ -101,10 +120,8 @@ def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
             mission_id=mission.mission_id,
             options={
                 "frames_dir": payload.frames_dir,
-                "labels_dir": payload.labels_dir,
+                "annotations_path": payload.annotations_path,
                 "fps": payload.fps,
-                "high_score": payload.high_score,
-                "low_score": payload.low_score,
                 "api_base": payload.api_base,
             },
         )
@@ -130,6 +147,7 @@ def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
             "total_frames": state.total_frames,
             "last_frame_name": state.last_frame_name,
             "error": state.error,
+            "stop_requested": state.stop_requested,
         },
     }
 
@@ -149,6 +167,7 @@ def get_mission_stream_status(mission_id: str) -> dict[str, object]:
             "total_frames": 0,
             "last_frame_name": None,
             "error": None,
+            "stop_requested": False,
         }
     return {
         "mission_id": state.mission_id,
@@ -157,6 +176,7 @@ def get_mission_stream_status(mission_id: str) -> dict[str, object]:
         "total_frames": state.total_frames,
         "last_frame_name": state.last_frame_name,
         "error": state.error,
+        "stop_requested": state.stop_requested,
     }
 
 
@@ -208,6 +228,8 @@ def get_alerts(
     status: str | None = None,
 ) -> list[dict[str, object]]:
     service = get_pilot_service()
+    if mission_id is not None and service.get_mission(mission_id) is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
     alerts = service.list_alerts(mission_id=mission_id, status=status)
     return [_alert_to_dict(alert, service=service) for alert in alerts]
 
@@ -291,6 +313,20 @@ def get_mission_report_endpoint(mission_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
+@router.get("/v1/missions/{mission_id}/debug/episodes")
+def get_mission_episode_debug_endpoint(
+    mission_id: str,
+    limit: int = 200,
+) -> dict[str, object]:
+    service = get_pilot_service()
+    if limit <= 0:
+        raise HTTPException(status_code=400, detail="limit must be > 0")
+    try:
+        return service.get_mission_episode_debug(mission_id=mission_id, limit=limit)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
 def _alert_to_dict(alert: Alert, service: Any) -> dict[str, object]:
     mission = service.get_mission(alert.mission_id)
     wall_time = _build_alert_wall_time(
@@ -306,6 +342,7 @@ def _alert_to_dict(alert: Alert, service: Any) -> dict[str, object]:
         "image_uri": alert.image_uri,
         "people_detected": alert.evidence.people_detected,
         "bbox": list(alert.evidence.primary_detection.bbox),
+        "bboxes": [list(item.bbox) for item in alert.evidence.detections],
         "score": alert.evidence.primary_detection.score,
         "label": alert.evidence.primary_detection.label,
         "model_name": alert.evidence.primary_detection.model_name,

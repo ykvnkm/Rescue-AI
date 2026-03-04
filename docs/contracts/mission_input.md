@@ -32,9 +32,7 @@
   - `fps` (float, > 0),
   - `source_name` (string).
 - Опциональные поля:
-  - `labels_dir` (string | null),
-  - `high_score` (float),
-  - `low_score` (float),
+  - `annotations_path` (string | null, путь до папки `annotations` или конкретного `.json`),
   - `api_base` (string).
 
 ## PostgreSQL (source of truth)

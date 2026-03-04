@@ -26,23 +26,23 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run black
-        run: uv run black --check services tests
+        run: uv run black --check services libs tests
 
       - name: Run isort
-        run: uv run isort --check-only services tests
+        run: uv run isort --check-only services libs tests
 
       - name: Run flake8
-        run: uv run flake8 services tests
+        run: uv run flake8 services libs tests
 
       - name: Run mypy
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run mypy services tests
+        run: uv run mypy services libs tests
 
       - name: Run pylint
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pylint services tests
+        run: uv run pylint services libs tests
 
   test:
     runs-on: ubuntu-latest

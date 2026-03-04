@@ -19,7 +19,12 @@ class MissionRepository(Protocol):
 
     def get(self, mission_id: str) -> Mission | None: ...
 
-    def update_status(self, mission_id: str, status: str) -> Mission | None: ...
+    def update_status(
+        self,
+        mission_id: str,
+        status: str,
+        completed_frame_id: int | None = None,
+    ) -> Mission | None: ...
 
 
 class AlertRepository(Protocol):

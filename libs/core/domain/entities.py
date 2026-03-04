@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -12,6 +12,7 @@ class Mission:
     created_at: str
     total_frames: int
     fps: float
+    completed_frame_id: int | None = None
 
 
 @dataclass
@@ -43,6 +44,7 @@ class AlertEvidence:
 
     people_detected: int
     primary_detection: DetectionData
+    detections: list[DetectionData] = field(default_factory=list)
 
 
 @dataclass
