@@ -39,7 +39,7 @@ curl http://127.0.0.1:8000/health
 ### Вариант 2: локально без Docker
 
 ```bash
-uv sync --extra dev
+uv sync --extra dev --extra inference
 uv run python -m uvicorn services.api_gateway.app:app --host 0.0.0.0 --port 8000
 ```
 
@@ -54,3 +54,8 @@ curl http://127.0.0.1:8000/health
 ```bash
 uv run pytest
 ```
+
+## Воспроизводимость
+
+- Отчёт миссии включает `config_name`, `config_hash`, `config_path`, `model_url`, `service_version`.
+- Это фиксирует, с каким именно конфигом и моделью был получен результат.
