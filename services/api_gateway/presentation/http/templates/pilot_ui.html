@@ -115,7 +115,8 @@
     .frame-wrap {
       position: relative;
       width: 100%;
-      min-height: 520px;
+      aspect-ratio: 16 / 9;
+      min-height: 540px;
       background: rgba(6, 11, 22, 0.9);
       border-radius: 14px;
       border: 1px solid rgba(148, 163, 184, 0.2);
@@ -123,10 +124,20 @@
       align-items: center;
       justify-content: center;
       overflow: hidden;
+      cursor: grab;
+    }
+    .frame-wrap.dragging { cursor: grabbing; }
+    .zoom-content {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      transform-origin: 0 0;
     }
     #alertFrame {
       width: 100%;
-      max-height: 520px;
+      height: 100%;
       object-fit: contain;
       display: none;
     }
@@ -137,9 +148,10 @@
     }
     .bbox-item {
       position: absolute;
-      border: 3px solid #ef4444;
-      box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.4);
-      border-radius: 6px;
+      border: 2px solid #00f5d4;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.65);
+      border-radius: 2px;
+      background: transparent;
     }
     #emptyState {
       color: var(--muted);
@@ -148,7 +160,7 @@
     }
     .meta-row {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 8px;
     }
     .meta-item {
@@ -223,10 +235,6 @@
       <label>Путь к папке с кадрами</label>
       <input id="framesDir" placeholder="/abs/path/to/frames" />
     </div>
-    <div class="field">
-      <label>Путь к аннотациям (папка или .json, опционально)</label>
-      <input id="annotationsPath" placeholder="/abs/path/to/annotations_or_json" />
-    </div>
 
     <button class="btn" onclick="startMissionFlow()">Начать миссию</button>
     <button class="btn secondary" onclick="completeMission()">Закончить миссию</button>
@@ -238,18 +246,16 @@
   <section class="card console">
     <div class="frame-wrap">
       <div id="emptyState">Ожидание алертов…</div>
-      <img id="alertFrame" alt="alert frame" />
-      <div id="bboxLayer"></div>
+      <div id="zoomContent" class="zoom-content">
+        <img id="alertFrame" alt="alert frame" />
+        <div id="bboxLayer"></div>
+      </div>
     </div>
 
     <div class="meta-row">
       <div class="meta-item">
         <span class="k">Время алерта</span>
         <span class="v" id="metaTime">—</span>
-      </div>
-      <div class="meta-item">
-        <span class="k">Обнаружено людей</span>
-        <span class="v" id="metaPeople">—</span>
       </div>
       <div class="meta-item">
         <span class="k">Статус</span>
@@ -292,6 +298,13 @@ let currentMissionId = '';
 let streamPollTimer = null;
 let reportLoadedMissionId = '';
 let missionClosed = false;
+let zoomScale = 1;
+let panX = 0;
+let panY = 0;
+let dragStartX = 0;
+let dragStartY = 0;
+let dragActive = false;
+let lastRenderedAlertId = '';
 
 function nowSec() {
   return Date.now() / 1000;
@@ -314,13 +327,101 @@ function formatWallTime(iso) {
 
 function resetAlertView() {
   currentAlert = null;
+  lastRenderedAlertId = '';
   document.getElementById('emptyState').style.display = 'block';
-  document.getElementById('alertFrame').style.display = 'none';
+  const frame = document.getElementById('alertFrame');
+  frame.style.display = 'none';
+  frame.removeAttribute('data-alert-id');
   document.getElementById('bboxLayer').innerHTML = '';
   document.getElementById('metaTime').textContent = '—';
-  document.getElementById('metaPeople').textContent = '—';
   document.getElementById('metaStatus').textContent = '—';
   document.getElementById('metaScore').textContent = '—';
+  resetZoomPan();
+}
+
+function applyViewportTransform() {
+  document.getElementById('zoomContent').style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomScale})`;
+}
+
+function clampPan() {
+  const frameWrap = document.querySelector('.frame-wrap');
+  const zoomContent = document.getElementById('zoomContent');
+  if (!frameWrap || !zoomContent) return;
+  const viewportW = frameWrap.clientWidth;
+  const viewportH = frameWrap.clientHeight;
+  const scaledW = zoomContent.clientWidth * zoomScale;
+  const scaledH = zoomContent.clientHeight * zoomScale;
+
+  const minX = Math.min(0, viewportW - scaledW);
+  const minY = Math.min(0, viewportH - scaledH);
+  panX = Math.max(minX, Math.min(0, panX));
+  panY = Math.max(minY, Math.min(0, panY));
+}
+
+function resetZoomPan() {
+  zoomScale = 1;
+  panX = 0;
+  panY = 0;
+  applyViewportTransform();
+}
+
+function setupMouseZoomAndPan() {
+  const frameWrap = document.querySelector('.frame-wrap');
+  if (!frameWrap) return;
+
+  frameWrap.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    const prevScale = zoomScale;
+    const zoomIntensity = event.ctrlKey ? 0.012 : 0.009;
+    const nextScale = Math.max(
+      1,
+      Math.min(12, Number((prevScale * Math.exp(-event.deltaY * zoomIntensity)).toFixed(4))),
+    );
+    if (nextScale === prevScale) return;
+
+    const rect = frameWrap.getBoundingClientRect();
+    const cursorX = event.clientX - rect.left;
+    const cursorY = event.clientY - rect.top;
+    const worldX = (cursorX - panX) / prevScale;
+    const worldY = (cursorY - panY) / prevScale;
+
+    zoomScale = nextScale;
+    panX = cursorX - worldX * zoomScale;
+    panY = cursorY - worldY * zoomScale;
+    clampPan();
+    applyViewportTransform();
+  }, { passive: false });
+
+  frameWrap.addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    if (zoomScale <= 1) return;
+    dragActive = true;
+    frameWrap.classList.add('dragging');
+    dragStartX = event.clientX - panX;
+    dragStartY = event.clientY - panY;
+  });
+
+  window.addEventListener('mousemove', (event) => {
+    if (!dragActive) return;
+    panX = event.clientX - dragStartX;
+    panY = event.clientY - dragStartY;
+    clampPan();
+    applyViewportTransform();
+  });
+
+  window.addEventListener('mouseup', () => {
+    dragActive = false;
+    frameWrap.classList.remove('dragging');
+  });
+
+  frameWrap.addEventListener('dblclick', () => {
+    resetZoomPan();
+  });
+
+  window.addEventListener('resize', () => {
+    clampPan();
+    applyViewportTransform();
+  });
 }
 
 async function startMissionFlow() {
@@ -329,12 +430,10 @@ async function startMissionFlow() {
     alert('Укажите путь к папке с кадрами');
     return;
   }
-  const annotationsPath = document.getElementById('annotationsPath').value.trim();
   const payload = {
     source_name: 'pilot-mission',
     fps: 2.0,
     frames_dir: framesDir,
-    annotations_path: annotationsPath || null,
     api_base: window.location.origin,
   };
 
@@ -409,11 +508,18 @@ function drawBboxes(alert) {
 
   bboxes.forEach((bboxRaw) => {
     if (!bboxRaw || bboxRaw.length !== 4) return;
-    const [x1, y1, x2, y2] = bboxRaw.map(Number);
-    const left = Math.max(offsetX + x1 * scaleX, 0);
-    const top = Math.max(offsetY + y1 * scaleY, 0);
-    const width = Math.max((x2 - x1) * scaleX, 1);
-    const height = Math.max((y2 - y1) * scaleY, 1);
+    const parsed = normalizeBboxToPixels(bboxRaw, frame.naturalWidth, frame.naturalHeight);
+    if (!parsed) return;
+    const [x1, y1, x2, y2] = parsed;
+
+    const padPx = 8;
+    const left = Math.max(offsetX + x1 * scaleX - padPx, 0);
+    const top = Math.max(offsetY + y1 * scaleY - padPx, 0);
+    const right = Math.min(offsetX + x2 * scaleX + padPx, frameWidth);
+    const bottom = Math.min(offsetY + y2 * scaleY + padPx, frameHeight);
+
+    const width = Math.max(right - left, 3);
+    const height = Math.max(bottom - top, 3);
     const box = document.createElement('div');
     box.className = 'bbox-item';
     box.style.left = `${left}px`;
@@ -424,7 +530,35 @@ function drawBboxes(alert) {
   });
 }
 
-function renderAlert(alert) {
+function normalizeBboxToPixels(raw, imageWidth, imageHeight) {
+  const values = raw.map((item) => Number(item));
+  if (values.some((item) => Number.isNaN(item))) return null;
+  let [x1, y1, x2, y2] = values;
+
+  const maxValue = Math.max(Math.abs(x1), Math.abs(y1), Math.abs(x2), Math.abs(y2));
+  const looksNormalized = maxValue <= 1.5;
+  if (looksNormalized) {
+    x1 *= imageWidth;
+    x2 *= imageWidth;
+    y1 *= imageHeight;
+    y2 *= imageHeight;
+  }
+
+  x1 = Math.max(0, Math.min(x1, imageWidth));
+  y1 = Math.max(0, Math.min(y1, imageHeight));
+  x2 = Math.max(0, Math.min(x2, imageWidth));
+  y2 = Math.max(0, Math.min(y2, imageHeight));
+  if (x2 <= x1 || y2 <= y1) return null;
+  return [x1, y1, x2, y2];
+}
+
+function updateAlertMeta(alert) {
+  document.getElementById('metaTime').textContent = formatWallTime(alert.alert_time_iso);
+  document.getElementById('metaStatus').textContent = alert.status;
+  document.getElementById('metaScore').textContent = String(alert.score ?? '—');
+}
+
+function renderAlert(alert, forceImageReload = false) {
   currentAlert = alert;
   if (!alertSeenAt.has(alert.alert_id)) {
     alertSeenAt.set(alert.alert_id, nowSec());
@@ -433,13 +567,18 @@ function renderAlert(alert) {
   document.getElementById('emptyState').style.display = 'none';
   const frame = document.getElementById('alertFrame');
   frame.style.display = 'block';
-  frame.onload = () => drawBboxes(alert);
-  frame.src = `/v1/alerts/${alert.alert_id}/frame`;
-
-  document.getElementById('metaTime').textContent = formatWallTime(alert.alert_time_iso);
-  document.getElementById('metaPeople').textContent = String(alert.people_detected ?? 1);
-  document.getElementById('metaStatus').textContent = alert.status;
-  document.getElementById('metaScore').textContent = String(alert.score ?? '—');
+  const frameUrl = `/v1/alerts/${alert.alert_id}/frame`;
+  const shouldReloadImage = forceImageReload || frame.dataset.alertId !== alert.alert_id;
+  if (shouldReloadImage) {
+    frame.onload = () => drawBboxes(alert);
+    frame.src = frameUrl;
+    frame.dataset.alertId = alert.alert_id;
+    resetZoomPan();
+  } else {
+    drawBboxes(alert);
+  }
+  updateAlertMeta(alert);
+  lastRenderedAlertId = alert.alert_id;
 }
 
 async function refreshAlerts() {
@@ -472,7 +611,14 @@ async function refreshAlerts() {
     }
     return;
   }
-  renderAlert(alerts[0]);
+  const headAlert = alerts[0];
+  if (lastRenderedAlertId === headAlert.alert_id) {
+    currentAlert = headAlert;
+    drawBboxes(headAlert);
+    updateAlertMeta(headAlert);
+    return;
+  }
+  renderAlert(headAlert, true);
 }
 
 async function fetchStreamStatus() {
@@ -564,6 +710,8 @@ async function loadReport() {
 setInterval(() => {
   refreshAlerts();
 }, 1200);
+
+setupMouseZoomAndPan();
 </script>
 </body>
 </html>
