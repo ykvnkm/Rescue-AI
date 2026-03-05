@@ -1,0 +1,21 @@
+services:
+  airflow-webserver:
+    image: apache/airflow:2.10.2
+    command: webserver
+    environment:
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    volumes:
+      - ../../orchestration/airflow/dags:/opt/airflow/dags
+    ports:
+      - "8080:8080"
+
+  airflow-scheduler:
+    image: apache/airflow:2.10.2
+    command: scheduler
+    environment:
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    volumes:
+      - ../../orchestration/airflow/dags:/opt/airflow/dags
+    depends_on:
+      - airflow-webserver
+
