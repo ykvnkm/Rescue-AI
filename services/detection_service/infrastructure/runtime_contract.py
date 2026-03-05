@@ -18,6 +18,7 @@ DEFAULT_MODEL_URL = (
 
 @dataclass(frozen=True)
 class InferenceConfig:
+    """Inference settings loaded from the runtime contract."""
 
     model_url: str
     device: str
@@ -29,6 +30,7 @@ class InferenceConfig:
 
 @dataclass(frozen=True)
 class ReportProvenance:
+    """Provenance metadata for generated reports."""
 
     config_name: str
     config_hash: str
@@ -38,6 +40,7 @@ class ReportProvenance:
 
 @dataclass(frozen=True)
 class StreamContract:
+    """Full stream contract used by detection runtime."""
 
     dataset_fps: float
     alert_rules: AlertRuleConfig
