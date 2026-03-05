@@ -16,6 +16,7 @@ MODEL_CACHE_PATH = Path("runtime/models/yolov8n_baseline_multiscale.pt")
 
 @dataclass(frozen=True)
 class DetectionResult:
+    """Single detector output after filtering and conversion."""
 
     bbox: tuple[float, float, float, float]
     score: float
@@ -23,6 +24,7 @@ class DetectionResult:
 
 
 class YoloDetector:
+    """YOLO detector with lazy model loading."""
 
     def __init__(self, config: InferenceConfig) -> None:
         self._config = config

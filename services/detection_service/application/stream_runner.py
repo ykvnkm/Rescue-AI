@@ -19,6 +19,7 @@ from services.detection_service.infrastructure.yolo_detector import YoloDetector
 
 @dataclass
 class StreamState:
+    """State snapshot of a running mission stream."""
 
     mission_id: str
     running: bool
@@ -31,6 +32,7 @@ class StreamState:
 
 @dataclass
 class StreamConfig:
+    """Resolved runtime configuration for one mission stream."""
 
     mission_id: str
     frame_files: list[Path]
@@ -42,6 +44,7 @@ class StreamConfig:
 
 
 class StreamOptions(TypedDict):
+    """External options accepted when creating stream configuration."""
 
     frames_dir: str
     annotations_path: str | None
@@ -338,6 +341,7 @@ def _extract_frame_number(frame_path: Path) -> int | None:
 
 
 class AnnotationIndex:
+    """Lookup index for ground-truth boxes by frame path variations."""
 
     def __init__(
         self,
