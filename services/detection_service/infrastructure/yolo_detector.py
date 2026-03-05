@@ -33,8 +33,19 @@ class YoloDetector:
         self._model = None
 
     def predict(self, frame_path: Path) -> list[DetectionResult]:
+        results = self._predict_raw(frame_path)
+        if not results:
+            return []
+
+        result = results[0]
+        return _extract_detections(
+            result=result,
+            confidence_threshold=self._config.confidence_threshold,
+        )
+
+    def _predict_raw(self, frame_path: Path):
         model = self._ensure_model()
-        results = model.predict(
+        return model.predict(
             source=str(frame_path),
             conf=self._config.confidence_threshold,
             iou=self._config.nms_iou,
@@ -43,38 +54,6 @@ class YoloDetector:
             device=self._config.device,
             verbose=False,
         )
-        if not results:
-            return []
-
-        result = results[0]
-        boxes = result.boxes
-        names = result.names
-        if boxes is None:
-            return []
-
-        person_ids = _resolve_person_ids(names)
-        cls_ids = boxes.cls.cpu().numpy().astype(int)
-        scores = boxes.conf.cpu().numpy()
-        coords = boxes.xyxy.cpu().numpy()
-
-        detections: list[DetectionResult] = []
-        for box, score, cls_id in zip(coords, scores, cls_ids):
-            if person_ids and cls_id not in person_ids:
-                continue
-            if float(score) < self._config.confidence_threshold:
-                continue
-            detections.append(
-                DetectionResult(
-                    bbox=(
-                        float(box[0]),
-                        float(box[1]),
-                        float(box[2]),
-                        float(box[3]),
-                    ),
-                    score=float(score),
-                )
-            )
-        return detections
 
     def warmup(self) -> None:
         self._ensure_model()
@@ -94,6 +73,37 @@ class YoloDetector:
 
         self._model = YOLO(str(MODEL_CACHE_PATH))
         return self._model
+
+
+def _extract_detections(result, confidence_threshold: float) -> list[DetectionResult]:
+    boxes = result.boxes
+    names = result.names
+    if boxes is None:
+        return []
+
+    person_ids = _resolve_person_ids(names)
+    cls_ids = boxes.cls.cpu().numpy().astype(int)
+    scores = boxes.conf.cpu().numpy()
+    coords = boxes.xyxy.cpu().numpy()
+
+    detections: list[DetectionResult] = []
+    for box, score, cls_id in zip(coords, scores, cls_ids):
+        if person_ids and cls_id not in person_ids:
+            continue
+        if float(score) < confidence_threshold:
+            continue
+        detections.append(
+            DetectionResult(
+                bbox=(
+                    float(box[0]),
+                    float(box[1]),
+                    float(box[2]),
+                    float(box[3]),
+                ),
+                score=float(score),
+            )
+        )
+    return detections
 
 
 def _resolve_person_ids(names: dict[int, str] | list[str]) -> set[int]:

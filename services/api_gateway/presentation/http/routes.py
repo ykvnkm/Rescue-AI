@@ -343,6 +343,7 @@ def _alert_to_dict(alert: Alert, service: Any) -> dict[str, object]:
         "people_detected": alert.evidence.people_detected,
         "bbox": list(alert.evidence.primary_detection.bbox),
         "bboxes": [list(item.bbox) for item in alert.evidence.detections],
+        "scores": [item.score for item in alert.evidence.detections],
         "score": alert.evidence.primary_detection.score,
         "label": alert.evidence.primary_detection.label,
         "model_name": alert.evidence.primary_detection.model_name,
