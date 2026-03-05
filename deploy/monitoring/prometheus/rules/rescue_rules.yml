@@ -1,0 +1,21 @@
+groups:
+  - name: rescue-ai-service-alerts
+    rules:
+      - alert: RescueApiDown
+        expr: up{job="api_gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API gateway is down"
+          description: "Prometheus cannot scrape api_gateway for 2 minutes."
+
+      - alert: RescueBatchFailureRateHigh
+        expr: rate(rescue_batch_jobs_failed_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Batch failures detected"
+          description: "One or more batch jobs failed in the last 10 minutes."
+

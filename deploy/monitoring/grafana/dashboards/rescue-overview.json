@@ -1,0 +1,36 @@
+{
+  "id": null,
+  "title": "Rescue AI Overview",
+  "tags": ["rescue-ai", "mlops"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "API Availability",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "avg(up{job=\"api_gateway\"})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Batch Failed Jobs",
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 0 },
+      "targets": [
+        {
+          "expr": "increase(rescue_batch_jobs_failed_total[1h])",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" }
+}
+
