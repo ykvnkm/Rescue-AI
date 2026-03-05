@@ -33,11 +33,18 @@ class InMemoryMissionRepository(MissionRepository):
     def get(self, mission_id: str) -> Mission | None:
         return self._db.missions.get(mission_id)
 
-    def update_status(self, mission_id: str, status: str) -> Mission | None:
+    def update_status(
+        self,
+        mission_id: str,
+        status: str,
+        completed_frame_id: int | None = None,
+    ) -> Mission | None:
         mission = self._db.missions.get(mission_id)
         if mission is None:
             return None
         mission.status = status
+        if completed_frame_id is not None:
+            mission.completed_frame_id = completed_frame_id
         return mission
 
 

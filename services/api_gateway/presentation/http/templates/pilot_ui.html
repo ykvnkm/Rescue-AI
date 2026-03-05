@@ -130,12 +130,16 @@
       object-fit: contain;
       display: none;
     }
-    #bboxOverlay {
+    #bboxLayer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+    .bbox-item {
       position: absolute;
       border: 3px solid #ef4444;
       box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.4);
-      pointer-events: none;
-      display: none;
+      border-radius: 6px;
     }
     #emptyState {
       color: var(--muted);
@@ -220,8 +224,8 @@
       <input id="framesDir" placeholder="/abs/path/to/frames" />
     </div>
     <div class="field">
-      <label>Путь к папке с аннотациями (опционально)</label>
-      <input id="labelsDir" placeholder="/abs/path/to/labels" />
+      <label>Путь к аннотациям (папка или .json, опционально)</label>
+      <input id="annotationsPath" placeholder="/abs/path/to/annotations_or_json" />
     </div>
 
     <button class="btn" onclick="startMissionFlow()">Начать миссию</button>
@@ -235,7 +239,7 @@
     <div class="frame-wrap">
       <div id="emptyState">Ожидание алертов…</div>
       <img id="alertFrame" alt="alert frame" />
-      <div id="bboxOverlay"></div>
+      <div id="bboxLayer"></div>
     </div>
 
     <div class="meta-row">
@@ -285,6 +289,9 @@ const api = '';
 const alertSeenAt = new Map();
 let currentAlert = null;
 let currentMissionId = '';
+let streamPollTimer = null;
+let reportLoadedMissionId = '';
+let missionClosed = false;
 
 function nowSec() {
   return Date.now() / 1000;
@@ -309,7 +316,7 @@ function resetAlertView() {
   currentAlert = null;
   document.getElementById('emptyState').style.display = 'block';
   document.getElementById('alertFrame').style.display = 'none';
-  document.getElementById('bboxOverlay').style.display = 'none';
+  document.getElementById('bboxLayer').innerHTML = '';
   document.getElementById('metaTime').textContent = '—';
   document.getElementById('metaPeople').textContent = '—';
   document.getElementById('metaStatus').textContent = '—';
@@ -322,14 +329,12 @@ async function startMissionFlow() {
     alert('Укажите путь к папке с кадрами');
     return;
   }
-  const labelsDir = document.getElementById('labelsDir').value.trim();
+  const annotationsPath = document.getElementById('annotationsPath').value.trim();
   const payload = {
     source_name: 'pilot-mission',
     fps: 2.0,
     frames_dir: framesDir,
-    labels_dir: labelsDir || null,
-    high_score: 0.95,
-    low_score: 0.05,
+    annotations_path: annotationsPath || null,
     api_base: window.location.origin,
   };
 
@@ -345,7 +350,10 @@ async function startMissionFlow() {
   }
 
   currentMissionId = data.mission_id;
+  reportLoadedMissionId = '';
+  missionClosed = false;
   setMissionStatus(`Миссия запущена: ${data.mission_id}`);
+  startStreamPolling();
   await refreshAlerts();
 }
 
@@ -355,27 +363,65 @@ async function completeMission() {
     method: 'POST',
   });
   const data = await response.json();
-  setMissionStatus(JSON.stringify(data));
+  if (!response.ok) {
+    setMissionStatus(data.detail || 'Ошибка завершения миссии');
+    return;
+  }
+  const completedFrameId = data.completed_frame_id ?? '—';
+  setMissionStatus(`Миссия завершена. Последний учтенный кадр: ${completedFrameId}`);
+  missionClosed = true;
+  if (data.report) {
+    setReportRow('rEpisodesTotal', data.report.episodes_total);
+    setReportRow('rEpisodesFound', data.report.episodes_found);
+    setReportRow('rRecall', data.report.recall_event);
+    setReportRow('rTtfc', data.report.ttfc_sec);
+    setReportRow('rAlertsTotal', data.report.alerts_total);
+    setReportRow('rConfirmed', data.report.alerts_confirmed);
+    setReportRow('rRejected', data.report.alerts_rejected);
+    setReportRow('rFpMin', data.report.fp_per_minute);
+  } else {
+    await loadReport();
+  }
+  stopStreamPolling();
+  resetAlertView();
 }
 
-function drawBbox(alert) {
+function drawBboxes(alert) {
   const frame = document.getElementById('alertFrame');
-  const overlay = document.getElementById('bboxOverlay');
-  const bbox = alert.bbox || [];
-  if (bbox.length !== 4 || !frame.naturalWidth || !frame.naturalHeight) {
-    overlay.style.display = 'none';
+  const layer = document.getElementById('bboxLayer');
+  layer.innerHTML = '';
+
+  const bboxes = (alert.bboxes && alert.bboxes.length) ? alert.bboxes : [alert.bbox];
+  if (!frame.naturalWidth || !frame.naturalHeight || !bboxes.length) {
     return;
   }
 
-  const [x1, y1, x2, y2] = bbox.map(Number);
-  const scaleX = frame.clientWidth / frame.naturalWidth;
-  const scaleY = frame.clientHeight / frame.naturalHeight;
+  const frameWidth = frame.clientWidth;
+  const frameHeight = frame.clientHeight;
+  const imageAspect = frame.naturalWidth / frame.naturalHeight;
+  const frameAspect = frameWidth / frameHeight;
+  const renderedWidth = imageAspect > frameAspect ? frameWidth : frameHeight * imageAspect;
+  const renderedHeight = imageAspect > frameAspect ? frameWidth / imageAspect : frameHeight;
+  const offsetX = (frameWidth - renderedWidth) / 2;
+  const offsetY = (frameHeight - renderedHeight) / 2;
+  const scaleX = renderedWidth / frame.naturalWidth;
+  const scaleY = renderedHeight / frame.naturalHeight;
 
-  overlay.style.left = `${x1 * scaleX}px`;
-  overlay.style.top = `${y1 * scaleY}px`;
-  overlay.style.width = `${Math.max((x2 - x1) * scaleX, 0)}px`;
-  overlay.style.height = `${Math.max((y2 - y1) * scaleY, 0)}px`;
-  overlay.style.display = 'block';
+  bboxes.forEach((bboxRaw) => {
+    if (!bboxRaw || bboxRaw.length !== 4) return;
+    const [x1, y1, x2, y2] = bboxRaw.map(Number);
+    const left = Math.max(offsetX + x1 * scaleX, 0);
+    const top = Math.max(offsetY + y1 * scaleY, 0);
+    const width = Math.max((x2 - x1) * scaleX, 1);
+    const height = Math.max((y2 - y1) * scaleY, 1);
+    const box = document.createElement('div');
+    box.className = 'bbox-item';
+    box.style.left = `${left}px`;
+    box.style.top = `${top}px`;
+    box.style.width = `${width}px`;
+    box.style.height = `${height}px`;
+    layer.appendChild(box);
+  });
 }
 
 function renderAlert(alert) {
@@ -387,7 +433,7 @@ function renderAlert(alert) {
   document.getElementById('emptyState').style.display = 'none';
   const frame = document.getElementById('alertFrame');
   frame.style.display = 'block';
-  frame.onload = () => drawBbox(alert);
+  frame.onload = () => drawBboxes(alert);
   frame.src = `/v1/alerts/${alert.alert_id}/frame`;
 
   document.getElementById('metaTime').textContent = formatWallTime(alert.alert_time_iso);
@@ -397,17 +443,83 @@ function renderAlert(alert) {
 }
 
 async function refreshAlerts() {
+  if (missionClosed) {
+    return;
+  }
   if (!missionId()) {
     resetAlertView();
     return;
   }
   const response = await fetch(api + `/v1/alerts?mission_id=${encodeURIComponent(missionId())}&status=queued`);
+  if (response.status === 404) {
+    missionClosed = true;
+    stopStreamPolling();
+    currentMissionId = '';
+    resetAlertView();
+    setMissionStatus('Сессия недоступна после перезапуска сервиса. Запустите новую миссию.');
+    return;
+  }
+  if (!response.ok) {
+    setMissionStatus('Ошибка получения очереди алертов');
+    return;
+  }
   const alerts = await response.json();
   if (!alerts.length) {
     resetAlertView();
+    const stream = await fetchStreamStatus();
+    if (stream && stream.running) {
+      setMissionStatus(`Миссия в работе: ${stream.processed_frames}/${stream.total_frames} кадров`);
+    }
     return;
   }
   renderAlert(alerts[0]);
+}
+
+async function fetchStreamStatus() {
+  if (!missionId()) return null;
+  const response = await fetch(api + `/v1/missions/${missionId()}/stream/status`);
+  if (response.status === 404) {
+    missionClosed = true;
+    stopStreamPolling();
+    currentMissionId = '';
+    resetAlertView();
+    setMissionStatus('Сессия недоступна после перезапуска сервиса. Запустите новую миссию.');
+    return null;
+  }
+  if (!response.ok) return null;
+  return response.json();
+}
+
+function stopStreamPolling() {
+  if (streamPollTimer) {
+    clearInterval(streamPollTimer);
+    streamPollTimer = null;
+  }
+}
+
+function startStreamPolling() {
+  stopStreamPolling();
+  streamPollTimer = setInterval(async () => {
+    const stream = await fetchStreamStatus();
+    if (!stream) return;
+    if (stream.error) {
+      setMissionStatus(`Ошибка потока: ${stream.error}`);
+      stopStreamPolling();
+      return;
+    }
+    if (stream.running) {
+      setMissionStatus(`Миссия в работе: ${stream.processed_frames}/${stream.total_frames} кадров`);
+      return;
+    }
+    if (stream.total_frames > 0 && stream.processed_frames >= stream.total_frames) {
+      setMissionStatus(`Миссия завершена: ${stream.processed_frames}/${stream.total_frames} кадров`);
+      if (reportLoadedMissionId !== missionId()) {
+        await loadReport();
+        reportLoadedMissionId = missionId();
+      }
+      stopStreamPolling();
+    }
+  }, 1000);
 }
 
 async function reviewCurrent(action) {

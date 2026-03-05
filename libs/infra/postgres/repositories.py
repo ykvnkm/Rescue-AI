@@ -16,7 +16,12 @@ class PostgresMissionRepository(MissionRepository):
     def get(self, mission_id: str) -> Mission | None:
         raise NotImplementedError("Postgres integration not implemented yet")
 
-    def update_status(self, mission_id: str, status: str) -> Mission | None:
+    def update_status(
+        self,
+        mission_id: str,
+        status: str,
+        completed_frame_id: int | None = None,
+    ) -> Mission | None:
         raise NotImplementedError("Postgres integration not implemented yet")
 
 
