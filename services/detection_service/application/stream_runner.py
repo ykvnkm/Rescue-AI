@@ -1,5 +1,3 @@
-"""Background frame stream runner used by UI-driven pilot simulation."""
-
 from __future__ import annotations
 
 import json
@@ -21,7 +19,6 @@ from services.detection_service.infrastructure.yolo_detector import YoloDetector
 
 @dataclass
 class StreamState:
-    """Current state of background stream replay."""
 
     mission_id: str
     running: bool
@@ -34,7 +31,6 @@ class StreamState:
 
 @dataclass
 class StreamConfig:
-    """Configuration for stream replay."""
 
     mission_id: str
     frame_files: list[Path]
@@ -46,7 +42,6 @@ class StreamConfig:
 
 
 class StreamOptions(TypedDict):
-    """Options used to construct stream config."""
 
     frames_dir: str
     annotations_path: str | None
@@ -91,7 +86,6 @@ def build_stream_config(
     mission_id: str,
     options: StreamOptions,
 ) -> StreamConfig:
-    """Validate input and create stream config."""
     contract = load_stream_contract()
 
     frames_path = Path(options["frames_dir"])
@@ -344,7 +338,6 @@ def _extract_frame_number(frame_path: Path) -> int | None:
 
 
 class AnnotationIndex:
-    """Lookup object for GT boxes by frame path with COCO-safe matching."""
 
     def __init__(
         self,

@@ -1,5 +1,3 @@
-"""Runtime configuration loader for model inference and alert contract."""
-
 from __future__ import annotations
 
 import hashlib
@@ -20,7 +18,6 @@ DEFAULT_MODEL_URL = (
 
 @dataclass(frozen=True)
 class InferenceConfig:
-    """Inference parameters for YOLO runtime."""
 
     model_url: str
     device: str
@@ -32,7 +29,6 @@ class InferenceConfig:
 
 @dataclass(frozen=True)
 class ReportProvenance:
-    """Reproducibility metadata injected into mission reports."""
 
     config_name: str
     config_hash: str
@@ -42,7 +38,6 @@ class ReportProvenance:
 
 @dataclass(frozen=True)
 class StreamContract:
-    """Combined runtime contract used by stream runner and pilot service."""
 
     dataset_fps: float
     alert_rules: AlertRuleConfig
@@ -52,7 +47,6 @@ class StreamContract:
 
 
 def load_stream_contract() -> StreamContract:
-    """Load runtime contract from YAML."""
     contract_path = DEFAULT_CONTRACT_PATH
     payload = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):

@@ -1,5 +1,3 @@
-"""YOLOv8 inference runtime for frame-based pilot stream."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,7 +16,6 @@ MODEL_CACHE_PATH = Path("runtime/models/yolov8n_baseline_multiscale.pt")
 
 @dataclass(frozen=True)
 class DetectionResult:
-    """Single person detection produced by YOLO."""
 
     bbox: tuple[float, float, float, float]
     score: float
@@ -26,7 +23,6 @@ class DetectionResult:
 
 
 class YoloDetector:
-    """Lazy-loaded YOLO wrapper with automatic weight bootstrap."""
 
     def __init__(self, config: InferenceConfig) -> None:
         self._config = config
