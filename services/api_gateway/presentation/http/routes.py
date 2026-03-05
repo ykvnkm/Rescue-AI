@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
-from libs.core.application.pilot_service import DetectionInput
+from libs.core.application.models import DetectionInput
 from libs.core.domain.entities import Alert, FrameEvent
 from services.api_gateway.dependencies import get_pilot_service
 from services.api_gateway.presentation.http.ui_page import build_ui_html

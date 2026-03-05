@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from libs.core.application.pilot_service import AlertRuleConfig
+from libs.core.application.models import AlertRuleConfig
 
 DEFAULT_CONTRACT_PATH = Path("configs/nsu_frames_yolov8n_alert_contract.yaml")
 DEFAULT_MODEL_URL = (
