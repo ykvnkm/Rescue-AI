@@ -1,12 +1,9 @@
-"""YOLOv8 inference runtime for frame-based pilot stream."""
-
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import urlretrieve
 
-from services.detection_service.infrastructure.runtime_contract import InferenceConfig
+from services.detection_service.domain.models import DetectionResult, InferenceConfig
 
 try:
     from ultralytics import YOLO
@@ -16,17 +13,8 @@ except ImportError:
 MODEL_CACHE_PATH = Path("runtime/models/yolov8n_baseline_multiscale.pt")
 
 
-@dataclass(frozen=True)
-class DetectionResult:
-    """Single person detection produced by YOLO."""
-
-    bbox: tuple[float, float, float, float]
-    score: float
-    label: str = "person"
-
-
 class YoloDetector:
-    """Lazy-loaded YOLO wrapper with automatic weight bootstrap."""
+    """YOLO detector with lazy model loading."""
 
     def __init__(self, config: InferenceConfig) -> None:
         self._config = config

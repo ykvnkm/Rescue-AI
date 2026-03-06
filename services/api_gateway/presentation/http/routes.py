@@ -11,7 +11,7 @@ from libs.core.application.models import DetectionInput
 from libs.core.domain.entities import Alert, FrameEvent
 from services.api_gateway.dependencies import get_pilot_service
 from services.api_gateway.presentation.http.ui_page import build_ui_html
-from services.detection_service.application.stream_runner import (
+from services.detection_service.presentation.stream_api import (
     build_stream_config,
     get_stream_state,
     start_stream,
