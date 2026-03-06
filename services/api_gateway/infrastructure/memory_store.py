@@ -1,5 +1,3 @@
-"""In-memory repositories used by API gateway."""
-
 from dataclasses import dataclass, field
 
 from libs.core.application.contracts import (
@@ -13,7 +11,7 @@ from libs.core.domain.entities import Alert, FrameEvent, Mission
 
 @dataclass
 class InMemoryDatabase:
-    """Simple in-memory state container."""
+    """In-memory storage for missions, alerts and frame events."""
 
     missions: dict[str, Mission] = field(default_factory=dict)
     alerts: dict[str, Alert] = field(default_factory=dict)
@@ -21,7 +19,7 @@ class InMemoryDatabase:
 
 
 class InMemoryMissionRepository(MissionRepository):
-    """Mission repository backed by in-memory dictionary."""
+    """Mission repository implementation over the in-memory database."""
 
     def __init__(self, db: InMemoryDatabase) -> None:
         self._db = db
@@ -49,7 +47,7 @@ class InMemoryMissionRepository(MissionRepository):
 
 
 class InMemoryAlertRepository(AlertRepository):
-    """Alert repository backed by in-memory dictionary."""
+    """Alert repository implementation over the in-memory database."""
 
     allowed_target_statuses = {"reviewed_confirmed", "reviewed_rejected"}
 
@@ -99,7 +97,7 @@ class InMemoryAlertRepository(AlertRepository):
 
 
 class InMemoryFrameEventRepository(FrameEventRepository):
-    """Frame event repository backed by in-memory dictionary."""
+    """Frame event repository implementation over the in-memory database."""
 
     def __init__(self, db: InMemoryDatabase) -> None:
         self._db = db
