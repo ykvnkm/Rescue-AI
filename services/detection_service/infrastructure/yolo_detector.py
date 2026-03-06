@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import urlretrieve
 
-from services.detection_service.infrastructure.runtime_contract import InferenceConfig
+from services.detection_service.domain.models import DetectionResult, InferenceConfig
 
 try:
     from ultralytics import YOLO
@@ -12,15 +11,6 @@ except ImportError:
     YOLO = None
 
 MODEL_CACHE_PATH = Path("runtime/models/yolov8n_baseline_multiscale.pt")
-
-
-@dataclass(frozen=True)
-class DetectionResult:
-    """Single detector output after filtering and conversion."""
-
-    bbox: tuple[float, float, float, float]
-    score: float
-    label: str = "person"
 
 
 class YoloDetector:

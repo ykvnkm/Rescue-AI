@@ -2,51 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import os
-from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
-from libs.core.application.models import AlertRuleConfig
+from services.detection_service.domain.models import (
+    AlertRulesConfig,
+    InferenceConfig,
+    ReportProvenance,
+    StreamContract,
+)
 
 DEFAULT_CONTRACT_PATH = Path("configs/nsu_frames_yolov8n_alert_contract.yaml")
 DEFAULT_MODEL_URL = (
     "https://github.com/ykvnkm/rescueai-models/releases/download/v1/"
     "yolov8n_baseline_multiscale.pt"
 )
-
-
-@dataclass(frozen=True)
-class InferenceConfig:
-    """Inference settings loaded from the runtime contract."""
-
-    model_url: str
-    device: str
-    imgsz: int
-    nms_iou: float
-    max_det: int
-    confidence_threshold: float
-
-
-@dataclass(frozen=True)
-class ReportProvenance:
-    """Provenance metadata for generated reports."""
-
-    config_name: str
-    config_hash: str
-    config_path: str
-    service_version: str
-
-
-@dataclass(frozen=True)
-class StreamContract:
-    """Full stream contract used by detection runtime."""
-
-    dataset_fps: float
-    alert_rules: AlertRuleConfig
-    inference: InferenceConfig
-    min_detections_per_frame: int
-    report_provenance: ReportProvenance
 
 
 def load_stream_contract() -> StreamContract:
@@ -69,7 +40,7 @@ def load_stream_contract() -> StreamContract:
     model_url = str(payload.get("model_url", DEFAULT_MODEL_URL))
     device = str(payload.get("device", "cpu"))
 
-    rules = AlertRuleConfig(
+    rules = AlertRulesConfig(
         score_threshold=confidence_threshold,
         window_sec=float(alert.get("window_sec", 1.0)),
         quorum_k=int(alert.get("quorum_k", 1)),
