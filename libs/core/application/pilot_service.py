@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from libs.core.application.alert_policy import MissionAlertState, evaluate_alert
 from libs.core.application.contracts import (
     AlertRepository,
+    ArtifactBlob,
+    ArtifactStorage,
     FrameEventRepository,
     MissionRepository,
     ReviewDecision,
@@ -31,16 +34,24 @@ from libs.core.domain.entities import (
 class PilotService:
     """Application service for pilot mission API."""
 
+    @dataclass(frozen=True)
+    class Dependencies:
+        """Injected persistence and artifact ports for use-case orchestration."""
+
+        mission_repository: MissionRepository
+        alert_repository: AlertRepository
+        frame_event_repository: FrameEventRepository
+        artifact_storage: ArtifactStorage
+
     def __init__(
         self,
-        mission_repository: MissionRepository,
-        alert_repository: AlertRepository,
-        frame_event_repository: FrameEventRepository,
+        dependencies: Dependencies,
         alert_rules: AlertRuleConfig | None = None,
     ) -> None:
-        self._missions = mission_repository
-        self._alerts = alert_repository
-        self._frames = frame_event_repository
+        self._missions = dependencies.mission_repository
+        self._alerts = dependencies.alert_repository
+        self._frames = dependencies.frame_event_repository
+        self._artifacts = dependencies.artifact_storage
         self._alert_state: dict[str, MissionAlertState] = {}
         self._alert_rules = alert_rules or AlertRuleConfig()
         self._report_metadata: dict[str, object] = {}
@@ -98,11 +109,25 @@ class PilotService:
         ):
             return []
 
+        # Keep frame timeline ingestion lightweight: persist frame bytes only when
+        # an alert is actually produced for this frame.
         self._frames.add(frame_event)
-
-        return self._evaluate_alert_rules(
-            frame_event=frame_event, detections=detections
+        alerts = self._evaluate_alert_rules(
+            frame_event=frame_event,
+            detections=detections,
         )
+        if not alerts:
+            return []
+
+        stored_image_uri = self._artifacts.store_frame(
+            mission_id=frame_event.mission_id,
+            frame_id=frame_event.frame_id,
+            source_uri=frame_event.image_uri,
+        )
+        frame_event.image_uri = stored_image_uri
+        for alert in alerts:
+            alert.image_uri = stored_image_uri
+        return alerts
 
     def list_alerts(
         self,
@@ -129,9 +154,33 @@ class PilotService:
         if mission is None:
             raise ValueError("Mission not found")
 
+        if mission.status == "completed":
+            cached_report = self._artifacts.load_mission_report(mission_id)
+            if cached_report is not None:
+                return cached_report
+
+        report = self._build_mission_report(mission_id, mission.completed_frame_id)
+        self._artifacts.save_mission_report(mission_id, report)
+        return report
+
+    def get_alert_frame_artifact(self, alert_id: str) -> ArtifactBlob:
+        alert = self._alerts.get(alert_id)
+        if alert is None:
+            raise ValueError("Alert not found")
+
+        artifact = self._artifacts.load_frame(alert.image_uri)
+        if artifact is None:
+            raise FileNotFoundError("Frame artifact not found")
+        return artifact
+
+    def _build_mission_report(
+        self,
+        mission_id: str,
+        completed_frame_id: int | None,
+    ) -> dict[str, object]:
         report_data = self._collect_mission_report_data(
             mission_id=mission_id,
-            completed_frame_id=mission.completed_frame_id,
+            completed_frame_id=completed_frame_id,
         )
         report_stats = build_report_stats(
             report_data=report_data,

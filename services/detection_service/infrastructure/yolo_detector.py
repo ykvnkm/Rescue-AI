@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlparse
 from urllib.request import urlretrieve
 
 from services.detection_service.domain.models import DetectionResult, InferenceConfig
@@ -10,11 +11,11 @@ try:
 except ImportError:
     YOLO = None
 
-MODEL_CACHE_PATH = Path("runtime/models/yolov8n_baseline_multiscale.pt")
+MODEL_CACHE_DIR = Path("runtime/models")
 
 
 class YoloDetector:
-    """YOLO detector with lazy model loading."""
+    """YOLO detector with lazy model loading from public model URL."""
 
     def __init__(self, config: InferenceConfig) -> None:
         self._config = config
@@ -52,20 +53,30 @@ class YoloDetector:
 
         if YOLO is None:
             raise RuntimeError(
-                "ultralytics не установлен. Установи: uv sync --extra inference"
+                "ultralytics не установлен.\n"
+                "Установи: uv sync --extra inference --extra dev"
             )
 
-        MODEL_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        if not MODEL_CACHE_PATH.exists():
-            urlretrieve(self._config.model_url, MODEL_CACHE_PATH)
+        model_path = _resolve_model_cache_path(self._config.model_url)
+        MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-        self._model = YOLO(str(MODEL_CACHE_PATH))
+        if not model_path.exists():
+            urlretrieve(self._config.model_url, model_path)
+
+        self._model = YOLO(str(model_path))
         return self._model
+
+
+def _resolve_model_cache_path(model_url: str) -> Path:
+    parsed = urlparse(model_url)
+    filename = Path(parsed.path).name or "model.pt"
+    return MODEL_CACHE_DIR / filename
 
 
 def _extract_detections(result, confidence_threshold: float) -> list[DetectionResult]:
     boxes = result.boxes
     names = result.names
+
     if boxes is None:
         return []
 
@@ -80,6 +91,7 @@ def _extract_detections(result, confidence_threshold: float) -> list[DetectionRe
             continue
         if float(score) < confidence_threshold:
             continue
+
         detections.append(
             DetectionResult(
                 bbox=(
@@ -91,10 +103,12 @@ def _extract_detections(result, confidence_threshold: float) -> list[DetectionRe
                 score=float(score),
             )
         )
+
     return detections
 
 
 def _resolve_person_ids(names: dict[int, str] | list[str]) -> set[int]:
     if isinstance(names, dict):
         return {idx for idx, name in names.items() if str(name).lower() == "person"}
+
     return {idx for idx, name in enumerate(names) if str(name).lower() == "person"}
