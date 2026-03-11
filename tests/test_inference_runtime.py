@@ -82,7 +82,7 @@ def test_yolo_detector_warmup_requires_ultralytics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = InferenceConfig(
-        model_path="runtime/models/test-model.pt",
+        model_url="https://storage.yandexcloud.net/rescue-ai-models-public/models/yolov8n_baseline_multiscale/v1/yolov8n_baseline_multiscale.pt",
         device="cpu",
         imgsz=960,
         nms_iou=0.75,

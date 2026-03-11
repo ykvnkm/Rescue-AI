@@ -1,23 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import urlretrieve
 
 from services.detection_service.domain.models import DetectionResult, InferenceConfig
-from services.detection_service.infrastructure.s3_artifact_storage import (
-    S3ArtifactStorage,
-)
 
 try:
     from ultralytics import YOLO
 except ImportError:
     YOLO = None
 
-
-RUNTIME_ROOT = Path("runtime")
+MODEL_CACHE_DIR = Path("runtime/models")
 
 
 class YoloDetector:
-    """YOLO detector with lazy model loading from S3-backed object storage."""
+    """YOLO detector with lazy model loading from public model URL."""
 
     def __init__(self, config: InferenceConfig) -> None:
         self._config = config
@@ -56,25 +54,23 @@ class YoloDetector:
         if YOLO is None:
             raise RuntimeError(
                 "ultralytics не установлен.\n"
-                "Установи: uv sync --extra inference"
+                "Установи: uv sync --extra inference --extra dev"
             )
 
-        object_key = self._config.model_path
-        local_model_path = _resolve_local_model_path(object_key)
+        model_path = _resolve_model_cache_path(self._config.model_url)
+        MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-        storage = S3ArtifactStorage.from_env()
-        resolved_model_path = storage.download_model_if_needed(
-            object_key=object_key,
-            local_path=str(local_model_path),
-        )
+        if not model_path.exists():
+            urlretrieve(self._config.model_url, model_path)
 
-        self._model = YOLO(str(resolved_model_path))
+        self._model = YOLO(str(model_path))
         return self._model
 
 
-def _resolve_local_model_path(object_key: str) -> Path:
-    normalized_key = object_key.lstrip("/").replace("\\", "/")
-    return RUNTIME_ROOT / normalized_key
+def _resolve_model_cache_path(model_url: str) -> Path:
+    parsed = urlparse(model_url)
+    filename = Path(parsed.path).name or "model.pt"
+    return MODEL_CACHE_DIR / filename
 
 
 def _extract_detections(result, confidence_threshold: float) -> list[DetectionResult]:

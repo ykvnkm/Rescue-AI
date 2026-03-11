@@ -26,7 +26,7 @@ class DetectionResult:
 class InferenceConfig:
     """Inference settings loaded from runtime configuration."""
 
-    model_path: str
+    model_url: str
     device: str
     imgsz: int
     nms_iou: float

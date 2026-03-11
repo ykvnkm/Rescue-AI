@@ -39,8 +39,7 @@ pilot_service.set_report_metadata(
         "config_name": stream_contract.report_provenance.config_name,
         "config_hash": stream_contract.report_provenance.config_hash,
         "config_path": stream_contract.report_provenance.config_path,
-        "model_url": stream_contract.inference.model_path,
-        "model_path": stream_contract.inference.model_path,
+        "model_url": stream_contract.inference.model_url,
         "service_version": stream_contract.report_provenance.service_version,
     }
 )

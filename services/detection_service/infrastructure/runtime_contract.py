@@ -14,8 +14,11 @@ from services.detection_service.domain.models import (
 )
 
 DEFAULT_CONTRACT_PATH = Path("configs/nsu_frames_yolov8n_alert_contract.yaml")
-DEFAULT_MODEL_KEY = (
-    "models/yolov8n_baseline_multiscale/v1/yolov8n_baseline_multiscale.pt"
+DEFAULT_MODEL_URL = (
+    "https://storage.yandexcloud.net/"
+    "rescue-ai-models-public/models/"
+    "yolov8n_baseline_multiscale/v1/"
+    "yolov8n_baseline_multiscale.pt"
 )
 
 
@@ -38,7 +41,7 @@ def load_stream_contract() -> StreamContract:
     thresholds = eval_cfg.get("thresholds", [0.2])
     confidence_threshold = float(thresholds[0] if thresholds else 0.2)
 
-    model_key = str(payload.get("model_key", DEFAULT_MODEL_KEY))
+    model_url = str(payload.get("model_url", DEFAULT_MODEL_URL))
     device = str(payload.get("device", "cpu"))
 
     rules = AlertRulesConfig(
@@ -52,7 +55,7 @@ def load_stream_contract() -> StreamContract:
     )
 
     inference = InferenceConfig(
-        model_path=model_key,
+        model_url=model_url,
         device=device,
         imgsz=int(infer.get("imgsz", 960)),
         nms_iou=float(infer.get("nms_iou", 0.75)),
