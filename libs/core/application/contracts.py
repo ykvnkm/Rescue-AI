@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Protocol, TypedDict
 
 from libs.core.domain.entities import Alert, FrameEvent, Mission
@@ -52,3 +53,26 @@ class FrameEventRepository(Protocol):
 
     def add(self, frame_event: FrameEvent) -> None: ...
     def list_by_mission(self, mission_id: str) -> list[FrameEvent]: ...
+
+
+@dataclass(frozen=True)
+class ArtifactBlob:
+    """Binary artifact payload returned by artifact storage adapters."""
+
+    content: bytes
+    media_type: str
+    filename: str
+
+
+class ArtifactStorage(Protocol):
+    """Storage contract for mission artifacts (frames and reports)."""
+
+    def store_frame(self, mission_id: str, frame_id: int, source_uri: str) -> str: ...
+
+    def load_frame(self, image_uri: str) -> ArtifactBlob | None: ...
+
+    def save_mission_report(
+        self, mission_id: str, report: dict[str, object]
+    ) -> str: ...
+
+    def load_mission_report(self, mission_id: str) -> dict[str, object] | None: ...

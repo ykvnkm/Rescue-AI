@@ -6,6 +6,8 @@ from uuid import uuid4
 from libs.core.application.alert_policy import MissionAlertState, evaluate_alert
 from libs.core.application.contracts import (
     AlertRepository,
+    ArtifactBlob,
+    ArtifactStorage,
     FrameEventRepository,
     MissionRepository,
     ReviewDecision,
@@ -36,11 +38,13 @@ class PilotService:
         mission_repository: MissionRepository,
         alert_repository: AlertRepository,
         frame_event_repository: FrameEventRepository,
+        artifact_storage: ArtifactStorage,
         alert_rules: AlertRuleConfig | None = None,
     ) -> None:
         self._missions = mission_repository
         self._alerts = alert_repository
         self._frames = frame_event_repository
+        self._artifacts = artifact_storage
         self._alert_state: dict[str, MissionAlertState] = {}
         self._alert_rules = alert_rules or AlertRuleConfig()
         self._report_metadata: dict[str, object] = {}
@@ -98,10 +102,24 @@ class PilotService:
         ):
             return []
 
-        self._frames.add(frame_event)
+        stored_image_uri = self._artifacts.store_frame(
+            mission_id=frame_event.mission_id,
+            frame_id=frame_event.frame_id,
+            source_uri=frame_event.image_uri,
+        )
+        stored_frame_event = FrameEvent(
+            mission_id=frame_event.mission_id,
+            frame_id=frame_event.frame_id,
+            ts_sec=frame_event.ts_sec,
+            image_uri=stored_image_uri,
+            gt_person_present=frame_event.gt_person_present,
+            gt_episode_id=frame_event.gt_episode_id,
+        )
+        self._frames.add(stored_frame_event)
 
         return self._evaluate_alert_rules(
-            frame_event=frame_event, detections=detections
+            frame_event=stored_frame_event,
+            detections=detections,
         )
 
     def list_alerts(
@@ -129,9 +147,33 @@ class PilotService:
         if mission is None:
             raise ValueError("Mission not found")
 
+        if mission.status == "completed":
+            cached_report = self._artifacts.load_mission_report(mission_id)
+            if cached_report is not None:
+                return cached_report
+
+        report = self._build_mission_report(mission_id, mission.completed_frame_id)
+        self._artifacts.save_mission_report(mission_id, report)
+        return report
+
+    def get_alert_frame_artifact(self, alert_id: str) -> ArtifactBlob:
+        alert = self._alerts.get(alert_id)
+        if alert is None:
+            raise ValueError("Alert not found")
+
+        artifact = self._artifacts.load_frame(alert.image_uri)
+        if artifact is None:
+            raise FileNotFoundError("Frame artifact not found")
+        return artifact
+
+    def _build_mission_report(
+        self,
+        mission_id: str,
+        completed_frame_id: int | None,
+    ) -> dict[str, object]:
         report_data = self._collect_mission_report_data(
             mission_id=mission_id,
-            completed_frame_id=mission.completed_frame_id,
+            completed_frame_id=completed_frame_id,
         )
         report_stats = build_report_stats(
             report_data=report_data,

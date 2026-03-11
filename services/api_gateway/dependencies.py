@@ -1,5 +1,6 @@
 from libs.core.application.models import AlertRuleConfig
 from libs.core.application.pilot_service import PilotService
+from services.api_gateway.infrastructure.artifact_storage import build_artifact_storage
 from services.api_gateway.infrastructure.memory_store import (
     InMemoryAlertRepository,
     InMemoryDatabase,
@@ -14,6 +15,7 @@ db = InMemoryDatabase()
 mission_repository = InMemoryMissionRepository(db)
 alert_repository = InMemoryAlertRepository(db)
 frame_repository = InMemoryFrameEventRepository(db)
+artifact_storage = build_artifact_storage()
 
 stream_contract = load_stream_contract()
 
@@ -31,6 +33,7 @@ pilot_service = PilotService(
     mission_repository=mission_repository,
     alert_repository=alert_repository,
     frame_event_repository=frame_repository,
+    artifact_storage=artifact_storage,
     alert_rules=alert_rules,
 )
 
