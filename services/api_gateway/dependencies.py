@@ -14,7 +14,9 @@ db = InMemoryDatabase()
 mission_repository = InMemoryMissionRepository(db)
 alert_repository = InMemoryAlertRepository(db)
 frame_repository = InMemoryFrameEventRepository(db)
+
 stream_contract = load_stream_contract()
+
 alert_rules = AlertRuleConfig(
     score_threshold=stream_contract.alert_rules.score_threshold,
     window_sec=stream_contract.alert_rules.window_sec,
@@ -24,18 +26,21 @@ alert_rules = AlertRuleConfig(
     gt_gap_end_sec=stream_contract.alert_rules.gt_gap_end_sec,
     match_tolerance_sec=stream_contract.alert_rules.match_tolerance_sec,
 )
+
 pilot_service = PilotService(
     mission_repository=mission_repository,
     alert_repository=alert_repository,
     frame_event_repository=frame_repository,
     alert_rules=alert_rules,
 )
+
 pilot_service.set_report_metadata(
     {
         "config_name": stream_contract.report_provenance.config_name,
         "config_hash": stream_contract.report_provenance.config_hash,
         "config_path": stream_contract.report_provenance.config_path,
-        "model_url": stream_contract.inference.model_url,
+        "model_url": stream_contract.inference.model_path,
+        "model_path": stream_contract.inference.model_path,
         "service_version": stream_contract.report_provenance.service_version,
     }
 )

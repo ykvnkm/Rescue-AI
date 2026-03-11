@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 from pathlib import Path
-from urllib.request import urlretrieve
 
 from services.detection_service.domain.models import DetectionResult, InferenceConfig
+from services.detection_service.infrastructure.s3_artifact_storage import (
+    S3ArtifactStorage,
+)
 
 try:
     from ultralytics import YOLO
 except ImportError:
     YOLO = None
 
-MODEL_CACHE_PATH = Path("runtime/models/yolov8n_baseline_multiscale.pt")
+
+RUNTIME_ROOT = Path("runtime")
 
 
 class YoloDetector:
-    """YOLO detector with lazy model loading."""
+    """YOLO detector with lazy model loading from S3-backed object storage."""
 
     def __init__(self, config: InferenceConfig) -> None:
         self._config = config
@@ -52,20 +55,32 @@ class YoloDetector:
 
         if YOLO is None:
             raise RuntimeError(
-                "ultralytics не установлен. Установи: uv sync --extra inference"
+                "ultralytics не установлен.\n"
+                "Установи: uv sync --extra inference"
             )
 
-        MODEL_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        if not MODEL_CACHE_PATH.exists():
-            urlretrieve(self._config.model_url, MODEL_CACHE_PATH)
+        object_key = self._config.model_path
+        local_model_path = _resolve_local_model_path(object_key)
 
-        self._model = YOLO(str(MODEL_CACHE_PATH))
+        storage = S3ArtifactStorage.from_env()
+        resolved_model_path = storage.download_model_if_needed(
+            object_key=object_key,
+            local_path=str(local_model_path),
+        )
+
+        self._model = YOLO(str(resolved_model_path))
         return self._model
+
+
+def _resolve_local_model_path(object_key: str) -> Path:
+    normalized_key = object_key.lstrip("/").replace("\\", "/")
+    return RUNTIME_ROOT / normalized_key
 
 
 def _extract_detections(result, confidence_threshold: float) -> list[DetectionResult]:
     boxes = result.boxes
     names = result.names
+
     if boxes is None:
         return []
 
@@ -80,6 +95,7 @@ def _extract_detections(result, confidence_threshold: float) -> list[DetectionRe
             continue
         if float(score) < confidence_threshold:
             continue
+
         detections.append(
             DetectionResult(
                 bbox=(
@@ -91,10 +107,12 @@ def _extract_detections(result, confidence_threshold: float) -> list[DetectionRe
                 score=float(score),
             )
         )
+
     return detections
 
 
 def _resolve_person_ids(names: dict[int, str] | list[str]) -> set[int]:
     if isinstance(names, dict):
         return {idx for idx, name in names.items() if str(name).lower() == "person"}
+
     return {idx for idx, name in enumerate(names) if str(name).lower() == "person"}

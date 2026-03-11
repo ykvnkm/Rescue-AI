@@ -1,6 +1,6 @@
 name: nsu_frames_yolov8n_alert_contract
 reason: "Локальный поток кадров: единый контракт инференса, алертов и метрик миссии."
-model_url: https://github.com/ykvnkm/rescueai-models/releases/download/v1/yolov8n_baseline_multiscale.pt
+model_key: models/yolov8n_baseline_multiscale/v1/yolov8n_baseline_multiscale.pt
 device: cpu
 
 dataset:
