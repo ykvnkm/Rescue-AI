@@ -95,7 +95,13 @@ def complete_mission(mission_id: str) -> dict[str, object]:
     )
     if mission is None:
         raise HTTPException(status_code=404, detail="Mission not found")
-    report = service.get_mission_report(mission_id)
+    try:
+        report = service.get_mission_report(mission_id)
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Artifact/report storage error: {type(error).__name__}: {error}",
+        ) from error
     return {
         "mission_id": mission.mission_id,
         "status": mission.status,
@@ -210,6 +216,11 @@ def ingest_frame_endpoint(
         )
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Artifact storage error: {type(error).__name__}: {error}",
+        ) from error
 
     return {
         "mission_id": mission_id,
@@ -250,6 +261,11 @@ def get_alert_frame(alert_id: str) -> Response:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Artifact storage error: {type(error).__name__}: {error}",
+        ) from error
 
     return Response(
         content=artifact.content,
@@ -305,6 +321,11 @@ def get_mission_report_endpoint(mission_id: str) -> dict[str, object]:
         return service.get_mission_report(mission_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Artifact/report storage error: {type(error).__name__}: {error}",
+        ) from error
 
 
 @router.get("/v1/missions/{mission_id}/debug/episodes")

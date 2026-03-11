@@ -81,8 +81,12 @@ def test_resolve_person_ids() -> None:
 def test_yolo_detector_warmup_requires_ultralytics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    model_url = (
+        "https://storage.yandexcloud.net/rescue-ai-models-public/models/"
+        "yolov8n_baseline_multiscale/v1/yolov8n_baseline_multiscale.pt"
+    )
     config = InferenceConfig(
-        model_url="https://storage.yandexcloud.net/rescue-ai-models-public/models/yolov8n_baseline_multiscale/v1/yolov8n_baseline_multiscale.pt",
+        model_url=model_url,
         device="cpu",
         imgsz=960,
         nms_iou=0.75,

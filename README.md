@@ -78,6 +78,28 @@ cp .env.example .env
 MISSION_DIR=/abs/path/to/mission
 ```
 
+Настройте, куда сохранять артефакты миссии (кадры и отчеты):
+
+```env
+ARTIFACTS_MODE=s3
+```
+
+Как это работает:
+- по умолчанию используется режим `s3`;
+- если ключи `ARTIFACTS_S3_ACCESS_KEY_ID` и `ARTIFACTS_S3_SECRET_ACCESS_KEY` не заданы, сервис автоматически пишет артефакты локально;
+- если ключи заданы, но не хватает остальных параметров S3, сервис завершится с понятной ошибкой на старте.
+
+Что обязательно заполнить для записи в S3-бакет:
+
+```env
+ARTIFACTS_S3_ENDPOINT=...
+ARTIFACTS_S3_REGION=...
+ARTIFACTS_S3_ACCESS_KEY_ID=...
+ARTIFACTS_S3_SECRET_ACCESS_KEY=...
+ARTIFACTS_S3_BUCKET=...
+ARTIFACTS_S3_STRICT=true
+```
+
 3. Поднимите сервис:
 
 ```bash

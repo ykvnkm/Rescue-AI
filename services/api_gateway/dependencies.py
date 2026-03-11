@@ -30,10 +30,12 @@ alert_rules = AlertRuleConfig(
 )
 
 pilot_service = PilotService(
-    mission_repository=mission_repository,
-    alert_repository=alert_repository,
-    frame_event_repository=frame_repository,
-    artifact_storage=artifact_storage,
+    dependencies=PilotService.Dependencies(
+        mission_repository=mission_repository,
+        alert_repository=alert_repository,
+        frame_event_repository=frame_repository,
+        artifact_storage=artifact_storage,
+    ),
     alert_rules=alert_rules,
 )
 

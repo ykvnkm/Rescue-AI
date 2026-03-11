@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import copy2
@@ -10,18 +12,51 @@ from urllib.parse import urlparse
 
 from libs.core.application.contracts import ArtifactBlob, ArtifactStorage
 
+try:
+    import boto3
+    from botocore.exceptions import BotoCoreError, ClientError
+except ImportError:
+    boto3 = None
+    BotoCoreError = Exception
+    ClientError = Exception
+
+
+S3_OPERATION_ERRORS = (ClientError, BotoCoreError, OSError)
+
+
+@dataclass(frozen=True)
+class S3ArtifactBackendSettings:
+    """Settings for private S3 artifact backend."""
+
+    endpoint: str | None = None
+    region: str | None = None
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    bucket: str | None = None
+    strict: bool = True
+
+    @property
+    def ready(self) -> bool:
+        return bool(
+            self.endpoint
+            and self.region
+            and self.access_key_id
+            and self.secret_access_key
+            and self.bucket
+        )
+
+    @property
+    def has_credentials(self) -> bool:
+        return bool(self.access_key_id and self.secret_access_key)
+
 
 @dataclass(frozen=True)
 class ArtifactStorageSettings:
     """Environment-driven settings for selecting artifact storage adapter."""
 
-    mode: str = "local"
+    mode: str = "s3"
     local_root: Path = Path("runtime/artifacts")
-    s3_endpoint: str | None = None
-    s3_region: str | None = None
-    s3_access_key_id: str | None = None
-    s3_secret_access_key: str | None = None
-    s3_bucket: str | None = None
+    s3: S3ArtifactBackendSettings = S3ArtifactBackendSettings()
 
     @classmethod
     def from_env(cls) -> ArtifactStorageSettings:
@@ -31,19 +66,16 @@ class ArtifactStorageSettings:
                 _clean_env_value(os.getenv("ARTIFACTS_LOCAL_ROOT"))
                 or "runtime/artifacts"
             ),
-            s3_endpoint=_clean_env_value(os.getenv("ARTIFACTS_S3_ENDPOINT")),
-            s3_region=_clean_env_value(os.getenv("ARTIFACTS_S3_REGION")),
-            s3_access_key_id=_clean_env_value(os.getenv("ARTIFACTS_S3_ACCESS_KEY_ID")),
-            s3_secret_access_key=_clean_env_value(
-                os.getenv("ARTIFACTS_S3_SECRET_ACCESS_KEY")
+            s3=S3ArtifactBackendSettings(
+                endpoint=_clean_env_value(os.getenv("ARTIFACTS_S3_ENDPOINT")),
+                region=_clean_env_value(os.getenv("ARTIFACTS_S3_REGION")),
+                access_key_id=_clean_env_value(os.getenv("ARTIFACTS_S3_ACCESS_KEY_ID")),
+                secret_access_key=_clean_env_value(
+                    os.getenv("ARTIFACTS_S3_SECRET_ACCESS_KEY")
+                ),
+                bucket=_clean_env_value(os.getenv("ARTIFACTS_S3_BUCKET")),
+                strict=_env_bool(os.getenv("ARTIFACTS_S3_STRICT"), default=True),
             ),
-            s3_bucket=_clean_env_value(os.getenv("ARTIFACTS_S3_BUCKET")),
-        )
-
-    @property
-    def s3_ready(self) -> bool:
-        return bool(
-            self.s3_access_key_id and self.s3_secret_access_key and self.s3_bucket
         )
 
 
@@ -55,20 +87,19 @@ def build_artifact_storage(
 
     if resolved.mode != "s3":
         return local_storage
-    if not resolved.s3_ready:
+    if not resolved.s3.has_credentials:
         return local_storage
-
-    try:
-        return S3ArtifactStorage(
-            bucket=resolved.s3_bucket or "",
-            endpoint=resolved.s3_endpoint,
-            region=resolved.s3_region,
-            access_key_id=resolved.s3_access_key_id or "",
-            secret_access_key=resolved.s3_secret_access_key or "",
-            fallback_storage=local_storage,
+    if not resolved.s3.ready:
+        raise RuntimeError(
+            "ARTIFACTS_MODE=s3 requires ARTIFACTS_S3_ENDPOINT, ARTIFACTS_S3_REGION, "
+            "ARTIFACTS_S3_ACCESS_KEY_ID, ARTIFACTS_S3_SECRET_ACCESS_KEY, "
+            "ARTIFACTS_S3_BUCKET"
         )
-    except RuntimeError:
-        return local_storage
+
+    return S3ArtifactStorage(
+        settings=resolved.s3,
+        fallback_storage=local_storage,
+    )
 
 
 class LocalArtifactStorage:
@@ -136,26 +167,23 @@ class S3ArtifactStorage:
 
     def __init__(
         self,
-        bucket: str,
-        endpoint: str | None,
-        region: str | None,
-        access_key_id: str,
-        secret_access_key: str,
+        settings: S3ArtifactBackendSettings,
         fallback_storage: LocalArtifactStorage,
     ) -> None:
-        try:
-            import boto3  # type: ignore[import-untyped]
-        except ImportError as error:
-            raise RuntimeError("boto3 is required for ARTIFACTS_MODE=s3") from error
+        if boto3 is None:
+            raise RuntimeError("boto3 is required for ARTIFACTS_MODE=s3")
 
-        self._bucket = bucket
+        self._settings = settings
         self._fallback = fallback_storage
+        self._lock = threading.Lock()
+        self._pending_frames: dict[str, PendingFrameUpload] = {}
+        self._uploads = ThreadPoolExecutor(max_workers=2, thread_name_prefix="artifact")
         self._client = boto3.client(
             "s3",
-            endpoint_url=endpoint,
-            region_name=region,
-            aws_access_key_id=access_key_id,
-            aws_secret_access_key=secret_access_key,
+            endpoint_url=self._settings.endpoint,
+            region_name=self._settings.region,
+            aws_access_key_id=self._settings.access_key_id,
+            aws_secret_access_key=self._settings.secret_access_key,
         )
 
     def store_frame(self, mission_id: str, frame_id: int, source_uri: str) -> str:
@@ -165,18 +193,23 @@ class S3ArtifactStorage:
 
         suffix = source_path.suffix.lower() or ".bin"
         key = f"missions/{mission_id}/frames/{frame_id}{suffix}"
-        media_type, _ = mimetypes.guess_type(source_path.name)
-        try:
-            self._client.put_object(
-                Bucket=self._bucket,
-                Key=key,
-                Body=source_path.read_bytes(),
-                ContentType=media_type or "application/octet-stream",
-            )
-        except Exception:
-            return self._fallback.store_frame(mission_id, frame_id, source_uri)
+        s3_uri = f"s3://{self._settings.bucket}/{key}"
 
-        return f"s3://{self._bucket}/{key}"
+        # Keep a local copy so the alert frame can be read immediately
+        # while S3 upload is in progress.
+        local_uri = self._fallback.store_frame(mission_id, frame_id, source_uri)
+        with self._lock:
+            self._pending_frames[key] = PendingFrameUpload(fallback_uri=local_uri)
+
+        media_type, _ = mimetypes.guess_type(source_path.name)
+        payload = source_path.read_bytes()
+        self._uploads.submit(
+            self._upload_frame,
+            key,
+            payload,
+            media_type or "application/octet-stream",
+        )
+        return s3_uri
 
     def load_frame(self, image_uri: str) -> ArtifactBlob | None:
         parsed = _parse_s3_uri(image_uri)
@@ -184,11 +217,24 @@ class S3ArtifactStorage:
             return self._fallback.load_frame(image_uri)
         bucket, key = parsed
 
+        with self._lock:
+            pending = self._pending_frames.get(key)
+        if pending is not None and pending.error is not None and self._settings.strict:
+            raise RuntimeError(pending.error)
+
         try:
             response = self._client.get_object(Bucket=bucket, Key=key)
-        except Exception:
+        except S3_OPERATION_ERRORS as error:
+            if pending is not None:
+                return self._fallback.load_frame(pending.fallback_uri)
+            if _is_missing_s3_object_error(error):
+                return None
+            if self._settings.strict:
+                raise
             return self._fallback.load_frame(image_uri)
 
+        with self._lock:
+            self._pending_frames.pop(key, None)
         body = response["Body"].read()
         content_type = (
             response.get("ContentType")
@@ -206,20 +252,26 @@ class S3ArtifactStorage:
         payload = json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8")
         try:
             self._client.put_object(
-                Bucket=self._bucket,
+                Bucket=self._settings.bucket,
                 Key=key,
                 Body=payload,
                 ContentType="application/json",
             )
-        except Exception:
+        except S3_OPERATION_ERRORS:
+            if self._settings.strict:
+                raise
             return self._fallback.save_mission_report(mission_id, report)
-        return f"s3://{self._bucket}/{key}"
+        return f"s3://{self._settings.bucket}/{key}"
 
     def load_mission_report(self, mission_id: str) -> dict[str, object] | None:
         key = self._report_key(mission_id)
         try:
-            response = self._client.get_object(Bucket=self._bucket, Key=key)
-        except Exception:
+            response = self._client.get_object(Bucket=self._settings.bucket, Key=key)
+        except S3_OPERATION_ERRORS as error:
+            if _is_missing_s3_object_error(error):
+                return None
+            if self._settings.strict:
+                raise
             return self._fallback.load_mission_report(mission_id)
 
         try:
@@ -233,6 +285,26 @@ class S3ArtifactStorage:
     def _report_key(self, mission_id: str) -> str:
         return f"missions/{mission_id}/report.json"
 
+    def _upload_frame(self, key: str, payload: bytes, content_type: str) -> None:
+        try:
+            self._client.put_object(
+                Bucket=self._settings.bucket,
+                Key=key,
+                Body=payload,
+                ContentType=content_type,
+            )
+        except S3_OPERATION_ERRORS as error:
+            with self._lock:
+                pending = self._pending_frames.get(key)
+                if pending is not None:
+                    pending.error = (
+                        f"Frame upload failed for {key}: "
+                        f"{type(error).__name__}: {error}"
+                    )
+        else:
+            with self._lock:
+                self._pending_frames.pop(key, None)
+
 
 def _clean_env_value(value: str | None) -> str | None:
     if value is None:
@@ -243,11 +315,18 @@ def _clean_env_value(value: str | None) -> str | None:
 
 def _normalize_mode(mode: str | None) -> str:
     if mode is None:
-        return "local"
+        return "s3"
     normalized = mode.strip().lower()
     if normalized not in {"local", "s3"}:
         return "local"
     return normalized
+
+
+def _env_bool(value: str | None, default: bool) -> bool:
+    cleaned = _clean_env_value(value)
+    if cleaned is None:
+        return default
+    return cleaned.lower() in {"1", "true", "yes", "on"}
 
 
 def _local_path_from_uri(uri: str) -> Path | None:
@@ -267,3 +346,24 @@ def _parse_s3_uri(uri: str) -> tuple[str, str] | None:
     if not key:
         return None
     return parsed.netloc, key
+
+
+def _is_missing_s3_object_error(error: Exception) -> bool:
+    response = getattr(error, "response", None)
+    if not isinstance(response, dict):
+        return False
+    meta = response.get("ResponseMetadata", {})
+    status_code = meta.get("HTTPStatusCode")
+    if status_code == 404:
+        return True
+    error_payload = response.get("Error", {})
+    code = str(error_payload.get("Code", ""))
+    return code in {"NoSuchKey", "NotFound", "404"}
+
+
+@dataclass
+class PendingFrameUpload:
+    """Pending async frame upload with local fallback and optional error."""
+
+    fallback_uri: str
+    error: str | None = None

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -33,18 +34,24 @@ from libs.core.domain.entities import (
 class PilotService:
     """Application service for pilot mission API."""
 
+    @dataclass(frozen=True)
+    class Dependencies:
+        """Injected persistence and artifact ports for use-case orchestration."""
+
+        mission_repository: MissionRepository
+        alert_repository: AlertRepository
+        frame_event_repository: FrameEventRepository
+        artifact_storage: ArtifactStorage
+
     def __init__(
         self,
-        mission_repository: MissionRepository,
-        alert_repository: AlertRepository,
-        frame_event_repository: FrameEventRepository,
-        artifact_storage: ArtifactStorage,
+        dependencies: Dependencies,
         alert_rules: AlertRuleConfig | None = None,
     ) -> None:
-        self._missions = mission_repository
-        self._alerts = alert_repository
-        self._frames = frame_event_repository
-        self._artifacts = artifact_storage
+        self._missions = dependencies.mission_repository
+        self._alerts = dependencies.alert_repository
+        self._frames = dependencies.frame_event_repository
+        self._artifacts = dependencies.artifact_storage
         self._alert_state: dict[str, MissionAlertState] = {}
         self._alert_rules = alert_rules or AlertRuleConfig()
         self._report_metadata: dict[str, object] = {}
@@ -102,25 +109,25 @@ class PilotService:
         ):
             return []
 
+        # Keep frame timeline ingestion lightweight: persist frame bytes only when
+        # an alert is actually produced for this frame.
+        self._frames.add(frame_event)
+        alerts = self._evaluate_alert_rules(
+            frame_event=frame_event,
+            detections=detections,
+        )
+        if not alerts:
+            return []
+
         stored_image_uri = self._artifacts.store_frame(
             mission_id=frame_event.mission_id,
             frame_id=frame_event.frame_id,
             source_uri=frame_event.image_uri,
         )
-        stored_frame_event = FrameEvent(
-            mission_id=frame_event.mission_id,
-            frame_id=frame_event.frame_id,
-            ts_sec=frame_event.ts_sec,
-            image_uri=stored_image_uri,
-            gt_person_present=frame_event.gt_person_present,
-            gt_episode_id=frame_event.gt_episode_id,
-        )
-        self._frames.add(stored_frame_event)
-
-        return self._evaluate_alert_rules(
-            frame_event=stored_frame_event,
-            detections=detections,
-        )
+        frame_event.image_uri = stored_image_uri
+        for alert in alerts:
+            alert.image_uri = stored_image_uri
+        return alerts
 
     def list_alerts(
         self,
