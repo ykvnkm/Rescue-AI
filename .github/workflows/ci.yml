@@ -18,6 +18,8 @@ jobs:
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v3
+        with:
+          uv-version: "0.10.4"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -55,6 +57,8 @@ jobs:
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v3
+        with:
+          uv-version: "0.10.4"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -78,6 +82,8 @@ jobs:
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v3
+        with:
+          uv-version: "0.10.4"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -101,6 +107,8 @@ jobs:
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v3
+        with:
+          uv-version: "0.10.4"
 
       - name: Setup Python
         uses: actions/setup-python@v5
