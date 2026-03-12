@@ -211,6 +211,7 @@ def test_batch_no_gt_does_not_auto_review_and_marks_kpi_not_applicable() -> None
 
 def test_batch_partial_status_on_corrupted_rate() -> None:
     with TemporaryDirectory() as temp_dir:
+        status_store = JsonStatusStore(path=Path(temp_dir) / "runs.json")
         frames = [_frame(1, True), _frame(2, True, is_corrupted=True)]
         runner = MissionBatchRunner(
             source=FakeSource(
@@ -218,14 +219,19 @@ def test_batch_partial_status_on_corrupted_rate() -> None:
             ),
             detector=FakeDetector(),
             artifacts=LocalArtifactStore(root_dir=Path(temp_dir) / "artifacts"),
-            statuses=JsonStatusStore(path=Path(temp_dir) / "runs.json"),
+            statuses=status_store,
             engine_factory=FakeEngineFactory(FakeEngine(reviewed=[])),
         )
 
         result = runner.run(_request(force=True))
+        record = status_store.get(_request(force=True).run_key)
 
     assert result.status == "partial"
     assert result.report["status"] == "partial"
+    quality = cast(dict[str, object], result.report["quality"])
+    assert quality["corrupted_frames"] == 1
+    assert record is not None
+    assert record.reason == "force_rerun_requested"
 
 
 def test_batch_failed_on_empty_input() -> None:
@@ -271,6 +277,7 @@ def test_force_rerun_sets_running_reason() -> None:
 
 def test_detector_error_yields_partial_instead_of_failed() -> None:
     with TemporaryDirectory() as temp_dir:
+        status_store = JsonStatusStore(path=Path(temp_dir) / "runs.json")
         runner = MissionBatchRunner(
             source=FakeSource(
                 MissionInput(
@@ -281,10 +288,39 @@ def test_detector_error_yields_partial_instead_of_failed() -> None:
             ),
             detector=ErrorDetector(),
             artifacts=LocalArtifactStore(root_dir=Path(temp_dir) / "artifacts"),
-            statuses=JsonStatusStore(path=Path(temp_dir) / "runs.json"),
+            statuses=status_store,
             engine_factory=FakeEngineFactory(FakeEngine(reviewed=[])),
         )
         result = runner.run(_request(force=True))
+        record = status_store.get(_request(force=True).run_key)
 
     assert result.status == "partial"
     assert result.report["status"] == "partial"
+    quality = cast(dict[str, object], result.report["quality"])
+    assert quality["detector_error_frames"] == 2
+    assert record is not None
+    assert record.reason == "force_rerun_requested"
+
+
+def test_partial_reason_for_corrupted_input_without_force() -> None:
+    with TemporaryDirectory() as temp_dir:
+        status_store = JsonStatusStore(path=Path(temp_dir) / "runs.json")
+        runner = MissionBatchRunner(
+            source=FakeSource(
+                MissionInput(
+                    source_uri="s",
+                    frames=[_frame(1, True, is_corrupted=True)],
+                    gt_available=True,
+                )
+            ),
+            detector=FakeDetector(),
+            artifacts=LocalArtifactStore(root_dir=Path(temp_dir) / "artifacts"),
+            statuses=status_store,
+            engine_factory=FakeEngineFactory(FakeEngine(reviewed=[])),
+        )
+        result = runner.run(_request(force=False))
+        record = status_store.get(_request(force=False).run_key)
+
+    assert result.status == "partial"
+    assert record is not None
+    assert record.reason == "corrupted_input"

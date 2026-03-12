@@ -54,16 +54,19 @@ class DataQuality:
     total_frames: int = 0
     processed_frames: int = 0
     corrupted_frames: int = 0
+    detector_error_frames: int = 0
     missing_gt_frames: int = 0
 
     def as_dict(self) -> dict[str, object]:
+        invalid_frames = self.corrupted_frames + self.detector_error_frames
         error_rate = (
-            self.corrupted_frames / self.total_frames if self.total_frames > 0 else 0.0
+            invalid_frames / self.total_frames if self.total_frames > 0 else 0.0
         )
         return {
             "total_frames": self.total_frames,
             "processed_frames": self.processed_frames,
             "corrupted_frames": self.corrupted_frames,
+            "detector_error_frames": self.detector_error_frames,
             "missing_gt_frames": self.missing_gt_frames,
             "error_rate": round(error_rate, 4),
             "input_empty": self.total_frames == 0,

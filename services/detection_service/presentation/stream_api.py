@@ -5,19 +5,19 @@ from services.detection_service.application.stream_config import (
     StreamOptions,
 )
 from services.detection_service.application.stream_orchestrator import StreamState
-from services.detection_service.application.stream_runtime_api import (
+from services.detection_service.infrastructure.stream_runtime_api import (
     build_stream_config as app_build_stream_config,
 )
-from services.detection_service.application.stream_runtime_api import (
+from services.detection_service.infrastructure.stream_runtime_api import (
     get_stream_state as app_get_stream_state,
 )
-from services.detection_service.application.stream_runtime_api import (
+from services.detection_service.infrastructure.stream_runtime_api import (
     start_stream as app_start_stream,
 )
-from services.detection_service.application.stream_runtime_api import (
+from services.detection_service.infrastructure.stream_runtime_api import (
     stop_stream as app_stop_stream,
 )
-from services.detection_service.application.stream_runtime_api import (
+from services.detection_service.infrastructure.stream_runtime_api import (
     wait_stream_stopped as app_wait_stream_stopped,
 )
 

@@ -21,6 +21,7 @@ from libs.core.domain.entities import FrameEvent
 
 # pylint: disable=too-few-public-methods,missing-class-docstring
 # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
+# pylint: disable=too-many-return-statements
 
 PARTIAL_ERROR_RATE_THRESHOLD = 0.2
 
@@ -179,7 +180,7 @@ class MissionBatchRunner:
         try:
             detections = self._detector.detect(frame.image_uri)
         except Exception as error:  # pylint: disable=broad-except
-            quality.corrupted_frames += 1
+            quality.detector_error_frames += 1
             debug_rows.append(
                 {
                     "frame_id": frame.frame_id,
@@ -242,7 +243,7 @@ def _resolve_status(
     if quality.total_frames == 0:
         return "failed"
     if quality.processed_frames == 0:
-        if quality.corrupted_frames > 0:
+        if quality.corrupted_frames > 0 or quality.detector_error_frames > 0:
             return "partial"
         return "failed"
 
@@ -267,7 +268,11 @@ def _build_reason(
     if forced:
         return "force_rerun_requested"
     if status == "partial":
-        return "high_corrupted_frame_ratio"
+        if quality.detector_error_frames > 0 and quality.corrupted_frames == 0:
+            return "detector_runtime_error"
+        if quality.corrupted_frames > 0 and quality.detector_error_frames == 0:
+            return "corrupted_input"
+        return "mixed_input_and_detector_errors"
     if status == "failed":
         if quality.total_frames == 0:
             return "empty_input"

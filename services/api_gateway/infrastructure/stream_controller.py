@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from services.detection_service.application.stream_config import StreamOptions
-from services.detection_service.application.stream_runtime_api import (
+from services.detection_service.infrastructure.stream_runtime_api import (
     build_stream_config,
     get_stream_state,
     start_stream,
