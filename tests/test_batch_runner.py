@@ -47,6 +47,12 @@ class FakeDetector:
         ]
 
 
+class ErrorDetector:
+    def detect(self, image_uri: str) -> list[DetectionInput]:
+        _ = image_uri
+        raise RuntimeError("detector boom")
+
+
 @dataclass
 class FakeEngine(MissionEnginePort):
     reviewed: list[str]
@@ -261,3 +267,24 @@ def test_force_rerun_sets_running_reason() -> None:
     assert record is not None
     assert record.status in {"completed", "partial", "failed"}
     assert record.reason == "force_rerun_requested"
+
+
+def test_detector_error_yields_partial_instead_of_failed() -> None:
+    with TemporaryDirectory() as temp_dir:
+        runner = MissionBatchRunner(
+            source=FakeSource(
+                MissionInput(
+                    source_uri="s",
+                    frames=[_frame(1, True), _frame(2, False)],
+                    gt_available=True,
+                )
+            ),
+            detector=ErrorDetector(),
+            artifacts=LocalArtifactStore(root_dir=Path(temp_dir) / "artifacts"),
+            statuses=JsonStatusStore(path=Path(temp_dir) / "runs.json"),
+            engine_factory=FakeEngineFactory(FakeEngine(reviewed=[])),
+        )
+        result = runner.run(_request(force=True))
+
+    assert result.status == "partial"
+    assert result.report["status"] == "partial"

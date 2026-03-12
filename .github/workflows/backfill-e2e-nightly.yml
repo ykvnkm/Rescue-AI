@@ -1,0 +1,98 @@
+name: Backfill E2E Nightly
+
+on:
+  schedule:
+    - cron: "20 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  airflow-backfill-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare env
+        run: |
+          cp infra/platform.env.example infra/platform.env.ci
+          {
+            echo "BATCH_DETECTOR_BACKEND=fake"
+            echo "BATCH_RUNTIME_ENV=local"
+            echo "BATCH_MISSION_ID=demo_mission"
+            echo "BATCH_ARTIFACT_BACKEND=local"
+            echo "BATCH_STATUS_BACKEND=json"
+          } >> infra/platform.env.ci
+
+      - name: Build batch image
+        run: docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env.ci --profile batch-build build batch-runner-image
+
+      - name: Start platform
+        run: docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env.ci up -d
+
+      - name: Wait for Airflow webserver
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8080/health >/dev/null; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Airflow webserver did not become healthy"
+          exit 1
+
+      - name: Seed mission dataset
+        run: |
+          docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env.ci exec -T airflow-webserver \
+            python - <<'PY'
+          import json
+          from pathlib import Path
+
+          base = Path('/opt/airflow/data/missions/demo_mission')
+          for ds in ('2026-03-01', '2026-03-02'):
+              images = base / ds / 'images'
+              ann = base / ds / 'annotations'
+              images.mkdir(parents=True, exist_ok=True)
+              ann.mkdir(parents=True, exist_ok=True)
+
+              # Minimal JPEG-like bytes for source validation.
+              (images / 'frame_0001.jpg').write_bytes(
+                  b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9'
+              )
+              payload = {
+                  'images': [{'id': 1, 'file_name': 'frame_0001.jpg'}],
+                  'categories': [{'id': 1, 'name': 'person'}],
+                  'annotations': [],
+              }
+              (ann / 'mission.json').write_text(json.dumps(payload), encoding='utf-8')
+          PY
+
+      - name: Run backfill
+        run: |
+          docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env.ci exec -T airflow-webserver \
+            airflow dags backfill rescue_batch_daily -s 2026-03-01 -e 2026-03-02
+
+      - name: Verify artifacts and statuses
+        run: |
+          docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env.ci exec -T airflow-webserver \
+            python - <<'PY'
+          import json
+          from pathlib import Path
+
+          status_path = Path('/opt/airflow/data/status/runs.json')
+          payload = json.loads(status_path.read_text(encoding='utf-8'))
+          keys = list(payload.keys())
+          assert any(':2026-03-01:' in key for key in keys)
+          assert any(':2026-03-02:' in key for key in keys)
+
+          artifacts = Path('/opt/airflow/data/artifacts')
+          reports = list(artifacts.rglob('report.json'))
+          debug = list(artifacts.rglob('debug.csv'))
+          assert reports, 'No report.json artifacts found'
+          assert debug, 'No debug.csv artifacts found'
+          print('Backfill e2e verification passed')
+          PY
+
+      - name: Tear down platform
+        if: always()
+        run: docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env.ci down -v

@@ -176,7 +176,21 @@ class MissionBatchRunner:
             )
             return
 
-        detections = self._detector.detect(frame.image_uri)
+        try:
+            detections = self._detector.detect(frame.image_uri)
+        except Exception as error:  # pylint: disable=broad-except
+            quality.corrupted_frames += 1
+            debug_rows.append(
+                {
+                    "frame_id": frame.frame_id,
+                    "ts_sec": frame.ts_sec,
+                    "image_uri": frame.image_uri,
+                    "status": "detection_error",
+                    "error": str(error),
+                    "detections": 0,
+                }
+            )
+            return
         quality.processed_frames += 1
         if not gt_available:
             quality.missing_gt_frames += 1
@@ -228,6 +242,8 @@ def _resolve_status(
     if quality.total_frames == 0:
         return "failed"
     if quality.processed_frames == 0:
+        if quality.corrupted_frames > 0:
+            return "partial"
         return "failed"
 
     error_rate = quality.as_dict()["error_rate"]

@@ -8,6 +8,7 @@ from pathlib import Path
 from libs.batch.application import MissionBatchRunner
 from libs.batch.domain.models import BatchRunRequest
 from libs.batch.infrastructure import (
+    FakeDetectionRuntime,
     JsonStatusStore,
     LocalArtifactStore,
     LocalMissionSource,
@@ -86,9 +87,16 @@ def build_alert_rules(runtime: YoloDetectionRuntime) -> AlertRuleConfig:
     )
 
 
+def build_detector(model_version: str):
+    backend = os.getenv("BATCH_DETECTOR_BACKEND", "yolo").lower()
+    if backend == "fake":
+        return FakeDetectionRuntime(model_version=model_version)
+    return YoloDetectionRuntime(model_version=model_version)
+
+
 def main() -> None:
     args = parse_args()
-    detector = YoloDetectionRuntime(model_version=args.model_version)
+    detector = build_detector(model_version=args.model_version)
     runner = MissionBatchRunner(
         source=build_source(),
         detector=detector,

@@ -1,5 +1,8 @@
 from libs.batch.infrastructure.artifact_store import LocalArtifactStore, S3ArtifactStore
-from libs.batch.infrastructure.detector_runtime import YoloDetectionRuntime
+from libs.batch.infrastructure.detector_runtime import (
+    FakeDetectionRuntime,
+    YoloDetectionRuntime,
+)
 from libs.batch.infrastructure.in_memory_repositories import (
     InMemoryAlertRepo,
     InMemoryBatchDb,
@@ -21,6 +24,7 @@ __all__ = [
     "JsonStatusStore",
     "LocalArtifactStore",
     "LocalMissionSource",
+    "FakeDetectionRuntime",
     "PilotMissionEngine",
     "PilotMissionEngineFactory",
     "PostgresStatusStore",

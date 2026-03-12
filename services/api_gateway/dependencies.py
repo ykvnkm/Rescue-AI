@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from functools import lru_cache
+
 from libs.core.application.pilot_service import PilotService
 from services.api_gateway.infrastructure import (
     DetectionStreamController,
@@ -10,31 +15,50 @@ from services.api_gateway.infrastructure.memory_store import (
     InMemoryMissionRepository,
 )
 
-db = InMemoryDatabase()
-mission_repository = InMemoryMissionRepository(db)
-alert_repository = InMemoryAlertRepository(db)
-frame_repository = InMemoryFrameEventRepository(db)
-alert_rules, report_metadata = load_alert_rules_and_metadata()
-pilot_service = PilotService(
-    mission_repository=mission_repository,
-    alert_repository=alert_repository,
-    frame_event_repository=frame_repository,
-    alert_rules=alert_rules,
-)
-pilot_service.set_report_metadata(report_metadata)
-stream_controller = DetectionStreamController()
+
+@dataclass
+class AppContainer:
+    """Process-level dependencies for api_gateway runtime."""
+
+    db: InMemoryDatabase
+    pilot_service: PilotService
+    stream_controller: DetectionStreamController
+
+
+@lru_cache(maxsize=1)
+def get_container() -> AppContainer:
+    db = InMemoryDatabase()
+    mission_repository = InMemoryMissionRepository(db)
+    alert_repository = InMemoryAlertRepository(db)
+    frame_repository = InMemoryFrameEventRepository(db)
+    alert_rules, report_metadata = load_alert_rules_and_metadata()
+
+    pilot_service = PilotService(
+        mission_repository=mission_repository,
+        alert_repository=alert_repository,
+        frame_event_repository=frame_repository,
+        alert_rules=alert_rules,
+    )
+    pilot_service.set_report_metadata(report_metadata)
+
+    return AppContainer(
+        db=db,
+        pilot_service=pilot_service,
+        stream_controller=DetectionStreamController(),
+    )
 
 
 def get_pilot_service() -> PilotService:
-    return pilot_service
+    return get_container().pilot_service
 
 
 def get_stream_controller() -> DetectionStreamController:
-    return stream_controller
+    return get_container().stream_controller
 
 
 def reset_state() -> None:
-    db.missions.clear()
-    db.alerts.clear()
-    db.mission_frames.clear()
-    pilot_service.reset_runtime_state()
+    container = get_container()
+    container.db.missions.clear()
+    container.db.alerts.clear()
+    container.db.mission_frames.clear()
+    container.pilot_service.reset_runtime_state()

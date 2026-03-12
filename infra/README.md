@@ -100,3 +100,9 @@ docker compose -f docker-compose.platform.yml --env-file platform.env exec airfl
 - Для shared/stage использовать `BATCH_RUNTIME_ENV=staging`, тогда по умолчанию включаются `PostgresStatusStore` и `S3ArtifactStore`.
 - Полный runbook: `docs/runbooks/batch_operations.md`.
 - `LocalMissionSource` помечает кадр как `is_corrupted=True`, если сигнатура изображения не распознаётся (`jpeg/png/bmp/webp`).
+- Для быстрых e2e в CI можно включить `BATCH_DETECTOR_BACKEND=fake` (без загрузки real model weights).
+
+## E2E Backfill в CI
+
+- Nightly workflow: `.github/workflows/backfill-e2e-nightly.yml`.
+- Сценарий поднимает платформу, seed'ит миссию, выполняет `airflow dags backfill rescue_batch_daily` и проверяет status/artifacts.
