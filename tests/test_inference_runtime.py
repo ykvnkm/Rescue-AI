@@ -12,7 +12,7 @@ from services.detection_service.application.stream_runner import (
     _serialize_detections,
     build_annotation_index,
 )
-from services.detection_service.infrastructure.runtime_contract import InferenceConfig
+from services.detection_service.domain.models import InferenceConfig
 from services.detection_service.infrastructure.yolo_detector import (
     YoloDetector,
     _resolve_person_ids,
@@ -36,6 +36,7 @@ def test_build_annotation_index_from_coco_json() -> None:
                 {"image_id": 1, "category_id": 1, "bbox": [10, 20, 30, 40]}
             ],
         }
+
         (annotations_dir / "mission.json").write_text(
             json.dumps(payload),
             encoding="utf-8",
@@ -53,9 +54,12 @@ def test_serialize_detections_and_payload() -> None:
         SimpleNamespace(bbox=(1.0, 2.0, 3.0, 4.0), score=0.9),
         SimpleNamespace(bbox=(5.0, 6.0, 7.0, 8.0), score=0.8),
     ]
+
     serialized = _serialize_detections(
-        detections=detections, min_detections_per_frame=2
+        detections=detections,
+        min_detections_per_frame=2,
     )
+
     payload = _build_frame_payload(
         frame_id=1,
         ts_sec=0.5,
@@ -77,15 +81,21 @@ def test_resolve_person_ids() -> None:
 def test_yolo_detector_warmup_requires_ultralytics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    model_url = (
+        "https://storage.yandexcloud.net/rescue-ai-models-public/models/"
+        "yolov8n_baseline_multiscale/v1/yolov8n_baseline_multiscale.pt"
+    )
     config = InferenceConfig(
-        model_url="https://example.com/model.pt",
+        model_url=model_url,
         device="cpu",
         imgsz=960,
         nms_iou=0.75,
         max_det=1000,
         confidence_threshold=0.2,
     )
+
     detector = YoloDetector(config)
+
     monkeypatch.setattr(
         "services.detection_service.infrastructure.yolo_detector.YOLO",
         None,
