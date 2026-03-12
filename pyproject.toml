@@ -3,6 +3,7 @@ name = "rescue-ai"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+  "boto3==1.42.65",
   "fastapi==0.115.8",
   "uvicorn[standard]==0.30.6",
   "PyYAML==6.0.2",

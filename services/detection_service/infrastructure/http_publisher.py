@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from urllib import request
+from urllib.error import HTTPError
 
 
 class HttpFramePublisher:
@@ -24,3 +25,23 @@ class HttpFramePublisher:
 
     def endpoint(self, mission_id: str, api_base: str) -> str:
         return f"{api_base}/v1/missions/{mission_id}/frames"
+
+
+def _extract_http_error_detail(error: HTTPError) -> str:
+    try:
+        raw_body = error.read().decode("utf-8", errors="replace").strip()
+    except (OSError, AttributeError, UnicodeDecodeError):
+        return error.reason if isinstance(error.reason, str) else str(error)
+
+    if not raw_body:
+        return error.reason if isinstance(error.reason, str) else str(error)
+
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError:
+        return raw_body
+
+    detail = payload.get("detail")
+    if isinstance(detail, str):
+        return detail
+    return raw_body

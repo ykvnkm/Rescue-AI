@@ -15,7 +15,9 @@ from services.detection_service.domain.models import (
 
 DEFAULT_CONTRACT_PATH = Path("configs/nsu_frames_yolov8n_alert_contract.yaml")
 DEFAULT_MODEL_URL = (
-    "https://github.com/ykvnkm/rescueai-models/releases/download/v1/"
+    "https://storage.yandexcloud.net/"
+    "rescue-ai-models-public/models/"
+    "yolov8n_baseline_multiscale/v1/"
     "yolov8n_baseline_multiscale.pt"
 )
 
@@ -23,6 +25,7 @@ DEFAULT_MODEL_URL = (
 def load_stream_contract() -> StreamContract:
     contract_path = DEFAULT_CONTRACT_PATH
     payload = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
+
     if not isinstance(payload, dict):
         raise ValueError("Invalid alert contract payload")
 
@@ -37,6 +40,7 @@ def load_stream_contract() -> StreamContract:
 
     thresholds = eval_cfg.get("thresholds", [0.2])
     confidence_threshold = float(thresholds[0] if thresholds else 0.2)
+
     model_url = str(payload.get("model_url", DEFAULT_MODEL_URL))
     device = str(payload.get("device", "cpu"))
 
@@ -49,6 +53,7 @@ def load_stream_contract() -> StreamContract:
         gt_gap_end_sec=float(alert.get("gt_gap_end_sec", 1.0)),
         match_tolerance_sec=float(alert.get("match_tolerance_sec", 1.2)),
     )
+
     inference = InferenceConfig(
         model_url=model_url,
         device=device,
@@ -57,6 +62,7 @@ def load_stream_contract() -> StreamContract:
         max_det=int(infer.get("max_det", 1000)),
         confidence_threshold=confidence_threshold,
     )
+
     return StreamContract(
         dataset_fps=float(dataset.get("fps", 6.0)),
         alert_rules=rules,
@@ -65,7 +71,7 @@ def load_stream_contract() -> StreamContract:
         report_provenance=ReportProvenance(
             config_name=config_name,
             config_hash=config_hash,
-            config_path=str(contract_path),
+            config_path=contract_path.as_posix(),
             service_version=service_version,
         ),
     )

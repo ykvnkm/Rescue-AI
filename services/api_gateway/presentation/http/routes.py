@@ -1,10 +1,8 @@
-import mimetypes
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from libs.core.application.models import DetectionInput
@@ -91,7 +89,13 @@ def complete_mission(mission_id: str) -> dict[str, object]:
     )
     if mission is None:
         raise HTTPException(status_code=404, detail="Mission not found")
-    report = service.get_mission_report(mission_id)
+    try:
+        report = service.get_mission_report(mission_id)
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Artifact/report storage error: {type(error).__name__}: {error}",
+        ) from error
     return {
         "mission_id": mission.mission_id,
         "status": mission.status,
@@ -208,6 +212,11 @@ def ingest_frame_endpoint(
         )
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Artifact storage error: {type(error).__name__}: {error}",
+        ) from error
 
     return {
         "mission_id": mission_id,
@@ -240,23 +249,24 @@ def get_alert_details(alert_id: str) -> dict[str, object]:
 
 
 @router.get("/v1/alerts/{alert_id}/frame")
-def get_alert_frame(alert_id: str) -> FileResponse:
+def get_alert_frame(alert_id: str) -> Response:
     service = get_pilot_service()
-    alert = service.get_alert(alert_id)
-    if alert is None:
-        raise HTTPException(status_code=404, detail="Alert not found")
+    try:
+        artifact = service.get_alert_frame_artifact(alert_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Artifact storage error: {type(error).__name__}: {error}",
+        ) from error
 
-    frame_path = Path(alert.image_uri)
-    if not frame_path.is_absolute():
-        raise HTTPException(status_code=400, detail="Frame URI is not local path")
-    if not frame_path.exists():
-        raise HTTPException(status_code=404, detail="Frame file not found")
-
-    media_type, _ = mimetypes.guess_type(frame_path.name)
-    return FileResponse(
-        path=frame_path,
-        media_type=media_type or "application/octet-stream",
-        filename=frame_path.name,
+    return Response(
+        content=artifact.content,
+        media_type=artifact.media_type,
+        headers={"Content-Disposition": f'inline; filename="{artifact.filename}"'},
     )
 
 
@@ -307,6 +317,11 @@ def get_mission_report_endpoint(mission_id: str) -> dict[str, object]:
         return service.get_mission_report(mission_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Artifact/report storage error: {type(error).__name__}: {error}",
+        ) from error
 
 
 @router.get("/v1/missions/{mission_id}/debug/episodes")
