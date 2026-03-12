@@ -113,7 +113,7 @@ jobs:
       - name: Run batch unit and smoke tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest tests/test_batch_runner.py tests/test_batch_stores.py tests/test_batch_smoke.py tests/test_batch_source.py tests/test_batch_main.py tests/test_batch_pilot_engine.py tests/test_batch_detector_runtime.py -m "not integration" --cov=libs/batch --cov=services/batch_runner --cov-fail-under=70
+        run: uv run pytest tests/test_batch_runner.py tests/test_batch_stores.py tests/test_batch_smoke.py tests/test_batch_source.py tests/test_batch_main.py tests/test_batch_pilot_engine.py tests/test_batch_detector_runtime.py tests/test_batch_quality_gate.py -m "not integration" --cov=libs/batch --cov=services/batch_runner --cov-fail-under=70
 
   quality-gate:
     runs-on: ubuntu-latest

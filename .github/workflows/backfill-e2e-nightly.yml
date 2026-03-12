@@ -17,7 +17,7 @@ jobs:
         run: |
           cp infra/platform.env.example infra/platform.env.ci
           {
-            echo "BATCH_DETECTOR_BACKEND=fake"
+            echo "BATCH_DETECTOR_BACKEND=yolo"
             echo "BATCH_RUNTIME_ENV=local"
             echo "BATCH_MISSION_ID=demo_mission"
             echo "BATCH_ARTIFACT_BACKEND=local"

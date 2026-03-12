@@ -183,7 +183,9 @@ docker compose -f docker-compose.platform.yml --env-file platform.env exec airfl
 Runbook и материалы для сдачи:
 
 - `docs/runbooks/batch_operations.md`
+- `docs/runbooks/batch_demo_playbook.md`
 - `docs/batch_evidence_pack.md`
+- `docs/architecture/batch_contour.md`
 
 ## CI/CD каркас
 

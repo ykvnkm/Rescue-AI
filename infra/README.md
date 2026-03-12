@@ -101,8 +101,11 @@ docker compose -f docker-compose.platform.yml --env-file platform.env exec airfl
 - Полный runbook: `docs/runbooks/batch_operations.md`.
 - `LocalMissionSource` помечает кадр как `is_corrupted=True`, если сигнатура изображения не распознаётся (`jpeg/png/bmp/webp`).
 - Для быстрых e2e в CI можно включить `BATCH_DETECTOR_BACKEND=fake` (без загрузки real model weights).
+- Для всех демо/оценочных прогонов использовать `BATCH_DETECTOR_BACKEND=yolo`.
 
 ## E2E Backfill в CI
 
 - Nightly workflow: `.github/workflows/backfill-e2e-nightly.yml`.
 - Сценарий поднимает платформу, seed'ит миссию, выполняет `airflow dags backfill rescue_batch_daily` и проверяет status/artifacts.
+- Плейбук real-data demo: `docs/runbooks/batch_demo_playbook.md`.
+- Архитектурная схема: `docs/architecture/batch_contour.md`.
