@@ -67,20 +67,68 @@ jobs:
       - name: Run tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest
+        run: uv run pytest -m "not integration"
+
+  architecture:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Verify batch import boundaries
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run pytest tests/architecture/test_batch_import_boundaries.py
+
+  batch-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run batch unit and smoke tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run pytest tests/test_batch_runner.py tests/test_batch_stores.py tests/test_batch_smoke.py -m "not integration" --cov=libs/batch --cov=services/batch_runner --cov-fail-under=65
 
   quality-gate:
     runs-on: ubuntu-latest
     needs:
       - lint
       - test
+      - architecture
+      - batch-smoke
     if: ${{ always() }}
 
     steps:
       - name: Validate upstream jobs
         run: |
-          if [ "${{ needs.lint.result }}" != "success" ] || [ "${{ needs.test.result }}" != "success" ]; then
-            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}"
+          if [ "${{ needs.lint.result }}" != "success" ] || [ "${{ needs.test.result }}" != "success" ] || [ "${{ needs.architecture.result }}" != "success" ] || [ "${{ needs.batch-smoke.result }}" != "success" ]; then
+            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}, architecture=${{ needs.architecture.result }}, batch-smoke=${{ needs.batch-smoke.result }}"
             exit 1
           fi
           echo "Quality gate passed"

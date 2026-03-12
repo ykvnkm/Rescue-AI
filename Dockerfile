@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --extra inference
+RUN pip install --no-cache-dir boto3==1.35.99 psycopg[binary]==3.2.3
 
 COPY configs ./configs
 COPY libs ./libs

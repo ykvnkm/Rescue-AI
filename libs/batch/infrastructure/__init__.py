@@ -7,6 +7,10 @@ from libs.batch.infrastructure.in_memory_repositories import (
     InMemoryMissionRepo,
 )
 from libs.batch.infrastructure.local_mission_source import LocalMissionSource
+from libs.batch.infrastructure.pilot_engine import (
+    PilotMissionEngine,
+    PilotMissionEngineFactory,
+)
 from libs.batch.infrastructure.status_store import JsonStatusStore, PostgresStatusStore
 
 __all__ = [
@@ -17,6 +21,8 @@ __all__ = [
     "JsonStatusStore",
     "LocalArtifactStore",
     "LocalMissionSource",
+    "PilotMissionEngine",
+    "PilotMissionEngineFactory",
     "PostgresStatusStore",
     "S3ArtifactStore",
     "YoloDetectionRuntime",

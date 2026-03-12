@@ -155,6 +155,36 @@ docker compose -f docker-compose.platform.yml --env-file platform.env up -d
 
 Подробности: [infra/README.md](infra/README.md)
 
+### Batch demo (Airflow + idempotency + backfill)
+
+1. Соберите batch image:
+
+```bash
+cd infra
+docker compose -f docker-compose.platform.yml --env-file platform.env --profile batch-build build batch-runner-image
+```
+
+2. Запустите backfill:
+
+```bash
+docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
+  airflow dags backfill rescue_batch_daily -s 2026-03-01 -e 2026-03-03
+```
+
+3. Проверьте idempotency:
+
+```bash
+docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
+  uv run python -m services.batch_runner.main --mission-id demo_mission --ds 2026-03-01
+```
+
+Повторный запуск с теми же `(mission_id, ds, config_hash, model_version)` без `--force` не должен дублировать обработку.
+
+Runbook и материалы для сдачи:
+
+- `docs/runbooks/batch_operations.md`
+- `docs/batch_evidence_pack.md`
+
 ## CI/CD каркас
 
 - Базовый CI проекта: `.github/workflows/ci.yml`

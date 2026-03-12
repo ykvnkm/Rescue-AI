@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 
 from airflow import DAG
 from airflow.providers.docker.operators.docker import DockerOperator
@@ -20,6 +21,11 @@ with DAG(
     schedule="@daily",
     catchup=True,
     max_active_runs=1,
+    default_args={
+        "retries": 2,
+        "retry_delay": timedelta(minutes=5),
+        "execution_timeout": timedelta(hours=2),
+    },
     tags=["rescue-ai", "batch", "backfill"],
 ) as dag:
     DockerOperator(

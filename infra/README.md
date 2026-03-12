@@ -48,6 +48,11 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 - Idempotency key: `(mission_id, ds, config_hash, model_version)`.
 - Статусы процесса: `running/completed/failed/partial`.
 
+Канонический контракт запуска batch-runner:
+
+- Вход: `mission_id`, `ds`, `model_version`, `code_version`, `force`.
+- Выход: `status`, `report_uri`, `debug_uri`, `run_key`.
+
 Сборка образа для `DockerOperator`:
 
 ```bash
@@ -67,3 +72,30 @@ docker compose -f docker-compose.platform.yml --env-file platform.env exec airfl
 docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
   ls -la /opt/airflow/data/status /opt/airflow/data/artifacts
 ```
+
+Проверка идемпотентности:
+
+```bash
+docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
+  uv run python -m services.batch_runner.main --mission-id demo_mission --ds 2026-03-01
+
+docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
+  uv run python -m services.batch_runner.main --mission-id demo_mission --ds 2026-03-01
+```
+
+Второй запуск (без `--force`) должен вернуть `idempotent_skip`.
+
+Force rerun:
+
+```bash
+docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
+  uv run python -m services.batch_runner.main --mission-id demo_mission --ds 2026-03-01 --force
+```
+
+## Runbook (failed/partial)
+
+- `failed` + `reason=empty_input`: проверить путь `BATCH_MISSION_ROOT/<mission_id>/<ds>/images`.
+- `failed` + `reason=no_processable_frames`: проверить битые кадры/формат изображений.
+- `partial` + `reason=high_corrupted_frame_ratio`: проверить качество входных данных и повторить с `--force` после исправления.
+- Для shared/stage использовать `BATCH_RUNTIME_ENV=staging`, тогда по умолчанию включаются `PostgresStatusStore` и `S3ArtifactStore`.
+- Полный runbook: `docs/runbooks/batch_operations.md`.

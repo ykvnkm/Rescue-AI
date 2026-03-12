@@ -23,7 +23,7 @@ jobs:
       - name: Print deploy plan
         run: |
           echo "Deployment skeleton for ${{ inputs.target_env }}"
-          echo "1) Build images"
+          echo "1) Build api + batch images"
           echo "2) Push images to registry"
-          echo "3) Apply infra changes"
-          echo "4) Run smoke tests"
+          echo "3) Apply infra changes (Airflow/Postgres/S3)"
+          echo "4) Run smoke tests (batch runner + DAG import)"

@@ -1,0 +1,263 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import cast
+
+from libs.batch.application.mission_batch_runner import MissionBatchRunner
+from libs.batch.application.ports import MissionEngineFactoryPort, MissionEnginePort
+from libs.batch.domain.models import (
+    BatchRunRequest,
+    FrameRecord,
+    MissionInput,
+    RunStatusRecord,
+)
+from libs.batch.infrastructure.artifact_store import LocalArtifactStore
+from libs.batch.infrastructure.status_store import JsonStatusStore
+from libs.core.application.models import AlertRuleConfig, DetectionInput
+from libs.core.domain.entities import (
+    Alert,
+    AlertEvidence,
+    AlertLifecycle,
+    DetectionData,
+    FrameEvent,
+)
+
+# pylint: disable=too-few-public-methods,missing-class-docstring,unused-argument
+
+
+class FakeSource:
+    def __init__(self, mission_input: MissionInput) -> None:
+        self._mission_input = mission_input
+
+    def load(self, mission_id: str, ds: str) -> MissionInput:
+        return self._mission_input
+
+
+class FakeDetector:
+    def detect(self, image_uri: str) -> list[DetectionInput]:
+        return [
+            DetectionInput(
+                bbox=(0.0, 0.0, 1.0, 1.0),
+                score=0.95,
+                label="person",
+                model_name="fake-model",
+            )
+        ]
+
+
+@dataclass
+class FakeEngine(MissionEnginePort):
+    reviewed: list[str]
+    alerts_total: int = 0
+
+    def create_and_start_mission(
+        self,
+        source_name: str,
+        total_frames: int,
+        fps: float,
+        report_metadata: dict[str, object],
+    ) -> str:
+        return "internal-mission-1"
+
+    def ingest_frame(
+        self,
+        mission_id: str,
+        frame_event: FrameEvent,
+        detections: list[DetectionInput],
+    ) -> list[Alert]:
+        if not detections:
+            return []
+        self.alerts_total += 1
+        return [
+            Alert(
+                alert_id=f"alert-{frame_event.frame_id}",
+                mission_id=mission_id,
+                frame_id=frame_event.frame_id,
+                ts_sec=frame_event.ts_sec,
+                image_uri=frame_event.image_uri,
+                evidence=AlertEvidence(
+                    people_detected=1,
+                    primary_detection=DetectionData(
+                        bbox=(0.0, 0.0, 1.0, 1.0),
+                        score=0.95,
+                        label="person",
+                        model_name="fake-model",
+                    ),
+                ),
+                lifecycle=AlertLifecycle(status="queued"),
+            )
+        ]
+
+    def review_alert(
+        self,
+        alert_id: str,
+        status: str,
+        reviewed_at_sec: float,
+        reason: str,
+    ) -> None:
+        self.reviewed.append(alert_id)
+
+    def complete(self, mission_id: str, completed_frame_id: int | None) -> None:
+        return
+
+    def build_report(self, mission_id: str) -> dict[str, object]:
+        return {
+            "alerts_total": self.alerts_total,
+            "alerts_confirmed": self.alerts_total,
+            "alerts_rejected": 0,
+            "false_alerts_total": 0,
+            "recall_event": 1.0,
+            "episodes_total": 1,
+            "episodes_found": 1,
+            "ttfc_sec": 0.3,
+        }
+
+
+class FakeEngineFactory(MissionEngineFactoryPort):
+    def __init__(self, engine: FakeEngine) -> None:
+        self.engine = engine
+
+    def create(
+        self,
+        alert_rules: AlertRuleConfig,
+        report_metadata: dict[str, object],
+    ) -> MissionEnginePort:
+        return self.engine
+
+
+def _request(force: bool = False) -> BatchRunRequest:
+    return BatchRunRequest(
+        mission_id="mission-1",
+        ds="2026-03-01",
+        config_hash="cfg",
+        model_version="model-v1",
+        code_version="code-v1",
+        alert_rules=AlertRuleConfig(),
+        force=force,
+    )
+
+
+def _frame(
+    frame_id: int, gt_person_present: bool, is_corrupted: bool = False
+) -> FrameRecord:
+    return FrameRecord(
+        frame_id=frame_id,
+        ts_sec=float(frame_id),
+        frame_path=Path(f"/tmp/frame_{frame_id}.jpg"),
+        image_uri=f"/tmp/frame_{frame_id}.jpg",
+        gt_person_present=gt_person_present,
+        is_corrupted=is_corrupted,
+    )
+
+
+def test_batch_skip_when_completed_and_not_force() -> None:
+    with TemporaryDirectory() as temp_dir:
+        status_store = JsonStatusStore(path=Path(temp_dir) / "runs.json")
+        status_store.upsert(
+            run_key=_request().run_key,
+            status="completed",
+            report_uri="r",
+            debug_uri="d",
+        )
+        runner = MissionBatchRunner(
+            source=FakeSource(
+                MissionInput(
+                    source_uri="s", frames=[_frame(1, True)], gt_available=True
+                )
+            ),
+            detector=FakeDetector(),
+            artifacts=LocalArtifactStore(root_dir=Path(temp_dir) / "artifacts"),
+            statuses=status_store,
+            engine_factory=FakeEngineFactory(FakeEngine(reviewed=[])),
+        )
+        result = runner.run(_request())
+
+    assert result.status == "completed"
+    assert result.report == {"idempotent_skip": True}
+
+
+def test_batch_no_gt_does_not_auto_review_and_marks_kpi_not_applicable() -> None:
+    with TemporaryDirectory() as temp_dir:
+        engine = FakeEngine(reviewed=[])
+        runner = MissionBatchRunner(
+            source=FakeSource(
+                MissionInput(
+                    source_uri="s", frames=[_frame(1, False)], gt_available=False
+                )
+            ),
+            detector=FakeDetector(),
+            artifacts=LocalArtifactStore(root_dir=Path(temp_dir) / "artifacts"),
+            statuses=JsonStatusStore(path=Path(temp_dir) / "runs.json"),
+            engine_factory=FakeEngineFactory(engine),
+        )
+
+        result = runner.run(_request())
+
+    assert not engine.reviewed
+    assert result.report["recall_event"] is None
+    assert result.report["episodes_total"] is None
+    assert result.report["precision_alert"] is None
+    kpi_validity = cast(dict[str, str], result.report["kpi_validity"])
+    assert kpi_validity["recall_event"] == "not_applicable"
+
+
+def test_batch_partial_status_on_corrupted_rate() -> None:
+    with TemporaryDirectory() as temp_dir:
+        frames = [_frame(1, True), _frame(2, True, is_corrupted=True)]
+        runner = MissionBatchRunner(
+            source=FakeSource(
+                MissionInput(source_uri="s", frames=frames, gt_available=True)
+            ),
+            detector=FakeDetector(),
+            artifacts=LocalArtifactStore(root_dir=Path(temp_dir) / "artifacts"),
+            statuses=JsonStatusStore(path=Path(temp_dir) / "runs.json"),
+            engine_factory=FakeEngineFactory(FakeEngine(reviewed=[])),
+        )
+
+        result = runner.run(_request(force=True))
+
+    assert result.status == "partial"
+    assert result.report["status"] == "partial"
+
+
+def test_batch_failed_on_empty_input() -> None:
+    with TemporaryDirectory() as temp_dir:
+        runner = MissionBatchRunner(
+            source=FakeSource(
+                MissionInput(source_uri="s", frames=[], gt_available=True)
+            ),
+            detector=FakeDetector(),
+            artifacts=LocalArtifactStore(root_dir=Path(temp_dir) / "artifacts"),
+            statuses=JsonStatusStore(path=Path(temp_dir) / "runs.json"),
+            engine_factory=FakeEngineFactory(FakeEngine(reviewed=[])),
+        )
+
+        result = runner.run(_request(force=True))
+
+    assert result.status == "failed"
+
+
+def test_force_rerun_sets_running_reason() -> None:
+    with TemporaryDirectory() as temp_dir:
+        status_store = JsonStatusStore(path=Path(temp_dir) / "runs.json")
+        runner = MissionBatchRunner(
+            source=FakeSource(
+                MissionInput(
+                    source_uri="s", frames=[_frame(1, True)], gt_available=True
+                )
+            ),
+            detector=FakeDetector(),
+            artifacts=LocalArtifactStore(root_dir=Path(temp_dir) / "artifacts"),
+            statuses=status_store,
+            engine_factory=FakeEngineFactory(FakeEngine(reviewed=[])),
+        )
+
+        runner.run(_request(force=True))
+        record = status_store.get(_request(force=True).run_key)
+
+    assert isinstance(record, RunStatusRecord)
+    assert record is not None
+    assert record.status in {"completed", "partial", "failed"}
+    assert record.reason == "force_rerun_requested"

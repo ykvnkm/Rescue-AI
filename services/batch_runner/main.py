@@ -11,6 +11,7 @@ from libs.batch.infrastructure import (
     JsonStatusStore,
     LocalArtifactStore,
     LocalMissionSource,
+    PilotMissionEngineFactory,
     PostgresStatusStore,
     S3ArtifactStore,
     YoloDetectionRuntime,
@@ -34,7 +35,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_status_store():
-    backend = os.getenv("BATCH_STATUS_BACKEND", "json")
+    backend = os.getenv("BATCH_STATUS_BACKEND", _default_status_backend())
     if backend == "postgres":
         dsn = os.getenv("BATCH_POSTGRES_DSN", "")
         if not dsn:
@@ -47,7 +48,7 @@ def build_status_store():
 
 
 def build_artifact_store():
-    backend = os.getenv("BATCH_ARTIFACT_BACKEND", "local")
+    backend = os.getenv("BATCH_ARTIFACT_BACKEND", _default_artifact_backend())
     if backend == "s3":
         bucket = os.getenv("BATCH_S3_BUCKET", "")
         if not bucket:
@@ -93,6 +94,7 @@ def main() -> None:
         detector=detector,
         artifacts=build_artifact_store(),
         statuses=build_status_store(),
+        engine_factory=PilotMissionEngineFactory(),
     )
     request = BatchRunRequest(
         mission_id=args.mission_id,
@@ -119,3 +121,17 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def _default_status_backend() -> str:
+    runtime_env = os.getenv("BATCH_RUNTIME_ENV", "local").lower()
+    if runtime_env in {"shared", "stage", "staging", "prod", "production"}:
+        return "postgres"
+    return "json"
+
+
+def _default_artifact_backend() -> str:
+    runtime_env = os.getenv("BATCH_RUNTIME_ENV", "local").lower()
+    if runtime_env in {"shared", "stage", "staging", "prod", "production"}:
+        return "s3"
+    return "local"

@@ -40,7 +40,7 @@
 - [ ] YAML-описание каждого endpoint (отдельный OpenAPI YAML в `docs/api/`) отсутствует.
 - [ ] CI/CD deploy на удалённый сервер (push-модель) отсутствует.
 - [ ] Публикация docker image в registry отсутствует.
-- [ ] Airflow batch-контур (`DAG`, `DockerOperator`, idempotency, backfill) отсутствует.
+- [x] Airflow batch-контур (`DAG`, `DockerOperator`, idempotency, backfill) добавлен.
 - [ ] Мониторинг/алертинг (`Prometheus`, `Grafana`, Telegram/email alerts) отсутствует.
 - [ ] ML-мониторинг (качество, PSI/CSI) отсутствует.
 - [ ] External Postgres пока не подключен.
@@ -66,5 +66,7 @@
 - [ ] Добавить метрики качества/дрейфа (PSI/CSI, где применимо).
 
 5) **Batch и MLOps**
-- [ ] Airflow DAG + DockerOperator + idempotency + backfill-demo.
+- [x] Airflow DAG + DockerOperator + idempotency + backfill-demo.
+- [x] Выделен `libs/batch` слой (domain/application/infrastructure) и composition root в `services/batch_runner/main.py`.
+- [x] Добавлены batch unit/smoke/architecture тесты и CI-gates.
 - [ ] CI/CD deploy + image publish.
