@@ -1,61 +1,69 @@
-from libs.core.application.models import AlertRuleConfig
+from __future__ import annotations
+
+from dataclasses import dataclass
+from functools import lru_cache
+
 from libs.core.application.pilot_service import PilotService
-from services.api_gateway.infrastructure.artifact_storage import build_artifact_storage
+from services.api_gateway.infrastructure import (
+    DetectionStreamController,
+    build_artifact_storage,
+    load_alert_rules_and_metadata,
+)
 from services.api_gateway.infrastructure.memory_store import (
     InMemoryAlertRepository,
     InMemoryDatabase,
     InMemoryFrameEventRepository,
     InMemoryMissionRepository,
 )
-from services.detection_service.infrastructure.runtime_contract import (
-    load_stream_contract,
-)
 
-db = InMemoryDatabase()
-mission_repository = InMemoryMissionRepository(db)
-alert_repository = InMemoryAlertRepository(db)
-frame_repository = InMemoryFrameEventRepository(db)
-artifact_storage = build_artifact_storage()
 
-stream_contract = load_stream_contract()
+@dataclass
+class AppContainer:
+    """Process-level dependencies for api_gateway runtime."""
 
-alert_rules = AlertRuleConfig(
-    score_threshold=stream_contract.alert_rules.score_threshold,
-    window_sec=stream_contract.alert_rules.window_sec,
-    quorum_k=stream_contract.alert_rules.quorum_k,
-    cooldown_sec=stream_contract.alert_rules.cooldown_sec,
-    gap_end_sec=stream_contract.alert_rules.gap_end_sec,
-    gt_gap_end_sec=stream_contract.alert_rules.gt_gap_end_sec,
-    match_tolerance_sec=stream_contract.alert_rules.match_tolerance_sec,
-)
+    db: InMemoryDatabase
+    pilot_service: PilotService
+    stream_controller: DetectionStreamController
 
-pilot_service = PilotService(
-    dependencies=PilotService.Dependencies(
-        mission_repository=mission_repository,
-        alert_repository=alert_repository,
-        frame_event_repository=frame_repository,
-        artifact_storage=artifact_storage,
-    ),
-    alert_rules=alert_rules,
-)
 
-pilot_service.set_report_metadata(
-    {
-        "config_name": stream_contract.report_provenance.config_name,
-        "config_hash": stream_contract.report_provenance.config_hash,
-        "config_path": stream_contract.report_provenance.config_path,
-        "model_url": stream_contract.inference.model_url,
-        "service_version": stream_contract.report_provenance.service_version,
-    }
-)
+@lru_cache(maxsize=1)
+def get_container() -> AppContainer:
+    db = InMemoryDatabase()
+    mission_repository = InMemoryMissionRepository(db)
+    alert_repository = InMemoryAlertRepository(db)
+    frame_repository = InMemoryFrameEventRepository(db)
+    artifact_storage = build_artifact_storage()
+    alert_rules, report_metadata = load_alert_rules_and_metadata()
+
+    pilot_service = PilotService(
+        dependencies=PilotService.Dependencies(
+            mission_repository=mission_repository,
+            alert_repository=alert_repository,
+            frame_event_repository=frame_repository,
+            artifact_storage=artifact_storage,
+        ),
+        alert_rules=alert_rules,
+    )
+    pilot_service.set_report_metadata(report_metadata)
+
+    return AppContainer(
+        db=db,
+        pilot_service=pilot_service,
+        stream_controller=DetectionStreamController(),
+    )
 
 
 def get_pilot_service() -> PilotService:
-    return pilot_service
+    return get_container().pilot_service
+
+
+def get_stream_controller() -> DetectionStreamController:
+    return get_container().stream_controller
 
 
 def reset_state() -> None:
-    db.missions.clear()
-    db.alerts.clear()
-    db.mission_frames.clear()
-    pilot_service.reset_runtime_state()
+    container = get_container()
+    container.db.missions.clear()
+    container.db.alerts.clear()
+    container.db.mission_frames.clear()
+    container.pilot_service.reset_runtime_state()

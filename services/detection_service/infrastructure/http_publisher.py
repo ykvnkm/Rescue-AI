@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from urllib import request
 from urllib.error import HTTPError
 
@@ -18,14 +19,9 @@ class HttpFramePublisher:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        try:
-            with request.urlopen(req, timeout=15):
-                return
-        except HTTPError as error:
-            detail = _extract_http_error_detail(error)
-            raise RuntimeError(
-                f"Frame publish failed: HTTP {error.code}: {detail}"
-            ) from error
+        timeout_sec = float(os.getenv("DETECTION_HTTP_TIMEOUT_SEC", "1.0"))
+        with request.urlopen(req, timeout=timeout_sec):
+            return
 
     def endpoint(self, mission_id: str, api_base: str) -> str:
         return f"{api_base}/v1/missions/{mission_id}/frames"

@@ -22,6 +22,7 @@
 - [x] Временный операторский UI приведен к “миссионному” виду (крупный алерт-кадр + confirm/reject + таблица отчета на русском).
 - [x] Unit-тесты: стабильный проход, coverage > 70%.
 - [x] CI: `black`, `isort`, `flake8`, `mypy`, `pylint`, `pytest`.
+- [x] CI architecture guards: запрет прямых импортов `batch application -> batch infrastructure`, `api_gateway routes/dependencies -> detection_service`.
 - [x] `uv`-пин зависимостей: `pyproject.toml` + `uv.lock`.
 - [x] Docker-артефакты: `Dockerfile`, `docker-compose.yml`.
 - [x] README обновлен: краткая логика, структура проекта, запуск и deploy через Docker, шаги воспроизведения результата.
@@ -36,11 +37,12 @@
 
 ### По требованиям курса
 - [ ] Полное завершение Clean Architecture для всех запланированных сервисов (в том числе будущего `navigation_service`).
+- [x] Убраны прямые зависимости `api_gateway` на `detection_service` из `routes.py` и `dependencies.py` через infra-adapter.
 - [x] README синхронизирован с текущим API/UI и Docker-сценарием запуска.
 - [ ] YAML-описание каждого endpoint (отдельный OpenAPI YAML в `docs/api/`) отсутствует.
 - [ ] CI/CD deploy на удалённый сервер (push-модель) отсутствует.
 - [ ] Публикация docker image в registry отсутствует.
-- [ ] Airflow batch-контур (`DAG`, `DockerOperator`, idempotency, backfill) отсутствует.
+- [x] Airflow batch-контур (`DAG`, `DockerOperator`, idempotency, backfill) добавлен.
 - [ ] Мониторинг/алертинг (`Prometheus`, `Grafana`, Telegram/email alerts) отсутствует.
 - [ ] ML-мониторинг (качество, PSI/CSI) отсутствует.
 - [ ] External Postgres пока не подключен.
@@ -66,5 +68,7 @@
 - [ ] Добавить метрики качества/дрейфа (PSI/CSI, где применимо).
 
 5) **Batch и MLOps**
-- [ ] Airflow DAG + DockerOperator + idempotency + backfill-demo.
+- [x] Airflow DAG + DockerOperator + idempotency + backfill-demo.
+- [x] Выделен `libs/batch` слой (domain/application/infrastructure) и composition root в `services/batch_runner/main.py`.
+- [x] Добавлены batch unit/smoke/architecture тесты и CI-gates.
 - [ ] CI/CD deploy + image publish.

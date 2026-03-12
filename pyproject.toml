@@ -24,6 +24,10 @@ dev = [
 inference = [
   "ultralytics==8.3.57",
 ]
+batch = [
+  "boto3==1.42.65",
+  "psycopg[binary]==3.2.3",
+]
 
 [tool.black]
 line-length = 88

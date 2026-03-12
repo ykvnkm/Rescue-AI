@@ -149,3 +149,46 @@ docker compose up --build
 - Если нужно прогнать другую миссию:
 1. Измените `MISSION_DIR` в `.env` на новый путь.
 2. Перезапустите контейнер: `docker compose down && docker compose up --build`.
+
+## Инфраструктурный стенд (Airflow + Observability + S3 + Postgres)
+
+В репозитории добавлен отдельный каркас платформы в папке `infra/`:
+
+- `Airflow` (`webserver`, `scheduler`, `init`)
+- `Postgres` + `postgres-exporter`
+- `MinIO` (S3-compatible)
+- `Prometheus`
+- `Grafana` (provisioning datasource + dashboard)
+
+Быстрый запуск:
+
+```bash
+cd infra
+cp platform.env.example platform.env
+docker compose -f docker-compose.platform.yml --env-file platform.env up -d
+```
+
+Ключевые UI:
+
+- Airflow: `http://localhost:8080`
+- Grafana: `http://localhost:3000`
+- Prometheus: `http://localhost:9090`
+- MinIO Console: `http://localhost:9001`
+
+Подробности: [infra/README.md](infra/README.md)
+
+### Batch сервис (Airflow)
+
+Подробный запуск и эксплуатация batch-контура вынесены в отдельные документы:
+
+- `infra/README.md` — запуск платформы, DAG, backfill, idempotency.
+- `docs/runbooks/batch_operations.md` — диагностика, safe rerun, runbook статусов/ошибок.
+- `docs/runbooks/batch_demo_playbook.md` — сценарий real-data прогона и quality gates.
+- `docs/batch_evidence_pack.md` — чеклист материалов для защиты.
+- `docs/architecture/batch_contour.md` — архитектурная схема batch-контура.
+
+## CI/CD каркас
+
+- Базовый CI проекта: `.github/workflows/ci.yml`
+- CI для инфраструктуры (`compose config`): `.github/workflows/infra-ci.yml`
+- E2E для батча (nightly + manual): `.github/workflows/batch-e2e.yml`

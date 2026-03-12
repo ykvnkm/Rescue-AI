@@ -1,0 +1,46 @@
+name: infra-ci
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  validate-platform-compose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate docker compose
+        run: PLATFORM_ENV_FILE=./platform.env.example docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env.example config > /dev/null
+
+  validate-batch-dag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate DAG definition and backfill command docs
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          dag_path = Path("infra/airflow/dags/idempotent_docker_backfill_demo.py")
+          dag_text = dag_path.read_text(encoding="utf-8")
+          assert "DAG_ID = \"rescue_batch_daily\"" in dag_text
+          assert "DockerOperator(" in dag_text
+          assert "services.batch_runner.main" in dag_text
+
+          readme = Path("infra/README.md").read_text(encoding="utf-8")
+          assert "airflow dags backfill rescue_batch_daily" in readme
+          print("DAG/platform docs checks passed")
+          PY

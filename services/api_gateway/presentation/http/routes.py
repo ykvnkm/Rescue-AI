@@ -7,15 +7,8 @@ from pydantic import BaseModel, Field
 
 from libs.core.application.models import DetectionInput
 from libs.core.domain.entities import Alert, FrameEvent
-from services.api_gateway.dependencies import get_pilot_service
+from services.api_gateway.dependencies import get_pilot_service, get_stream_controller
 from services.api_gateway.presentation.http.ui_page import build_ui_html
-from services.detection_service.presentation.stream_api import (
-    build_stream_config,
-    get_stream_state,
-    start_stream,
-    stop_stream,
-    wait_stream_stopped,
-)
 
 router = APIRouter()
 
@@ -79,11 +72,12 @@ def version() -> dict[str, str]:
 @router.post("/v1/missions/{mission_id}/complete")
 def complete_mission(mission_id: str) -> dict[str, object]:
     service = get_pilot_service()
+    stream_controller = get_stream_controller()
     if service.get_mission(mission_id) is None:
         raise HTTPException(status_code=404, detail="Mission not found")
 
-    stop_stream(mission_id)
-    state = wait_stream_stopped(mission_id)
+    stream_controller.stop(mission_id)
+    state = stream_controller.wait_stopped(mission_id)
 
     completed_frame_id = None
     if state is not None and state.processed_frames > 0:
@@ -113,6 +107,7 @@ def complete_mission(mission_id: str) -> dict[str, object]:
 @router.post("/v1/missions/start-flow")
 def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
     service = get_pilot_service()
+    stream_controller = get_stream_controller()
     mission = service.create_mission(
         source_name=payload.source_name,
         total_frames=0,
@@ -120,7 +115,7 @@ def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
     )
 
     try:
-        config = build_stream_config(
+        config = stream_controller.build_config(
             mission_id=mission.mission_id,
             options={
                 "frames_dir": payload.frames_dir,
@@ -136,7 +131,7 @@ def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
     started = service.start_mission(mission.mission_id)
     if started is None:
         raise HTTPException(status_code=404, detail="Mission not found")
-    state = start_stream(config)
+    state = stream_controller.start(config)
 
     return {
         "mission_id": mission.mission_id,
@@ -159,10 +154,11 @@ def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
 @router.get("/v1/missions/{mission_id}/stream/status")
 def get_mission_stream_status(mission_id: str) -> dict[str, object]:
     service = get_pilot_service()
+    stream_controller = get_stream_controller()
     if service.get_mission(mission_id) is None:
         raise HTTPException(status_code=404, detail="Mission not found")
 
-    state = get_stream_state(mission_id)
+    state = stream_controller.get_state(mission_id)
     if state is None:
         return {
             "mission_id": mission_id,
