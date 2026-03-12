@@ -15,7 +15,6 @@ class InMemoryArtifactStorage:
 
     def load_frame(self, image_uri: str) -> ArtifactBlob | None:
         _ = image_uri
-        return None
 
     def save_mission_report(self, mission_id: str, report: dict[str, object]) -> str:
         self._reports[mission_id] = dict(report)
