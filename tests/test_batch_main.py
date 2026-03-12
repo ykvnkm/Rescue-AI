@@ -54,6 +54,71 @@ def test_build_status_store_requires_dsn(monkeypatch) -> None:
         batch_main.build_status_store()
 
 
+def test_build_artifact_store_supports_artifacts_s3_fallback(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeConnection:
+        def __init__(
+            self,
+            endpoint_url: str | None = None,
+            access_key: str | None = None,
+            secret_key: str | None = None,
+            region_name: str = "us-east-1",
+        ) -> None:
+            self.endpoint_url = endpoint_url
+            self.access_key = access_key
+            self.secret_key = secret_key
+            self.region_name = region_name
+
+        def has_credentials(self) -> bool:
+            return bool(self.access_key and self.secret_key)
+
+        def endpoint(self) -> str | None:
+            return self.endpoint_url
+
+    class _FakeS3ArtifactStore:
+        Connection = _FakeConnection
+
+        def __init__(
+            self, bucket: str, prefix: str, connection: _FakeConnection
+        ) -> None:
+            captured["bucket"] = bucket
+            captured["prefix"] = prefix
+            captured["endpoint"] = connection.endpoint_url
+            captured["access_key"] = connection.access_key
+            captured["secret_key"] = connection.secret_key
+            captured["region"] = connection.region_name
+
+        def backend_name(self) -> str:
+            return "fake-s3"
+
+        def bucket_name(self) -> str:
+            return str(captured["bucket"])
+
+    monkeypatch.setenv("BATCH_RUNTIME_ENV", "staging")
+    monkeypatch.delenv("BATCH_ARTIFACT_BACKEND", raising=False)
+    monkeypatch.delenv("BATCH_S3_BUCKET", raising=False)
+    monkeypatch.delenv("BATCH_S3_ENDPOINT", raising=False)
+    monkeypatch.delenv("BATCH_S3_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("BATCH_S3_SECRET_KEY", raising=False)
+    monkeypatch.delenv("BATCH_S3_REGION", raising=False)
+    monkeypatch.setenv("ARTIFACTS_S3_BUCKET", "bucket-a")
+    monkeypatch.setenv("ARTIFACTS_S3_ENDPOINT", "https://storage.yandexcloud.net")
+    monkeypatch.setenv("ARTIFACTS_S3_ACCESS_KEY_ID", "key-a")
+    monkeypatch.setenv("ARTIFACTS_S3_SECRET_ACCESS_KEY", "secret-a")
+    monkeypatch.setenv("ARTIFACTS_S3_REGION", "ru-central1")
+    monkeypatch.setenv("ARTIFACTS_S3_PREFIX", "batch")
+    monkeypatch.setattr(batch_main, "S3ArtifactStore", _FakeS3ArtifactStore)
+
+    _ = batch_main.build_artifact_store()
+
+    assert captured["bucket"] == "bucket-a"
+    assert captured["endpoint"] == "https://storage.yandexcloud.net"
+    assert captured["access_key"] == "key-a"
+    assert captured["secret_key"] == "secret-a"
+    assert captured["region"] == "ru-central1"
+
+
 def test_build_detector_yolo(monkeypatch) -> None:
     expected = SimpleNamespace(config_hash="cfg", rules=AlertRuleConfig())
 

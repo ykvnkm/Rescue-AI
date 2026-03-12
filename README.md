@@ -156,7 +156,6 @@ docker compose up --build
 
 - `Airflow` (`webserver`, `scheduler`, `init`)
 - `Postgres` + `postgres-exporter`
-- `MinIO` (S3-compatible)
 - `Prometheus`
 - `Grafana` (provisioning datasource + dashboard)
 
@@ -173,7 +172,6 @@ docker compose -f docker-compose.platform.yml --env-file platform.env up -d
 - Airflow: `http://localhost:8080`
 - Grafana: `http://localhost:3000`
 - Prometheus: `http://localhost:9090`
-- MinIO Console: `http://localhost:9001`
 
 Подробности: [infra/README.md](infra/README.md)
 

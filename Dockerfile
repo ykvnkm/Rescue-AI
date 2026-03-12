@@ -13,8 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --extra inference
-RUN pip install --no-cache-dir boto3==1.35.99 psycopg[binary]==3.2.3
+RUN uv sync --frozen --no-dev --extra inference --extra batch
 
 COPY configs ./configs
 COPY libs ./libs
