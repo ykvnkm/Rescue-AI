@@ -40,8 +40,6 @@ with DAG(
         ],
         environment={
             "BATCH_RUNTIME_ENV": os.getenv("BATCH_RUNTIME_ENV", "local"),
-            "BATCH_ARTIFACT_BACKEND": os.getenv("BATCH_ARTIFACT_BACKEND", "local"),
-            "BATCH_STATUS_BACKEND": os.getenv("BATCH_STATUS_BACKEND", "json"),
             "BATCH_MISSION_ROOT": os.getenv("BATCH_MISSION_ROOT", "/opt/airflow/data/missions"),
             "BATCH_ARTIFACT_ROOT": os.getenv("BATCH_ARTIFACT_ROOT", "/opt/airflow/data/artifacts"),
             "BATCH_STATUS_PATH": os.getenv("BATCH_STATUS_PATH", "/opt/airflow/data/status/runs.json"),
@@ -52,6 +50,15 @@ with DAG(
             "BATCH_S3_ACCESS_KEY": os.getenv("BATCH_S3_ACCESS_KEY", ""),
             "BATCH_S3_SECRET_KEY": os.getenv("BATCH_S3_SECRET_KEY", ""),
             "BATCH_S3_REGION": os.getenv("BATCH_S3_REGION", "us-east-1"),
+            "ARTIFACTS_S3_ENDPOINT": os.getenv("ARTIFACTS_S3_ENDPOINT", ""),
+            "ARTIFACTS_S3_BUCKET": os.getenv("ARTIFACTS_S3_BUCKET", ""),
+            "ARTIFACTS_S3_PREFIX": os.getenv("ARTIFACTS_S3_PREFIX", ""),
+            "ARTIFACTS_S3_ACCESS_KEY_ID": os.getenv("ARTIFACTS_S3_ACCESS_KEY_ID", ""),
+            "ARTIFACTS_S3_SECRET_ACCESS_KEY": os.getenv(
+                "ARTIFACTS_S3_SECRET_ACCESS_KEY",
+                "",
+            ),
+            "ARTIFACTS_S3_REGION": os.getenv("ARTIFACTS_S3_REGION", ""),
         },
         command=(
             "uv run python -m services.batch_runner.main "

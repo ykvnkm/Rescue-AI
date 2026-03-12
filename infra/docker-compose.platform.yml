@@ -18,18 +18,10 @@ x-airflow-common: &airflow-common
     BATCH_MISSION_ID: ${BATCH_MISSION_ID}
     BATCH_CODE_VERSION: ${BATCH_CODE_VERSION}
     BATCH_MODEL_VERSION: ${BATCH_MODEL_VERSION}
-    BATCH_ARTIFACT_BACKEND: ${BATCH_ARTIFACT_BACKEND}
-    BATCH_STATUS_BACKEND: ${BATCH_STATUS_BACKEND}
     BATCH_MISSION_ROOT: ${BATCH_MISSION_ROOT}
     BATCH_ARTIFACT_ROOT: ${BATCH_ARTIFACT_ROOT}
     BATCH_STATUS_PATH: ${BATCH_STATUS_PATH}
     BATCH_POSTGRES_DSN: ${BATCH_POSTGRES_DSN}
-    BATCH_S3_ENDPOINT: ${BATCH_S3_ENDPOINT}
-    BATCH_S3_BUCKET: ${BATCH_S3_BUCKET}
-    BATCH_S3_PREFIX: ${BATCH_S3_PREFIX}
-    BATCH_S3_ACCESS_KEY: ${BATCH_S3_ACCESS_KEY}
-    BATCH_S3_SECRET_KEY: ${BATCH_S3_SECRET_KEY}
-    BATCH_S3_REGION: ${BATCH_S3_REGION}
     _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-docker==3.11.0"
   volumes:
     - ./airflow/dags:/opt/airflow/dags
@@ -66,38 +58,11 @@ services:
     env_file:
       - ${PLATFORM_ENV_FILE:-./platform.env}
     environment:
-      DATA_SOURCE_NAME: postgresql://${POSTGRES_EXPORTER_USER}:${POSTGRES_EXPORTER_PASSWORD}@postgres:5432/${POSTGRES_DEFAULT_DB}?sslmode=disable
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_ADMIN_USER}:${POSTGRES_ADMIN_PASSWORD}@postgres:5432/${POSTGRES_DEFAULT_DB}?sslmode=disable
     ports:
       - "9187:9187"
     depends_on:
       postgres:
-        condition: service_healthy
-
-  minio:
-    image: minio/minio:RELEASE.2026-02-14T03-28-17Z
-    env_file:
-      - ${PLATFORM_ENV_FILE:-./platform.env}
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  minio-init:
-    image: minio/mc:RELEASE.2026-02-14T00-52-50Z
-    env_file:
-      - ${PLATFORM_ENV_FILE:-./platform.env}
-    entrypoint: ["/bin/sh", "/init/create-bucket.sh"]
-    volumes:
-      - ./minio/create-bucket.sh:/init/create-bucket.sh:ro
-    depends_on:
-      minio:
         condition: service_healthy
 
   statsd-exporter:
@@ -120,13 +85,7 @@ services:
     command: >
       bash -c "
       airflow db migrate &&
-      airflow users create
-        --username ${AIRFLOW_ADMIN_USER}
-        --firstname Platform
-        --lastname Admin
-        --role Admin
-        --email ${AIRFLOW_ADMIN_EMAIL}
-        --password ${AIRFLOW_ADMIN_PASSWORD}
+      airflow users create --username ${AIRFLOW_ADMIN_USER} --firstname Platform --lastname Admin --role Admin --email ${AIRFLOW_ADMIN_EMAIL} --password ${AIRFLOW_ADMIN_PASSWORD}
       "
     restart: "no"
 
@@ -176,7 +135,6 @@ services:
 
 volumes:
   postgres_data:
-  minio_data:
   prometheus_data:
   grafana_data:
   airflow_shared_data:

@@ -1,6 +1,8 @@
 # secrets
 .env
 .env.*.local
+infra/platform.env
+infra/platform.env.local
 
 # python
 __pycache__/

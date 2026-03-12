@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_status_store():
-    backend = os.getenv("BATCH_STATUS_BACKEND", _default_status_backend())
+    backend = os.getenv("BATCH_STATUS_BACKEND") or _default_status_backend()
     if backend == "postgres":
         dsn = os.getenv("BATCH_POSTGRES_DSN", "")
         if not dsn:
@@ -49,19 +49,30 @@ def build_status_store():
 
 
 def build_artifact_store():
-    backend = os.getenv("BATCH_ARTIFACT_BACKEND", _default_artifact_backend())
+    backend = os.getenv("BATCH_ARTIFACT_BACKEND") or _default_artifact_backend()
     if backend == "s3":
-        bucket = os.getenv("BATCH_S3_BUCKET", "")
+        bucket = _env_value("BATCH_S3_BUCKET", "ARTIFACTS_S3_BUCKET")
         if not bucket:
             raise ValueError("BATCH_S3_BUCKET is required for s3 backend")
         return S3ArtifactStore(
             bucket=bucket,
-            prefix=os.getenv("BATCH_S3_PREFIX", "batch"),
+            prefix=_env_value(
+                "BATCH_S3_PREFIX", "ARTIFACTS_S3_PREFIX", default="batch"
+            ),
             connection=S3ArtifactStore.Connection(
-                endpoint_url=os.getenv("BATCH_S3_ENDPOINT"),
-                access_key=os.getenv("BATCH_S3_ACCESS_KEY"),
-                secret_key=os.getenv("BATCH_S3_SECRET_KEY"),
-                region_name=os.getenv("BATCH_S3_REGION", "us-east-1"),
+                endpoint_url=_env_value("BATCH_S3_ENDPOINT", "ARTIFACTS_S3_ENDPOINT"),
+                access_key=_env_value(
+                    "BATCH_S3_ACCESS_KEY", "ARTIFACTS_S3_ACCESS_KEY_ID"
+                ),
+                secret_key=_env_value(
+                    "BATCH_S3_SECRET_KEY",
+                    "ARTIFACTS_S3_SECRET_ACCESS_KEY",
+                ),
+                region_name=_env_value(
+                    "BATCH_S3_REGION",
+                    "ARTIFACTS_S3_REGION",
+                    default="us-east-1",
+                ),
             ),
         )
     artifact_root = Path(
@@ -148,3 +159,11 @@ def _default_artifact_backend() -> str:
     if runtime_env in {"shared", "stage", "staging", "prod", "production"}:
         return "s3"
     return "local"
+
+
+def _env_value(*names: str, default: str | None = None) -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return "" if default is None else default
