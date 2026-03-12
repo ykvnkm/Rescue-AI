@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-import os
 from urllib import request
 from urllib.error import HTTPError
+
+from config import config
 
 
 class HttpFramePublisher:
@@ -19,7 +20,7 @@ class HttpFramePublisher:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        timeout_sec = float(os.getenv("DETECTION_HTTP_TIMEOUT_SEC", "1.0"))
+        timeout_sec = config.detection_http_timeout_sec()
         with request.urlopen(req, timeout=timeout_sec):
             return
 

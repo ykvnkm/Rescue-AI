@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 
 import yaml
 
+from config import config
 from libs.core.application.models import AlertRuleConfig
 from services.detection_service.infrastructure.runtime_contract import (
     load_stream_contract,
@@ -41,6 +41,6 @@ def load_alert_rules_and_metadata() -> tuple[AlertRuleConfig, dict[str, object]]
         "config_hash": hashlib.sha256(DEFAULT_CONTRACT_PATH.read_bytes()).hexdigest(),
         "config_path": str(DEFAULT_CONTRACT_PATH),
         "model_url": str(payload.get("model_url", DEFAULT_MODEL_URL)),
-        "service_version": os.getenv("SERVICE_VERSION", "dev"),
+        "service_version": config.service_version(),
     }
     return alert_rules, report_metadata

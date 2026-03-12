@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 
 import yaml
 
+from config import config
 from services.detection_service.domain.models import (
     AlertRulesConfig,
     InferenceConfig,
@@ -36,7 +36,7 @@ def load_stream_contract() -> StreamContract:
 
     config_name = str(payload.get("name", "unknown_contract"))
     config_hash = hashlib.sha256(contract_path.read_bytes()).hexdigest()
-    service_version = os.getenv("SERVICE_VERSION", "dev")
+    service_version = config.service_version()
 
     thresholds = eval_cfg.get("thresholds", [0.2])
     confidence_threshold = float(thresholds[0] if thresholds else 0.2)
