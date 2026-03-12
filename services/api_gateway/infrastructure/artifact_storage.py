@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import mimetypes
-import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -10,6 +9,7 @@ from pathlib import Path
 from shutil import copy2
 from urllib.parse import urlparse
 
+from config import config
 from libs.core.application.contracts import ArtifactBlob, ArtifactStorage
 
 try:
@@ -61,20 +61,22 @@ class ArtifactStorageSettings:
     @classmethod
     def from_env(cls) -> ArtifactStorageSettings:
         return cls(
-            mode=_normalize_mode(os.getenv("ARTIFACTS_MODE")),
+            mode=_normalize_mode(config.get("ARTIFACTS_MODE")),
             local_root=Path(
-                _clean_env_value(os.getenv("ARTIFACTS_LOCAL_ROOT"))
+                _clean_env_value(config.get("ARTIFACTS_LOCAL_ROOT"))
                 or "runtime/artifacts"
             ),
             s3=S3ArtifactBackendSettings(
-                endpoint=_clean_env_value(os.getenv("ARTIFACTS_S3_ENDPOINT")),
-                region=_clean_env_value(os.getenv("ARTIFACTS_S3_REGION")),
-                access_key_id=_clean_env_value(os.getenv("ARTIFACTS_S3_ACCESS_KEY_ID")),
-                secret_access_key=_clean_env_value(
-                    os.getenv("ARTIFACTS_S3_SECRET_ACCESS_KEY")
+                endpoint=_clean_env_value(config.get("ARTIFACTS_S3_ENDPOINT")),
+                region=_clean_env_value(config.get("ARTIFACTS_S3_REGION")),
+                access_key_id=_clean_env_value(
+                    config.get("ARTIFACTS_S3_ACCESS_KEY_ID")
                 ),
-                bucket=_clean_env_value(os.getenv("ARTIFACTS_S3_BUCKET")),
-                strict=_env_bool(os.getenv("ARTIFACTS_S3_STRICT"), default=True),
+                secret_access_key=_clean_env_value(
+                    config.get("ARTIFACTS_S3_SECRET_ACCESS_KEY")
+                ),
+                bucket=_clean_env_value(config.get("ARTIFACTS_S3_BUCKET")),
+                strict=_env_bool(config.get("ARTIFACTS_S3_STRICT"), default=True),
             ),
         )
 

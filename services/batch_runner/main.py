@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 
+from config import config
 from libs.batch.application import MissionBatchRunner
 from libs.batch.application.mission_batch_runner import MissionBatchRunnerDeps
 from libs.batch.domain.models import BatchRunRequest
@@ -26,30 +26,35 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ds", required=True)
     parser.add_argument(
         "--model-version",
-        default=os.getenv("BATCH_MODEL_VERSION", "yolov8n_baseline_multiscale"),
+        default=config.get_non_empty(
+            "BATCH_MODEL_VERSION", default="yolov8n_baseline_multiscale"
+        ),
     )
     parser.add_argument(
-        "--code-version", default=os.getenv("BATCH_CODE_VERSION", "dev")
+        "--code-version",
+        default=config.get_non_empty("BATCH_CODE_VERSION", default="dev"),
     )
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
 
 
 def build_status_store():
-    backend = os.getenv("BATCH_STATUS_BACKEND") or _default_status_backend()
+    backend = config.get("BATCH_STATUS_BACKEND") or _default_status_backend()
     if backend == "postgres":
-        dsn = os.getenv("BATCH_POSTGRES_DSN", "")
+        dsn = config.get_non_empty("BATCH_POSTGRES_DSN")
         if not dsn:
             raise ValueError("BATCH_POSTGRES_DSN is required for postgres backend")
         return PostgresStatusStore(dsn=dsn)
     status_path = Path(
-        os.getenv("BATCH_STATUS_PATH", "/opt/airflow/data/status/runs.json")
+        config.get_non_empty(
+            "BATCH_STATUS_PATH", default="/opt/airflow/data/status/runs.json"
+        )
     )
     return JsonStatusStore(path=status_path)
 
 
 def build_artifact_store():
-    backend = os.getenv("BATCH_ARTIFACT_BACKEND") or _default_artifact_backend()
+    backend = config.get("BATCH_ARTIFACT_BACKEND") or _default_artifact_backend()
     if backend == "s3":
         bucket = _env_value("BATCH_S3_BUCKET", "ARTIFACTS_S3_BUCKET")
         if not bucket:
@@ -76,14 +81,18 @@ def build_artifact_store():
             ),
         )
     artifact_root = Path(
-        os.getenv("BATCH_ARTIFACT_ROOT", "/opt/airflow/data/artifacts")
+        config.get_non_empty(
+            "BATCH_ARTIFACT_ROOT", default="/opt/airflow/data/artifacts"
+        )
     )
     return LocalArtifactStore(root_dir=artifact_root)
 
 
 def build_source():
-    source_root = Path(os.getenv("BATCH_MISSION_ROOT", "/opt/airflow/data/missions"))
-    source_fps = float(os.getenv("BATCH_SOURCE_FPS", "6.0"))
+    source_root = Path(
+        config.get_non_empty("BATCH_MISSION_ROOT", default="/opt/airflow/data/missions")
+    )
+    source_fps = config.get_float("BATCH_SOURCE_FPS", default=6.0)
     return LocalMissionSource(root_dir=source_root, fps=source_fps)
 
 
@@ -148,22 +157,18 @@ if __name__ == "__main__":
 
 
 def _default_status_backend() -> str:
-    runtime_env = os.getenv("BATCH_RUNTIME_ENV", "local").lower()
+    runtime_env = config.get_non_empty("BATCH_RUNTIME_ENV", default="local").lower()
     if runtime_env in {"shared", "stage", "staging", "prod", "production"}:
         return "postgres"
     return "json"
 
 
 def _default_artifact_backend() -> str:
-    runtime_env = os.getenv("BATCH_RUNTIME_ENV", "local").lower()
+    runtime_env = config.get_non_empty("BATCH_RUNTIME_ENV", default="local").lower()
     if runtime_env in {"shared", "stage", "staging", "prod", "production"}:
         return "s3"
     return "local"
 
 
 def _env_value(*names: str, default: str | None = None) -> str:
-    for name in names:
-        value = os.getenv(name)
-        if value:
-            return value
-    return "" if default is None else default
+    return config.get_non_empty(*names, default=default)
