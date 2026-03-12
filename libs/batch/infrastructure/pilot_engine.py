@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from libs.batch.application.ports import MissionEngineFactoryPort, MissionEnginePort
+from libs.batch.infrastructure.in_memory_artifact_storage import InMemoryArtifactStorage
 from libs.batch.infrastructure.in_memory_repositories import (
     InMemoryAlertRepo,
     InMemoryBatchDb,
@@ -89,9 +90,12 @@ class PilotMissionEngineFactory(MissionEngineFactoryPort):
     ) -> MissionEnginePort:
         db = InMemoryBatchDb()
         pilot = PilotService(
-            mission_repository=InMemoryMissionRepo(db),
-            alert_repository=InMemoryAlertRepo(db),
-            frame_event_repository=InMemoryFrameEventRepo(db),
+            dependencies=PilotService.Dependencies(
+                mission_repository=InMemoryMissionRepo(db),
+                alert_repository=InMemoryAlertRepo(db),
+                frame_event_repository=InMemoryFrameEventRepo(db),
+                artifact_storage=InMemoryArtifactStorage(),
+            ),
             alert_rules=alert_rules,
         )
         pilot.set_report_metadata(report_metadata)

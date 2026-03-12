@@ -6,6 +6,7 @@ from functools import lru_cache
 from libs.core.application.pilot_service import PilotService
 from services.api_gateway.infrastructure import (
     DetectionStreamController,
+    build_artifact_storage,
     load_alert_rules_and_metadata,
 )
 from services.api_gateway.infrastructure.memory_store import (
@@ -31,12 +32,16 @@ def get_container() -> AppContainer:
     mission_repository = InMemoryMissionRepository(db)
     alert_repository = InMemoryAlertRepository(db)
     frame_repository = InMemoryFrameEventRepository(db)
+    artifact_storage = build_artifact_storage()
     alert_rules, report_metadata = load_alert_rules_and_metadata()
 
     pilot_service = PilotService(
-        mission_repository=mission_repository,
-        alert_repository=alert_repository,
-        frame_event_repository=frame_repository,
+        dependencies=PilotService.Dependencies(
+            mission_repository=mission_repository,
+            alert_repository=alert_repository,
+            frame_event_repository=frame_repository,
+            artifact_storage=artifact_storage,
+        ),
         alert_rules=alert_rules,
     )
     pilot_service.set_report_metadata(report_metadata)
