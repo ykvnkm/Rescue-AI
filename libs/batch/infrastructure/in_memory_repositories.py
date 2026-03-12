@@ -1,4 +1,3 @@
-# pylint: disable=too-few-public-methods,missing-class-docstring,duplicate-code
 from dataclasses import dataclass, field
 
 from libs.core.application.contracts import (
@@ -12,12 +11,16 @@ from libs.core.domain.entities import Alert, FrameEvent, Mission
 
 @dataclass
 class InMemoryBatchDb:
+    """Mutable in-memory storage used by pilot engine repositories."""
+
     missions: dict[str, Mission] = field(default_factory=dict)
     alerts: dict[str, Alert] = field(default_factory=dict)
     frames: dict[str, list[FrameEvent]] = field(default_factory=dict)
 
 
 class InMemoryMissionRepo(MissionRepository):
+    """In-memory mission repository implementation."""
+
     def __init__(self, db: InMemoryBatchDb) -> None:
         self._db = db
 
@@ -34,16 +37,21 @@ class InMemoryMissionRepo(MissionRepository):
         status: str,
         completed_frame_id: int | None = None,
     ) -> Mission | None:
-        mission = self._db.missions.get(mission_id)
-        if mission is None:
+        if mission_id not in self._db.missions:
             return None
+        mission = self._db.missions[mission_id]
         mission.status = status
-        if completed_frame_id is not None:
-            mission.completed_frame_id = completed_frame_id
+        mission.completed_frame_id = (
+            mission.completed_frame_id
+            if completed_frame_id is None
+            else completed_frame_id
+        )
         return mission
 
 
 class InMemoryAlertRepo(AlertRepository):
+    """In-memory alert repository implementation."""
+
     def __init__(self, db: InMemoryBatchDb) -> None:
         self._db = db
 
@@ -81,6 +89,8 @@ class InMemoryAlertRepo(AlertRepository):
 
 
 class InMemoryFrameEventRepo(FrameEventRepository):
+    """In-memory frame-event repository implementation."""
+
     def __init__(self, db: InMemoryBatchDb) -> None:
         self._db = db
 

@@ -35,8 +35,7 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 - В `platform.env.example` заданы dev-учетки, для shared/stage меняйте все пароли.
 - `infra/postgres/init/001-init-platform.sql` задает стартовые БД/пользователей (`airflow`, `rescue_app`, `postgres_exporter`).
 - Дашборд Grafana загружается автоматически из `infra/grafana/dashboards/platform-overview.json`.
-- Пример DAG находится в `infra/airflow/dags/healthcheck_dag.py`.
-- DAG с `DockerOperator` и бизнес batch-runner: `infra/airflow/dags/idempotent_docker_backfill_demo.py`.
+- Основной DAG batch-контура: `infra/airflow/dags/idempotent_docker_backfill_demo.py`.
 
 ## DAG: Rescue Batch (DockerOperator + Idempotency + Backfill)
 
@@ -95,17 +94,18 @@ docker compose -f docker-compose.platform.yml --env-file platform.env exec airfl
 ## Runbook (failed/partial)
 
 - `failed` + `reason=empty_input`: проверить путь `BATCH_MISSION_ROOT/<mission_id>/<ds>/images`.
-- `failed` + `reason=no_processable_frames`: проверить битые кадры/формат изображений.
-- `partial` + `reason=high_corrupted_frame_ratio`: проверить качество входных данных и повторить с `--force` после исправления.
+- `failed` + `reason=no_processable_frames`: проверить входные данные и доступность источника.
+- `partial` + `reason=corrupted_input`: высокий процент битых файлов.
+- `partial` + `reason=detector_runtime_error`: ошибки рантайма детектора на кадрах.
+- `partial` + `reason=mixed_input_and_detector_errors`: одновременно битые входы и ошибки детектора.
 - Для shared/stage использовать `BATCH_RUNTIME_ENV=staging`, тогда по умолчанию включаются `PostgresStatusStore` и `S3ArtifactStore`.
 - Полный runbook: `docs/runbooks/batch_operations.md`.
 - `LocalMissionSource` помечает кадр как `is_corrupted=True`, если сигнатура изображения не распознаётся (`jpeg/png/bmp/webp`).
-- Для быстрых e2e в CI можно включить `BATCH_DETECTOR_BACKEND=fake` (без загрузки real model weights).
-- Для всех демо/оценочных прогонов использовать `BATCH_DETECTOR_BACKEND=yolo`.
+- Batch-контур использует только реальный `YoloDetectionRuntime`.
 
 ## E2E Backfill в CI
 
-- Nightly workflow: `.github/workflows/backfill-e2e-nightly.yml`.
+- Nightly workflow: `.github/workflows/batch-e2e.yml`.
 - Сценарий поднимает платформу, seed'ит миссию, выполняет `airflow dags backfill rescue_batch_daily` и проверяет status/artifacts.
 - Плейбук real-data demo: `docs/runbooks/batch_demo_playbook.md`.
 - Архитектурная схема: `docs/architecture/batch_contour.md`.

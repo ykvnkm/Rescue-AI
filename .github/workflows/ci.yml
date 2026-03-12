@@ -1,4 +1,4 @@
-name: CI
+name: ci
 
 on:
   pull_request:
@@ -67,7 +67,7 @@ jobs:
       - name: Run tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest -m "not integration" --cov=services/api_gateway --cov-fail-under=70
+        run: uv run pytest -m "not integration" --cov=services --cov=libs --cov-fail-under=70
 
   architecture:
     runs-on: ubuntu-latest

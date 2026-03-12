@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import csv
+import importlib
 import json
+from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 
-# pylint: disable=too-many-arguments,too-many-positional-arguments
-# pylint: disable=import-outside-toplevel,too-few-public-methods,missing-class-docstring
-
 
 class LocalArtifactStore:
+    """Writes batch artifacts to the local filesystem."""
+
     def __init__(self, root_dir: Path) -> None:
         self._root_dir = root_dir
 
@@ -38,28 +39,37 @@ class LocalArtifactStore:
 
 
 class S3ArtifactStore:
+    """Writes batch artifacts to an S3-compatible object storage."""
+
+    @dataclass(frozen=True)
+    class Connection:
+        """Connection parameters for an S3-compatible backend."""
+
+        endpoint_url: str | None = None
+        access_key: str | None = None
+        secret_key: str | None = None
+        region_name: str = "us-east-1"
+
     def __init__(
         self,
         bucket: str,
         prefix: str,
-        endpoint_url: str | None = None,
-        access_key: str | None = None,
-        secret_key: str | None = None,
-        region_name: str = "us-east-1",
+        connection: Connection | None = None,
     ) -> None:
         try:
-            import boto3
+            boto3 = importlib.import_module("boto3")
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("boto3 is required for S3 artifact store") from exc
 
+        conn = connection or self.Connection()
         self._bucket = bucket
         self._prefix = prefix.strip("/")
         self._client = boto3.client(
             "s3",
-            endpoint_url=endpoint_url,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            region_name=region_name,
+            endpoint_url=conn.endpoint_url,
+            aws_access_key_id=conn.access_key,
+            aws_secret_access_key=conn.secret_key,
+            region_name=conn.region_name,
         )
 
     def write_report(self, run_key: str, payload: dict[str, object]) -> str:

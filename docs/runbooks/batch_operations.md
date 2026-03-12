@@ -11,7 +11,15 @@
 
 1. Проверить run status в `batch_mission_runs` (Postgres) или `runs.json` (local).
 2. Проверить `reason` и `quality.error_rate` в `report.json`.
-3. Проверить наличие `debug.csv` и долю `status=corrupted`.
+3. Проверить наличие `debug.csv` и долю `status=corrupted|detection_error`.
+
+## Причины статусов
+
+- `failed` + `reason=empty_input`: для даты запуска нет кадров.
+- `failed` + `reason=no_processable_frames`: кадры есть, но ни один не обработан.
+- `partial` + `reason=corrupted_input`: битые/невалидные входные файлы.
+- `partial` + `reason=detector_runtime_error`: ошибки детектора при inference.
+- `partial` + `reason=mixed_input_and_detector_errors`: комбинация проблем входа и inference.
 
 ## Safe rerun
 
@@ -34,3 +42,7 @@ airflow dags backfill rescue_batch_daily -s 2026-03-01 -e 2026-03-05
 
 - `report.json` и `debug.csv` для каждой даты.
 - отсутствие дубликатов status-строк по `run_key`.
+
+## Детектор
+
+- В batch-контуре доступен только реальный `YoloDetectionRuntime`.

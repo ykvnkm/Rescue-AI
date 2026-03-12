@@ -11,10 +11,10 @@ from libs.core.application.models import AlertRuleConfig, DetectionInput
 from libs.core.application.pilot_service import PilotService
 from libs.core.domain.entities import Alert, FrameEvent
 
-# pylint: disable=too-few-public-methods,missing-class-docstring
-
 
 class PilotMissionEngine(MissionEnginePort):
+    """Mission-engine adapter over core `PilotService`."""
+
     def __init__(self, pilot: PilotService) -> None:
         self._pilot = pilot
 
@@ -80,6 +80,8 @@ class PilotMissionEngine(MissionEnginePort):
 
 
 class PilotMissionEngineFactory(MissionEngineFactoryPort):
+    """Creates isolated in-memory pilot engine instances per run."""
+
     def create(
         self,
         alert_rules: AlertRuleConfig,
@@ -94,3 +96,6 @@ class PilotMissionEngineFactory(MissionEngineFactoryPort):
         )
         pilot.set_report_metadata(report_metadata)
         return PilotMissionEngine(pilot=pilot)
+
+    def factory_name(self) -> str:
+        return "pilot-in-memory"

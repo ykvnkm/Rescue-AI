@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
+from libs.batch.domain.models import RunStatusRecord
 from libs.batch.infrastructure.artifact_store import LocalArtifactStore, S3ArtifactStore
 from libs.batch.infrastructure.status_store import JsonStatusStore, PostgresStatusStore
 
@@ -28,11 +29,13 @@ def test_json_status_store_roundtrip() -> None:
         path = Path(temp_dir) / "status" / "runs.json"
         store = JsonStatusStore(path=path)
         store.upsert(
-            run_key="k",
-            status="completed",
-            reason="ok",
-            report_uri="r",
-            debug_uri="d",
+            RunStatusRecord(
+                run_key="k",
+                status="completed",
+                reason="ok",
+                report_uri="r",
+                debug_uri="d",
+            )
         )
         record = store.get("k")
 
@@ -48,7 +51,7 @@ def test_postgres_status_store_roundtrip() -> None:
         pytest.skip("BATCH_TEST_POSTGRES_DSN is not set")
 
     store = PostgresStatusStore(dsn=dsn)
-    store.upsert("test-key", "running", reason="init")
+    store.upsert(RunStatusRecord(run_key="test-key", status="running", reason="init"))
     record = store.get("test-key")
 
     assert record is not None
@@ -72,9 +75,11 @@ def test_s3_artifact_store_roundtrip() -> None:
     store = S3ArtifactStore(
         bucket=bucket,
         prefix="batch-integration",
-        endpoint_url=endpoint,
-        access_key=access_key,
-        secret_key=secret_key,
+        connection=S3ArtifactStore.Connection(
+            endpoint_url=endpoint,
+            access_key=access_key,
+            secret_key=secret_key,
+        ),
     )
     report_uri = store.write_report("run:key", {"status": "ok"})
     debug_uri = store.write_debug_rows("run:key", [{"frame_id": 1}])

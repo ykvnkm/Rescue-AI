@@ -4,7 +4,6 @@
 Показать end-to-end batch-контур на реальных данных: backfill, idempotency, артефакты и метрики качества.
 
 ## Предусловия
-- `BATCH_DETECTOR_BACKEND=yolo`
 - В `BATCH_MISSION_ROOT/<mission_id>/<ds>/images` и `annotations/` лежат реальные данные.
 - Платформа поднята (`infra/docker-compose.platform.yml`).
 
@@ -18,8 +17,6 @@
 ```bash
 cd infra
 cp platform.env.example platform.env
-# Важно: yolo для демо/оценки
-sed -i 's/^BATCH_DETECTOR_BACKEND=.*/BATCH_DETECTOR_BACKEND=yolo/' platform.env
 
 docker compose -f docker-compose.platform.yml --env-file platform.env up -d
 

@@ -5,11 +5,11 @@ from pathlib import Path
 
 from libs.core.application.models import AlertRuleConfig
 
-# pylint: disable=too-few-public-methods,missing-class-docstring
-
 
 @dataclass(frozen=True)
 class BatchRunRequest:
+    """Input command for one batch mission run."""
+
     mission_id: str
     ds: str
     config_hash: str
@@ -25,6 +25,8 @@ class BatchRunRequest:
 
 @dataclass(frozen=True)
 class FrameRecord:
+    """Single frame metadata used by batch processing."""
+
     frame_id: int
     ts_sec: float
     frame_path: Path
@@ -35,6 +37,8 @@ class FrameRecord:
 
 @dataclass(frozen=True)
 class MissionInput:
+    """Resolved mission source for a concrete processing date."""
+
     source_uri: str
     frames: list[FrameRecord]
     gt_available: bool
@@ -42,6 +46,8 @@ class MissionInput:
 
 @dataclass(frozen=True)
 class RunStatusRecord:
+    """Persisted status snapshot for a batch run key."""
+
     run_key: str
     status: str
     reason: str | None = None
@@ -51,6 +57,8 @@ class RunStatusRecord:
 
 @dataclass
 class DataQuality:
+    """Frame-level quality counters used for final run status."""
+
     total_frames: int = 0
     processed_frames: int = 0
     corrupted_frames: int = 0
@@ -75,6 +83,8 @@ class DataQuality:
 
 @dataclass(frozen=True)
 class BatchRunResult:
+    """Output summary for a completed batch runner execution."""
+
     run_key: str
     status: str
     report_uri: str | None

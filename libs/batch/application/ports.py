@@ -6,19 +6,26 @@ from libs.batch.domain.models import MissionInput, RunStatusRecord
 from libs.core.application.models import AlertRuleConfig, DetectionInput
 from libs.core.domain.entities import Alert, FrameEvent
 
-# pylint: disable=too-few-public-methods,missing-class-docstring
-# pylint: disable=too-many-arguments,too-many-positional-arguments
-
 
 class MissionSourcePort(Protocol):
+    """Loads mission input frames and optional annotations for a given date."""
+
     def load(self, mission_id: str, ds: str) -> MissionInput: ...
+
+    def describe_source(self) -> str: ...
 
 
 class DetectionRuntimePort(Protocol):
+    """Runs detection on a single frame and returns normalized detections."""
+
     def detect(self, image_uri: str) -> list[DetectionInput]: ...
+
+    def runtime_name(self) -> str: ...
 
 
 class ArtifactStorePort(Protocol):
+    """Persists batch artifacts (report and frame-level debug output)."""
+
     def write_report(self, run_key: str, payload: dict[str, object]) -> str: ...
 
     def write_debug_rows(
@@ -29,19 +36,16 @@ class ArtifactStorePort(Protocol):
 
 
 class RunStatusStorePort(Protocol):
+    """Stores and retrieves batch run status records."""
+
     def get(self, run_key: str) -> RunStatusRecord | None: ...
 
-    def upsert(
-        self,
-        run_key: str,
-        status: str,
-        reason: str | None = None,
-        report_uri: str | None = None,
-        debug_uri: str | None = None,
-    ) -> None: ...
+    def upsert(self, record: RunStatusRecord) -> None: ...
 
 
 class MissionEnginePort(Protocol):
+    """Mission lifecycle API used by the batch runner."""
+
     def create_and_start_mission(
         self,
         source_name: str,
@@ -71,8 +75,12 @@ class MissionEnginePort(Protocol):
 
 
 class MissionEngineFactoryPort(Protocol):
+    """Builds mission engine instances for a single batch run."""
+
     def create(
         self,
         alert_rules: AlertRuleConfig,
         report_metadata: dict[str, object],
     ) -> MissionEnginePort: ...
+
+    def factory_name(self) -> str: ...

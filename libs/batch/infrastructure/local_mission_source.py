@@ -7,13 +7,12 @@ from services.detection_service.application.annotation_index import (
     build_annotation_index,
 )
 
-# pylint: disable=too-few-public-methods,missing-class-docstring
-
-
 _ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
 class LocalMissionSource:
+    """Loads dated mission frames from local directory structure."""
+
     def __init__(self, root_dir: Path, fps: float = 6.0) -> None:
         self._root_dir = root_dir
         self._fps = fps
@@ -64,6 +63,9 @@ class LocalMissionSource:
             frames=frames,
             gt_available=gt_available,
         )
+
+    def describe_source(self) -> str:
+        return f"local:{self._root_dir}"
 
 
 def _is_corrupted_image(frame_path: Path) -> bool:

@@ -155,40 +155,18 @@ docker compose -f docker-compose.platform.yml --env-file platform.env up -d
 
 Подробности: [infra/README.md](infra/README.md)
 
-### Batch demo (Airflow + idempotency + backfill)
+### Batch сервис (Airflow)
 
-1. Соберите batch image:
+Подробный запуск и эксплуатация batch-контура вынесены в отдельные документы:
 
-```bash
-cd infra
-docker compose -f docker-compose.platform.yml --env-file platform.env --profile batch-build build batch-runner-image
-```
-
-2. Запустите backfill:
-
-```bash
-docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
-  airflow dags backfill rescue_batch_daily -s 2026-03-01 -e 2026-03-03
-```
-
-3. Проверьте idempotency:
-
-```bash
-docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
-  uv run python -m services.batch_runner.main --mission-id demo_mission --ds 2026-03-01
-```
-
-Повторный запуск с теми же `(mission_id, ds, config_hash, model_version)` без `--force` не должен дублировать обработку.
-
-Runbook и материалы для сдачи:
-
-- `docs/runbooks/batch_operations.md`
-- `docs/runbooks/batch_demo_playbook.md`
-- `docs/batch_evidence_pack.md`
-- `docs/architecture/batch_contour.md`
+- `infra/README.md` — запуск платформы, DAG, backfill, idempotency.
+- `docs/runbooks/batch_operations.md` — диагностика, safe rerun, runbook статусов/ошибок.
+- `docs/runbooks/batch_demo_playbook.md` — сценарий real-data прогона и quality gates.
+- `docs/batch_evidence_pack.md` — чеклист материалов для защиты.
+- `docs/architecture/batch_contour.md` — архитектурная схема batch-контура.
 
 ## CI/CD каркас
 
 - Базовый CI проекта: `.github/workflows/ci.yml`
-- CI для инфраструктуры (`compose config`): `.github/workflows/platform-ci.yml`
-- CD-заготовка (manual dispatch): `.github/workflows/cd-stub.yml`
+- CI для инфраструктуры (`compose config`): `.github/workflows/infra-ci.yml`
+- E2E для батча (nightly + manual): `.github/workflows/batch-e2e.yml`

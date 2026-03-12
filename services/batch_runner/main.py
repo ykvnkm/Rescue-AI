@@ -6,9 +6,9 @@ import os
 from pathlib import Path
 
 from libs.batch.application import MissionBatchRunner
+from libs.batch.application.mission_batch_runner import MissionBatchRunnerDeps
 from libs.batch.domain.models import BatchRunRequest
 from libs.batch.infrastructure import (
-    FakeDetectionRuntime,
     JsonStatusStore,
     LocalArtifactStore,
     LocalMissionSource,
@@ -57,10 +57,12 @@ def build_artifact_store():
         return S3ArtifactStore(
             bucket=bucket,
             prefix=os.getenv("BATCH_S3_PREFIX", "batch"),
-            endpoint_url=os.getenv("BATCH_S3_ENDPOINT"),
-            access_key=os.getenv("BATCH_S3_ACCESS_KEY"),
-            secret_key=os.getenv("BATCH_S3_SECRET_KEY"),
-            region_name=os.getenv("BATCH_S3_REGION", "us-east-1"),
+            connection=S3ArtifactStore.Connection(
+                endpoint_url=os.getenv("BATCH_S3_ENDPOINT"),
+                access_key=os.getenv("BATCH_S3_ACCESS_KEY"),
+                secret_key=os.getenv("BATCH_S3_SECRET_KEY"),
+                region_name=os.getenv("BATCH_S3_REGION", "us-east-1"),
+            ),
         )
     artifact_root = Path(
         os.getenv("BATCH_ARTIFACT_ROOT", "/opt/airflow/data/artifacts")
@@ -88,22 +90,25 @@ def build_alert_rules(runtime: YoloDetectionRuntime) -> AlertRuleConfig:
 
 
 def build_detector(model_version: str):
-    backend = os.getenv("BATCH_DETECTOR_BACKEND", "yolo").lower()
-    if backend == "fake":
-        return FakeDetectionRuntime(model_version=model_version)
     return YoloDetectionRuntime(model_version=model_version)
+
+
+def build_runner(detector: YoloDetectionRuntime) -> MissionBatchRunner:
+    return MissionBatchRunner(
+        MissionBatchRunnerDeps(
+            source=build_source(),
+            detector=detector,
+            artifacts=build_artifact_store(),
+            statuses=build_status_store(),
+            engine_factory=PilotMissionEngineFactory(),
+        )
+    )
 
 
 def main() -> None:
     args = parse_args()
     detector = build_detector(model_version=args.model_version)
-    runner = MissionBatchRunner(
-        source=build_source(),
-        detector=detector,
-        artifacts=build_artifact_store(),
-        statuses=build_status_store(),
-        engine_factory=PilotMissionEngineFactory(),
-    )
+    runner = build_runner(detector=detector)
     request = BatchRunRequest(
         mission_id=args.mission_id,
         ds=args.ds,

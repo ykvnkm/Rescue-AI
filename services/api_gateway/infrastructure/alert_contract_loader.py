@@ -7,8 +7,9 @@ from pathlib import Path
 import yaml
 
 from libs.core.application.models import AlertRuleConfig
-
-# pylint: disable=duplicate-code
+from services.detection_service.infrastructure.runtime_contract import (
+    load_stream_contract,
+)
 
 DEFAULT_CONTRACT_PATH = Path("configs/nsu_frames_yolov8n_alert_contract.yaml")
 DEFAULT_MODEL_URL = (
@@ -22,20 +23,17 @@ def load_alert_rules_and_metadata() -> tuple[AlertRuleConfig, dict[str, object]]
     if not isinstance(payload, dict):
         raise ValueError("Invalid alert contract payload")
 
-    alert = payload.get("alert", {})
-    eval_cfg = payload.get("eval", {})
-
-    thresholds = eval_cfg.get("thresholds", [0.2])
-    score_threshold = float(thresholds[0] if thresholds else 0.2)
+    contract = load_stream_contract()
+    score_threshold = float(contract.alert_rules.score_threshold)
 
     alert_rules = AlertRuleConfig(
         score_threshold=score_threshold,
-        window_sec=float(alert.get("window_sec", 1.0)),
-        quorum_k=int(alert.get("quorum_k", 1)),
-        cooldown_sec=float(alert.get("cooldown_sec", 1.5)),
-        gap_end_sec=float(alert.get("gap_end_sec", 1.2)),
-        gt_gap_end_sec=float(alert.get("gt_gap_end_sec", 1.0)),
-        match_tolerance_sec=float(alert.get("match_tolerance_sec", 1.2)),
+        window_sec=float(contract.alert_rules.window_sec),
+        quorum_k=int(contract.alert_rules.quorum_k),
+        cooldown_sec=float(contract.alert_rules.cooldown_sec),
+        gap_end_sec=float(contract.alert_rules.gap_end_sec),
+        gt_gap_end_sec=float(contract.alert_rules.gt_gap_end_sec),
+        match_tolerance_sec=float(contract.alert_rules.match_tolerance_sec),
     )
 
     report_metadata: dict[str, object] = {

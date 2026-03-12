@@ -40,7 +40,6 @@ with DAG(
         ],
         environment={
             "BATCH_RUNTIME_ENV": os.getenv("BATCH_RUNTIME_ENV", "local"),
-            "BATCH_DETECTOR_BACKEND": os.getenv("BATCH_DETECTOR_BACKEND", "yolo"),
             "BATCH_ARTIFACT_BACKEND": os.getenv("BATCH_ARTIFACT_BACKEND", "local"),
             "BATCH_STATUS_BACKEND": os.getenv("BATCH_STATUS_BACKEND", "json"),
             "BATCH_MISSION_ROOT": os.getenv("BATCH_MISSION_ROOT", "/opt/airflow/data/missions"),

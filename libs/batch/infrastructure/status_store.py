@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 
 from libs.batch.domain.models import RunStatusRecord
 
-# pylint: disable=too-many-arguments,too-many-positional-arguments
-# pylint: disable=import-outside-toplevel,too-few-public-methods,missing-class-docstring
-
 
 class JsonStatusStore:
+    """Status store backed by a local JSON file."""
+
     def __init__(self, path: Path) -> None:
         self._path = path
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -27,20 +27,13 @@ class JsonStatusStore:
             debug_uri=_as_optional_str(payload.get("debug_uri")),
         )
 
-    def upsert(
-        self,
-        run_key: str,
-        status: str,
-        reason: str | None = None,
-        report_uri: str | None = None,
-        debug_uri: str | None = None,
-    ) -> None:
+    def upsert(self, record: RunStatusRecord) -> None:
         data = self._read_all()
-        data[run_key] = {
-            "status": status,
-            "reason": reason,
-            "report_uri": report_uri,
-            "debug_uri": debug_uri,
+        data[record.run_key] = {
+            "status": record.status,
+            "reason": record.reason,
+            "report_uri": record.report_uri,
+            "debug_uri": record.debug_uri,
         }
         self._path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2),
@@ -59,9 +52,11 @@ class JsonStatusStore:
 
 
 class PostgresStatusStore:
+    """Status store backed by Postgres table `batch_mission_runs`."""
+
     def __init__(self, dsn: str) -> None:
         try:
-            import psycopg
+            psycopg = importlib.import_module("psycopg")
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("psycopg is required for postgres status store") from exc
 
@@ -91,14 +86,7 @@ class PostgresStatusStore:
                     debug_uri=_as_optional_str(row[4]),
                 )
 
-    def upsert(
-        self,
-        run_key: str,
-        status: str,
-        reason: str | None = None,
-        report_uri: str | None = None,
-        debug_uri: str | None = None,
-    ) -> None:
+    def upsert(self, record: RunStatusRecord) -> None:
         with self._psycopg.connect(self._dsn) as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -115,7 +103,13 @@ class PostgresStatusStore:
                       debug_uri = EXCLUDED.debug_uri,
                       updated_at = NOW()
                     """,
-                    (run_key, status, reason, report_uri, debug_uri),
+                    (
+                        record.run_key,
+                        record.status,
+                        record.reason,
+                        record.report_uri,
+                        record.debug_uri,
+                    ),
                 )
             conn.commit()
 

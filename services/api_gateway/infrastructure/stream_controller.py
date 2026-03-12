@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 from services.detection_service.application.stream_config import StreamOptions
+from services.detection_service.application.stream_orchestrator import (
+    StreamState as StreamStateView,
+)
 from services.detection_service.infrastructure.stream_runtime_api import (
     build_stream_config,
     get_stream_state,
@@ -11,21 +13,6 @@ from services.detection_service.infrastructure.stream_runtime_api import (
     stop_stream,
     wait_stream_stopped,
 )
-
-# pylint: disable=duplicate-code
-
-
-@dataclass(frozen=True)
-class StreamStateView:
-    """Read-only stream state returned to api_gateway handlers."""
-
-    mission_id: str
-    running: bool
-    processed_frames: int
-    total_frames: int
-    last_frame_name: str | None
-    error: str | None
-    stop_requested: bool
 
 
 class DetectionStreamController:
