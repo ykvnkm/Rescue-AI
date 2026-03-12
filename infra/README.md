@@ -99,3 +99,4 @@ docker compose -f docker-compose.platform.yml --env-file platform.env exec airfl
 - `partial` + `reason=high_corrupted_frame_ratio`: проверить качество входных данных и повторить с `--force` после исправления.
 - Для shared/stage использовать `BATCH_RUNTIME_ENV=staging`, тогда по умолчанию включаются `PostgresStatusStore` и `S3ArtifactStore`.
 - Полный runbook: `docs/runbooks/batch_operations.md`.
+- `LocalMissionSource` помечает кадр как `is_corrupted=True`, если сигнатура изображения не распознаётся (`jpeg/png/bmp/webp`).

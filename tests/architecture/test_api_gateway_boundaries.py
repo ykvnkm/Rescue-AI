@@ -6,13 +6,16 @@ from pathlib import Path
 # pylint: disable=duplicate-code
 
 
-APPLICATION_DIR = Path("libs/batch/application")
-FORBIDDEN_PREFIX = "libs.batch.infrastructure"
+TARGET_FILES = [
+    Path("services/api_gateway/presentation/http/routes.py"),
+    Path("services/api_gateway/dependencies.py"),
+]
+FORBIDDEN_PREFIX = "services.detection_service"
 
 
 def _violations() -> list[tuple[Path, str]]:
     violations: list[tuple[Path, str]] = []
-    for file_path in APPLICATION_DIR.glob("*.py"):
+    for file_path in TARGET_FILES:
         source = file_path.read_text(encoding="utf-8")
         tree = ast.parse(source)
         for node in ast.walk(tree):
@@ -27,5 +30,5 @@ def _violations() -> list[tuple[Path, str]]:
     return violations
 
 
-def test_batch_application_does_not_import_infrastructure() -> None:
+def test_api_gateway_no_direct_detection_imports() -> None:
     assert not _violations()

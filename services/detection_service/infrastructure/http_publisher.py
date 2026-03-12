@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from urllib import request
 
 
@@ -17,7 +18,8 @@ class HttpFramePublisher:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with request.urlopen(req, timeout=15):
+        timeout_sec = float(os.getenv("DETECTION_HTTP_TIMEOUT_SEC", "1.0"))
+        with request.urlopen(req, timeout=timeout_sec):
             return
 
     def endpoint(self, mission_id: str, api_base: str) -> str:

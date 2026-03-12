@@ -22,6 +22,7 @@
 - [x] Временный операторский UI приведен к “миссионному” виду (крупный алерт-кадр + confirm/reject + таблица отчета на русском).
 - [x] Unit-тесты: стабильный проход, coverage > 70%.
 - [x] CI: `black`, `isort`, `flake8`, `mypy`, `pylint`, `pytest`.
+- [x] CI architecture guards: запрет прямых импортов `batch application -> batch infrastructure`, `api_gateway routes/dependencies -> detection_service`.
 - [x] `uv`-пин зависимостей: `pyproject.toml` + `uv.lock`.
 - [x] Docker-артефакты: `Dockerfile`, `docker-compose.yml`.
 - [x] README обновлен: краткая логика, структура проекта, запуск и deploy через Docker, шаги воспроизведения результата.
@@ -36,6 +37,7 @@
 
 ### По требованиям курса
 - [ ] Полное завершение Clean Architecture для всех запланированных сервисов (в том числе будущего `navigation_service`).
+- [x] Убраны прямые зависимости `api_gateway` на `detection_service` из `routes.py` и `dependencies.py` через infra-adapter.
 - [x] README синхронизирован с текущим API/UI и Docker-сценарием запуска.
 - [ ] YAML-описание каждого endpoint (отдельный OpenAPI YAML в `docs/api/`) отсутствует.
 - [ ] CI/CD deploy на удалённый сервер (push-модель) отсутствует.

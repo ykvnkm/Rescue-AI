@@ -55,7 +55,7 @@ class LocalMissionSource:
                     frame_path=frame_path,
                     image_uri=str(frame_path),
                     gt_person_present=bool(gt_boxes),
-                    is_corrupted=False,
+                    is_corrupted=_is_corrupted_image(frame_path),
                 )
             )
 
@@ -64,3 +64,17 @@ class LocalMissionSource:
             frames=frames,
             gt_available=gt_available,
         )
+
+
+def _is_corrupted_image(frame_path: Path) -> bool:
+    header = frame_path.read_bytes()[:16]
+    if len(header) < 2:
+        return True
+
+    is_jpeg = header.startswith(b"\xff\xd8")
+    is_png = header.startswith(b"\x89PNG\r\n\x1a\n")
+    is_bmp = header.startswith(b"BM")
+    is_webp = (
+        len(header) >= 12 and header.startswith(b"RIFF") and header[8:12] == b"WEBP"
+    )
+    return not any([is_jpeg, is_png, is_bmp, is_webp])

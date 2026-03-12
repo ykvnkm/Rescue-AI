@@ -67,7 +67,7 @@ jobs:
       - name: Run tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest -m "not integration"
+        run: uv run pytest -m "not integration" --cov=services/api_gateway --cov-fail-under=70
 
   architecture:
     runs-on: ubuntu-latest
@@ -87,10 +87,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      - name: Verify batch import boundaries
+      - name: Verify architecture boundaries
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest tests/architecture/test_batch_import_boundaries.py
+        run: uv run pytest tests/architecture --no-cov
 
   batch-smoke:
     runs-on: ubuntu-latest
@@ -113,7 +113,7 @@ jobs:
       - name: Run batch unit and smoke tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest tests/test_batch_runner.py tests/test_batch_stores.py tests/test_batch_smoke.py -m "not integration" --cov=libs/batch --cov=services/batch_runner --cov-fail-under=65
+        run: uv run pytest tests/test_batch_runner.py tests/test_batch_stores.py tests/test_batch_smoke.py tests/test_batch_source.py -m "not integration" --cov=libs/batch --cov=services/batch_runner --cov-fail-under=65
 
   quality-gate:
     runs-on: ubuntu-latest

@@ -1,48 +1,36 @@
-from libs.core.application.models import AlertRuleConfig
 from libs.core.application.pilot_service import PilotService
+from services.api_gateway.infrastructure import (
+    DetectionStreamController,
+    load_alert_rules_and_metadata,
+)
 from services.api_gateway.infrastructure.memory_store import (
     InMemoryAlertRepository,
     InMemoryDatabase,
     InMemoryFrameEventRepository,
     InMemoryMissionRepository,
 )
-from services.detection_service.infrastructure.runtime_contract import (
-    load_stream_contract,
-)
 
 db = InMemoryDatabase()
 mission_repository = InMemoryMissionRepository(db)
 alert_repository = InMemoryAlertRepository(db)
 frame_repository = InMemoryFrameEventRepository(db)
-stream_contract = load_stream_contract()
-alert_rules = AlertRuleConfig(
-    score_threshold=stream_contract.alert_rules.score_threshold,
-    window_sec=stream_contract.alert_rules.window_sec,
-    quorum_k=stream_contract.alert_rules.quorum_k,
-    cooldown_sec=stream_contract.alert_rules.cooldown_sec,
-    gap_end_sec=stream_contract.alert_rules.gap_end_sec,
-    gt_gap_end_sec=stream_contract.alert_rules.gt_gap_end_sec,
-    match_tolerance_sec=stream_contract.alert_rules.match_tolerance_sec,
-)
+alert_rules, report_metadata = load_alert_rules_and_metadata()
 pilot_service = PilotService(
     mission_repository=mission_repository,
     alert_repository=alert_repository,
     frame_event_repository=frame_repository,
     alert_rules=alert_rules,
 )
-pilot_service.set_report_metadata(
-    {
-        "config_name": stream_contract.report_provenance.config_name,
-        "config_hash": stream_contract.report_provenance.config_hash,
-        "config_path": stream_contract.report_provenance.config_path,
-        "model_url": stream_contract.inference.model_url,
-        "service_version": stream_contract.report_provenance.service_version,
-    }
-)
+pilot_service.set_report_metadata(report_metadata)
+stream_controller = DetectionStreamController()
 
 
 def get_pilot_service() -> PilotService:
     return pilot_service
+
+
+def get_stream_controller() -> DetectionStreamController:
+    return stream_controller
 
 
 def reset_state() -> None:
