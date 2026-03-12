@@ -36,29 +36,34 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 - `infra/postgres/init/001-init-platform.sql` задает стартовые БД/пользователей (`airflow`, `rescue_app`, `postgres_exporter`).
 - Дашборд Grafana загружается автоматически из `infra/grafana/dashboards/platform-overview.json`.
 - Пример DAG находится в `infra/airflow/dags/healthcheck_dag.py`.
-- DAG с `DockerOperator` и идемпотентностью: `infra/airflow/dags/idempotent_docker_backfill_demo.py`.
+- DAG с `DockerOperator` и бизнес batch-runner: `infra/airflow/dags/idempotent_docker_backfill_demo.py`.
 
-## DAG: DockerOperator + Idempotency + Backfill
+## DAG: Rescue Batch (DockerOperator + Idempotency + Backfill)
 
-`idempotent_docker_backfill_demo`:
+`rescue_batch_daily`:
 
 - Запускается ежедневно (`@daily`) с `catchup=True`.
-- Перед обработкой проверяет marker-файл для даты запуска (`/opt/airflow/data/markers/<ds>.done`).
-- Если marker уже есть, обработка пропускается (идемпотентность).
-- Если marker нет, `DockerOperator` запускает контейнер и пишет:
-  - `/opt/airflow/data/results/<ds>.json`
-  - `/opt/airflow/data/markers/<ds>.done`
+- Оркестрирует только запуск runner-контейнера.
+- Бизнес-логика вынесена в `libs/batch/application/mission_batch_runner.py`.
+- Idempotency key: `(mission_id, ds, config_hash, model_version)`.
+- Статусы процесса: `running/completed/failed/partial`.
+
+Сборка образа для `DockerOperator`:
+
+```bash
+docker compose -f docker-compose.platform.yml --env-file platform.env --profile batch-build build batch-runner-image
+```
 
 Backfill за диапазон дат:
 
 ```bash
-docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \\
-  airflow dags backfill idempotent_docker_backfill_demo -s 2026-03-01 -e 2026-03-03
+docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
+  airflow dags backfill rescue_batch_daily -s 2026-03-01 -e 2026-03-03
 ```
 
-Проверка артефактов после backfill:
+Проверка batch-статусов и артефактов:
 
 ```bash
-docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \\
-  ls -la /opt/airflow/data/results /opt/airflow/data/markers
+docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
+  ls -la /opt/airflow/data/status /opt/airflow/data/artifacts
 ```

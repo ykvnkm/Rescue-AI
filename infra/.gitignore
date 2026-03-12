@@ -1,3 +1,5 @@
 platform.env
 airflow/logs/*
 !airflow/logs/.gitkeep
+airflow/data/*
+!airflow/data/.gitkeep

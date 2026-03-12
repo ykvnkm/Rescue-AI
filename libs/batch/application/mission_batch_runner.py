@@ -1,0 +1,271 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from libs.batch.application.ports import (
+    ArtifactStorePort,
+    DetectionRuntimePort,
+    MissionSourcePort,
+    RunStatusStorePort,
+)
+from libs.batch.domain.models import (
+    BatchRunRequest,
+    BatchRunResult,
+    DataQuality,
+    FrameRecord,
+    RunStatusRecord,
+)
+from libs.batch.infrastructure.in_memory_repositories import (
+    InMemoryAlertRepo,
+    InMemoryBatchDb,
+    InMemoryFrameEventRepo,
+    InMemoryMissionRepo,
+)
+from libs.core.application.pilot_service import PilotService
+from libs.core.domain.entities import FrameEvent
+
+# pylint: disable=too-few-public-methods,missing-class-docstring
+# pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
+
+
+class MissionBatchRunner:
+    def __init__(
+        self,
+        source: MissionSourcePort,
+        detector: DetectionRuntimePort,
+        artifacts: ArtifactStorePort,
+        statuses: RunStatusStorePort,
+    ) -> None:
+        self._source = source
+        self._detector = detector
+        self._artifacts = artifacts
+        self._statuses = statuses
+
+    def run(self, request: BatchRunRequest) -> BatchRunResult:
+        existing = self._statuses.get(request.run_key)
+        if (
+            existing is not None
+            and existing.status == "completed"
+            and not request.force
+        ):
+            return BatchRunResult(
+                run_key=request.run_key,
+                status="completed",
+                report_uri=existing.report_uri,
+                debug_uri=existing.debug_uri,
+                report={"idempotent_skip": True},
+            )
+
+        self._statuses.upsert(run_key=request.run_key, status="running")
+
+        try:
+            mission_input = self._source.load(
+                mission_id=request.mission_id, ds=request.ds
+            )
+            quality = DataQuality(total_frames=len(mission_input.frames))
+
+            db = InMemoryBatchDb()
+            pilot = PilotService(
+                mission_repository=InMemoryMissionRepo(db),
+                alert_repository=InMemoryAlertRepo(db),
+                frame_event_repository=InMemoryFrameEventRepo(db),
+                alert_rules=request.alert_rules,
+            )
+            pilot.set_report_metadata(
+                {
+                    "config_hash": request.config_hash,
+                    "model_version": request.model_version,
+                    "code_version": request.code_version,
+                    "run_key": request.run_key,
+                }
+            )
+
+            mission = pilot.create_mission(
+                source_name=mission_input.source_uri,
+                total_frames=len(mission_input.frames),
+                fps=_resolve_fps(mission_input.frames),
+            )
+            pilot.start_mission(mission.mission_id)
+
+            debug_rows: list[dict[str, object]] = []
+            for frame in mission_input.frames:
+                self._process_frame(
+                    mission_id=mission.mission_id,
+                    frame=frame,
+                    pilot=pilot,
+                    quality=quality,
+                    debug_rows=debug_rows,
+                    gt_available=mission_input.gt_available,
+                )
+
+            pilot.complete_mission(
+                mission.mission_id,
+                completed_frame_id=(
+                    mission_input.frames[-1].frame_id if mission_input.frames else None
+                ),
+            )
+            report = pilot.get_mission_report(mission.mission_id)
+            report.update(
+                {
+                    "mission_id_external": request.mission_id,
+                    "ds": request.ds,
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "quality": quality.as_dict(),
+                    "status": _resolve_status(
+                        report, quality, mission_input.gt_available
+                    ),
+                    "review_status": _build_review_status(report),
+                    "precision_alert": _compute_alert_precision(report),
+                }
+            )
+
+            report_uri = self._artifacts.write_report(request.run_key, report)
+            debug_uri = self._artifacts.write_debug_rows(request.run_key, debug_rows)
+
+            final_status = str(report.get("status", "completed"))
+            reason = _build_reason(final_status, quality)
+            self._statuses.upsert(
+                run_key=request.run_key,
+                status=final_status,
+                reason=reason,
+                report_uri=report_uri,
+                debug_uri=debug_uri,
+            )
+            return BatchRunResult(
+                run_key=request.run_key,
+                status=final_status,
+                report_uri=report_uri,
+                debug_uri=debug_uri,
+                report=report,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            self._statuses.upsert(
+                run_key=request.run_key,
+                status="failed",
+                reason=str(exc),
+            )
+            raise
+
+    def _process_frame(
+        self,
+        mission_id: str,
+        frame: FrameRecord,
+        pilot: PilotService,
+        quality: DataQuality,
+        debug_rows: list[dict[str, object]],
+        gt_available: bool,
+    ) -> None:
+        if frame.is_corrupted:
+            quality.corrupted_frames += 1
+            debug_rows.append(
+                {
+                    "frame_id": frame.frame_id,
+                    "ts_sec": frame.ts_sec,
+                    "image_uri": frame.image_uri,
+                    "status": "corrupted",
+                    "detections": 0,
+                }
+            )
+            return
+
+        detections = self._detector.detect(frame.image_uri)
+        quality.processed_frames += 1
+        if not gt_available:
+            quality.missing_gt_frames += 1
+
+        frame_event = FrameEvent(
+            mission_id=mission_id,
+            frame_id=frame.frame_id,
+            ts_sec=frame.ts_sec,
+            image_uri=frame.image_uri,
+            gt_person_present=frame.gt_person_present,
+            gt_episode_id=None,
+        )
+        alerts = pilot.ingest_frame_event(
+            frame_event=frame_event, detections=detections
+        )
+
+        for alert in alerts:
+            review_status = (
+                "reviewed_confirmed" if frame.gt_person_present else "reviewed_rejected"
+            )
+            pilot.review_alert(
+                alert.alert_id,
+                {
+                    "status": review_status,
+                    "reviewed_by": "batch-auto-review",
+                    "reviewed_at_sec": frame.ts_sec,
+                    "decision_reason": "auto-labeled-by-gt",
+                },
+            )
+
+        debug_rows.append(
+            {
+                "frame_id": frame.frame_id,
+                "ts_sec": frame.ts_sec,
+                "image_uri": frame.image_uri,
+                "status": "processed",
+                "detections": len(detections),
+                "gt_person_present": frame.gt_person_present,
+                "alerts_created": len(alerts),
+            }
+        )
+
+
+def _resolve_status(
+    report: dict[str, object],
+    quality: DataQuality,
+    gt_available: bool,
+) -> str:
+    if quality.total_frames == 0:
+        return "failed"
+
+    error_rate = quality.as_dict()["error_rate"]
+    if isinstance(error_rate, float) and error_rate > 0.2:
+        return "partial"
+
+    if not gt_available:
+        report["recall_event"] = None
+        report["episodes_total"] = 0
+        report["episodes_found"] = 0
+
+    return "completed"
+
+
+def _build_reason(status: str, quality: DataQuality) -> str | None:
+    if status == "partial":
+        return "high_corrupted_frame_ratio"
+    if status == "failed" and quality.total_frames == 0:
+        return "empty_input"
+    return None
+
+
+def _build_review_status(report: dict[str, object]) -> dict[str, object]:
+    return {
+        "alerts_total": report.get("alerts_total", 0),
+        "alerts_confirmed": report.get("alerts_confirmed", 0),
+        "alerts_rejected": report.get("alerts_rejected", 0),
+    }
+
+
+def _compute_alert_precision(report: dict[str, object]) -> float | None:
+    alerts_total = report.get("alerts_total")
+    false_total = report.get("false_alerts_total")
+    if not isinstance(alerts_total, int) or alerts_total <= 0:
+        return None
+    if not isinstance(false_total, int):
+        return None
+    return round((alerts_total - false_total) / alerts_total, 4)
+
+
+def _resolve_fps(frames: list[FrameRecord]) -> float:
+    if len(frames) < 2:
+        return 1.0
+    delta = frames[1].ts_sec - frames[0].ts_sec
+    if delta <= 0:
+        return 1.0
+    return 1.0 / delta
+
+
+def should_skip(existing: RunStatusRecord | None, force: bool) -> bool:
+    return existing is not None and existing.status == "completed" and not force
