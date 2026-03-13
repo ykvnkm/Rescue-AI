@@ -23,7 +23,7 @@ help:
 	@echo "  make batch-backfill  - запустить demo backfill (диапазон дат можно изменить)"
 
 install:
-	uv sync --extra dev
+	uv sync --extra dev --extra batch
 
 format:
 	$(UV) black services libs tests

@@ -161,12 +161,36 @@ docker compose up --build
 - [infra/README.md](infra/README.md) — как поднять Airflow-контур и что именно происходит в DAG.
 - [docs/runbooks/batch_operations.md](docs/runbooks/batch_operations.md) — эксплуатация: safe rerun, диагностика `failed/partial`, проверка статусов.
 - [docs/runbooks/batch_demo_playbook.md](docs/runbooks/batch_demo_playbook.md) — сценарий демонстрации батча на реальных данных.
+- [docs/runbooks/postgres_backend.md](docs/runbooks/postgres_backend.md) — как включить PostgreSQL backend для `missions`/`alerts`/`frame_events`/`episodes`, применить миграции и откатиться на memory.
 - [docs/architecture/batch_contour.md](docs/architecture/batch_contour.md) — архитектурная схема batch-контура.
 - [docs/batch_evidence_pack.md](docs/batch_evidence_pack.md) — что собрать для защиты/сдачи.
 
 - Airflow оркестрирует запуск batch-runner контейнера через `DockerOperator`.
 - Бизнес-логика находится в коде проекта (`libs/batch/application`), а DAG управляет расписанием и backfill.
 - Идемпотентность обеспечивается run-key и статусами, чтобы повторный запуск на тот же ключ не создавал дублей без `--force`.
+
+## PostgreSQL backend
+
+Для persistent storage миссий и alert-ов используйте:
+
+```env
+APP_REPOSITORY_BACKEND=postgres
+APP_POSTGRES_DSN=postgresql://rescue_ai:rescue_ai_dev@127.0.0.1:5432/rescue_ai
+```
+
+Схема БД применяется через Alembic:
+
+```bash
+uv run --extra dev --extra batch alembic upgrade head
+```
+
+Локальный Postgres можно поднять так:
+
+```bash
+docker compose -f docker-compose.postgres.yml up -d
+```
+
+Подробный пошаговый runbook: [docs/runbooks/postgres_backend.md](docs/runbooks/postgres_backend.md).
 
 ## CI/CD каркас
 

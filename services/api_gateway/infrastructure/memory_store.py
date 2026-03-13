@@ -31,6 +31,25 @@ class InMemoryMissionRepository(MissionRepository):
     def get(self, mission_id: str) -> Mission | None:
         return self._db.missions.get(mission_id)
 
+    def update_details(
+        self,
+        mission_id: str,
+        *,
+        source_name: str | None = None,
+        total_frames: int | None = None,
+        fps: float | None = None,
+    ) -> Mission | None:
+        mission = self._db.missions.get(mission_id)
+        if mission is None:
+            return None
+        if source_name is not None:
+            mission.source_name = source_name
+        if total_frames is not None:
+            mission.total_frames = total_frames
+        if fps is not None:
+            mission.fps = fps
+        return mission
+
     def update_status(
         self,
         mission_id: str,
