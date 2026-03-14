@@ -14,8 +14,9 @@ RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --extra inference --extra batch
+ENV PATH="/app/.venv/bin:$PATH"
 
-COPY alembic ./alembic
+COPY db_migrations ./db_migrations
 COPY alembic.ini ./alembic.ini
 COPY config.py ./config.py
 COPY configs ./configs
@@ -25,4 +26,4 @@ RUN mkdir -p /app/runtime
 
 EXPOSE 8000
 
-CMD ["uv", "run", "python", "-m", "services.api_gateway.run"]
+CMD ["python", "-m", "services.api_gateway.run"]

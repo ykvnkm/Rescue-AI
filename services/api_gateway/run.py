@@ -39,7 +39,7 @@ def _prepare_postgres_backend() -> None:
         from alembic.config import Config as AlembicConfig
 
         alembic_config = AlembicConfig("alembic.ini")
-        alembic_config.set_main_option("script_location", "alembic")
+        alembic_config.set_main_option("script_location", "db_migrations")
         command.upgrade(alembic_config, "head")
 
 
