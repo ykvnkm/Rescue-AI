@@ -2,9 +2,40 @@ services:
   api:
     build: .
     ports:
-      - "8000:8000"
+      - "${APP_PORT:-8000}:8000"
     env_file:
       - .env
+    environment:
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8000"
+      APP_POSTGRES_HOST: "postgres"
+      APP_POSTGRES_AUTO_MIGRATE: "${APP_POSTGRES_AUTO_MIGRATE:-true}"
+      APP_POSTGRES_READY_TIMEOUT_SEC: "${APP_POSTGRES_READY_TIMEOUT_SEC:-30}"
     volumes:
       - "${MISSION_DIR:-./artifacts/public}:/data/mission:ro"
       - "./runtime:/app/runtime"
+
+  postgres:
+    image: postgres:16
+    profiles: ["postgres"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${APP_POSTGRES_DB:-rescue_ai}"
+      POSTGRES_USER: "${APP_POSTGRES_USER:-rescue_ai}"
+      POSTGRES_PASSWORD: "${APP_POSTGRES_PASSWORD:-}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${APP_POSTGRES_USER:-rescue_ai} -d ${APP_POSTGRES_DB:-rescue_ai}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "${APP_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

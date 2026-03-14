@@ -1,199 +1,183 @@
 # Rescue AI
 
-Rescue AI — система для обнаружения людей на потоке кадров с БПЛА без облачной поддержки, обеспечивающая высокую точность детекции человека в реальном времени и применимая в реальных поисково-спасательных операциях, включая стихийные бедствия, горы и леса.
+Rescue AI - сервис для запуска пилотной миссии по набору кадров, генерации alerts и расчета итогового mission report.
 
-Текущая версия проекта ориентирована на базовый сценарий: загрузить набор кадров, запустить поток, получить алерты и итоговый отчет по миссии. В рамках MVP планируется перенос артефактов на удаленное хранилище и полный переход на чтение потока с периферийного устройства через RTSP/UDP-протокол.
+## Что важно про storage
 
-## Что умеет сервис
+У приложения есть два backend-режима для операционных данных:
 
-- Запускает миссию по потоку кадров.
-- Выполняет детекцию людей на каждом кадре потока.
-- Формирует алерты присутствия человека и дает оператору подтвердить/отклонить их в UI.
-- Считает ключевые метрики миссии: количество эпизодов реального присутствия человека в кадре `episodes_total`, найденных эпизодов `episodes_found`, полнота по эпизодам `recall_event`, время до первой подтвержденной детекции `ttfc_sec`, число ложных алертов `false_alerts_total`, ложных алертов в минуту `fp_per_minute`.
+- `memory` - `missions`, `alerts` и `frame_events` живут в памяти процесса.
+- `postgres` - те же сущности живут в PostgreSQL, а схема создается миграциями Alembic.
 
-Подробности по продуктовой и ML-логике: [ML System Design Doc](docs/ml_system_design_doc.md).
+Артефакты миссии не лежат в PostgreSQL:
 
-## Структура проекта
+- кадры, сохраненные для alert cards;
+- mission report JSON;
+- любые бинарные файлы.
 
-```text
-config.py                # единая точка доступа к переменным окружения
-configs/                 # YAML-контракт детекции и алертинга
-docs/                    # документация: архитектура, runbook'и, ML SDD
-infra/                   # инфраструктура для батчевого сервиса (Airflow, Postgres, monitoring)
-  airflow/dags/          # DAG-и Airflow
-  docker-compose.platform.yml  # compose для запуска batch-платформы
-libs/
-  core/
-    domain/              # сущности миссии/алертов
-    application/         # бизнес-правила, расчет метрик, сервис миссии
-  batch/
-    domain/              # модели batch-запуска и результатов
-    application/         # batch use-case (идемпотентный прогон миссии)
-    infrastructure/      # адаптеры: S3/local artifact store, status store, runtime
-  infra/postgres/        # postgres-адаптеры репозиториев
-services/
-  api_gateway/
-    presentation/        # HTTP-роуты и UI оператора
-    infrastructure/      # адаптеры хранилищ и интеграций API
-    dependencies.py      # сборка контейнера зависимостей приложения
-  detection_service/
-    domain/              # модели и интерфейсы детекции
-    application/         # оркестрация обработки потока кадров
-    infrastructure/      # интеграции с YAML, YOLO и HTTP
-    presentation/        # API для запуска и контроля стрима
-  batch_runner/
-    main.py              # основной файл запуска батч-обработки
-tests/
-  architecture/          # тесты границ слоев (import boundaries)
-  test_*.py              # unit/integration/e2e тесты сервисов
-.github/workflows/       # сценарии автоматических проверок и запусков в GHA
+За это отвечает только `ArtifactStorage` и переменные `ARTIFACTS_*`.
+Переключение `APP_REPOSITORY_BACKEND` не меняет способ хранения артефактов.
+
+## `episodes` и report
+
+Postgres-таблица `episodes` - это read-model, а не отдельная доменная сущность.
+Она хранит GT episodes, собранные из `frame_events`, и флаг `found_by_alert`.
+Этот флаг считается по той же логике, что и `episodes_found` в mission report:
+эпизод считается найденным, если в окно эпизода попал любой alert в пределах tolerance.
+
+Review влияет на другие поля отчета:
+
+- `alerts_confirmed`
+- `alerts_rejected`
+- `ttfc_sec`
+
+## Быстрый старт
+
+1. Скопируйте шаблон env:
+
+```bash
+cp .env.example .env
 ```
 
-## Запуск через Docker
+2. При необходимости задайте `MISSION_DIR` и настройки `ARTIFACTS_*`.
 
-### Требования
-
-- Docker Desktop / Docker Engine
-- Свободный порт `8000`
-
-### Подготовка данных миссии
-
-Нужна локальная папка миссии со структурой:
+Структура mission directory:
 
 ```text
 <mission>/
   images/
     frame_0001.jpg
     frame_0002.jpg
-    ...
   annotations/
-    *.json   # COCO annotations
+    mission.json
 ```
 
-### Шаги запуска
+## Запуск без Postgres
 
-1. Создайте `.env` из шаблона:
+Это режим по умолчанию.
 
-```bash
-cp .env.example .env
-```
-
-2. В `.env` задайте путь к папке миссии на вашем устройстве:
+В `.env` достаточно оставить:
 
 ```env
-MISSION_DIR=/abs/path/to/mission
+APP_REPOSITORY_BACKEND=memory
 ```
 
-Настройте, куда сохранять артефакты миссии (кадры и отчеты):
-
-```env
-ARTIFACTS_MODE=s3
-```
-
-Как это работает:
-- по умолчанию используется режим `s3`;
-- если ключи `ARTIFACTS_S3_ACCESS_KEY_ID` и `ARTIFACTS_S3_SECRET_ACCESS_KEY` не заданы, сервис автоматически пишет артефакты локально;
-- если ключи заданы, но не хватает остальных параметров S3, сервис завершится с понятной ошибкой на старте.
-
-Что обязательно заполнить для записи в S3-бакет:
-
-```env
-ARTIFACTS_S3_ENDPOINT=...
-ARTIFACTS_S3_REGION=...
-ARTIFACTS_S3_ACCESS_KEY_ID=...
-ARTIFACTS_S3_SECRET_ACCESS_KEY=...
-ARTIFACTS_S3_BUCKET=...
-ARTIFACTS_S3_STRICT=true
-```
-
-3. Поднимите сервис:
+Запуск:
 
 ```bash
 docker compose up --build
 ```
 
-4. Проверьте health:
+API будет доступен на `http://127.0.0.1:8000`.
 
-```bash
-curl http://127.0.0.1:8000/health
-```
+## Запуск с Postgres
 
-Ожидаемый ответ:
+### Через Docker Compose
 
-```json
-{"status":"ok"}
-```
-
-## Как воспроизвести базовый сценарий в UI
-
-1. Откройте UI: `http://127.0.0.1:8000/`
-2. В поле **«Путь к папке с кадрами»** укажите:
-
-```text
-/data/mission/images
-```
-
-3. Нажмите **«Начать миссию»**.
-4. В процессе обработки подтверждайте/отклоняйте алерты.
-5. После окончания нажмите **«Закончить миссию»** и **«Отчет по миссии»**.
-6. В таблице отчета получите рассчитанные метрики миссии.
-
-## Остановка и повторный запуск
-
-- Остановить сервис:
-
-```bash
-docker compose down
-```
-
-- Повторно запустить с теми же параметрами:
-
-```bash
-docker compose up --build
-```
-
-- Если нужно прогнать другую миссию:
-1. Измените `MISSION_DIR` в `.env` на новый путь.
-2. Перезапустите контейнер: `docker compose down && docker compose up --build`.
-
-## Батчевый сервис (Airflow)
-
-- [infra/README.md](infra/README.md) — как поднять Airflow-контур и что именно происходит в DAG.
-- [docs/runbooks/batch_operations.md](docs/runbooks/batch_operations.md) — эксплуатация: safe rerun, диагностика `failed/partial`, проверка статусов.
-- [docs/runbooks/batch_demo_playbook.md](docs/runbooks/batch_demo_playbook.md) — сценарий демонстрации батча на реальных данных.
-- [docs/runbooks/postgres_backend.md](docs/runbooks/postgres_backend.md) — как включить PostgreSQL backend для `missions`/`alerts`/`frame_events`/`episodes`, применить миграции и откатиться на memory.
-- [docs/architecture/batch_contour.md](docs/architecture/batch_contour.md) — архитектурная схема batch-контура.
-- [docs/batch_evidence_pack.md](docs/batch_evidence_pack.md) — что собрать для защиты/сдачи.
-
-- Airflow оркестрирует запуск batch-runner контейнера через `DockerOperator`.
-- Бизнес-логика находится в коде проекта (`libs/batch/application`), а DAG управляет расписанием и backfill.
-- Идемпотентность обеспечивается run-key и статусами, чтобы повторный запуск на тот же ключ не создавал дублей без `--force`.
-
-## PostgreSQL backend
-
-Для persistent storage миссий и alert-ов используйте:
+В `.env` задайте backend и параметры базы:
 
 ```env
 APP_REPOSITORY_BACKEND=postgres
-APP_POSTGRES_DSN=postgresql://rescue_ai:rescue_ai_dev@127.0.0.1:5432/rescue_ai
+APP_POSTGRES_DB=rescue_ai
+APP_POSTGRES_USER=rescue_ai
+APP_POSTGRES_PASSWORD=change-me
+APP_POSTGRES_PORT=5432
 ```
 
-Схема БД применяется через Alembic:
+После этого поднимите тот же compose-файл, но с postgres profile:
+
+```bash
+docker compose --profile postgres up --build
+```
+
+Что произойдет:
+
+- `postgres` поднимется как отдельный сервис в этом же `docker-compose.yml`;
+- API внутри Docker будет ходить в базу по hostname `postgres`;
+- перед стартом API дождется доступности БД и выполнит `alembic upgrade head`.
+
+Для docker-сценария не нужно прописывать `host.docker.internal` или `127.0.0.1` в DSN контейнера.
+Если вы все же используете `APP_POSTGRES_DSN` вместо `APP_POSTGRES_HOST/...`, указывайте в нем host `postgres`.
+
+### Локальный запуск API вне Docker
+
+Если API запускается не в контейнере, используйте локальный host:
+
+```env
+APP_REPOSITORY_BACKEND=postgres
+APP_POSTGRES_HOST=127.0.0.1
+APP_POSTGRES_PORT=5432
+APP_POSTGRES_DB=rescue_ai
+APP_POSTGRES_USER=rescue_ai
+APP_POSTGRES_PASSWORD=change-me
+```
+
+Запуск:
+
+```bash
+uv run --extra dev --extra batch python -m services.api_gateway.run
+```
+
+## Миграции Alembic
+
+Ручной запуск миграций:
+
+```bash
+make db-migrate
+```
+
+или:
 
 ```bash
 uv run --extra dev --extra batch alembic upgrade head
 ```
 
-Локальный Postgres можно поднять так:
+Alembic читает либо `APP_POSTGRES_DSN`, либо набор переменных:
+
+- `APP_POSTGRES_HOST`
+- `APP_POSTGRES_PORT`
+- `APP_POSTGRES_DB`
+- `APP_POSTGRES_USER`
+- `APP_POSTGRES_PASSWORD`
+
+Проверить текущую ревизию:
 
 ```bash
-docker compose -f docker-compose.postgres.yml up -d
+uv run --extra dev --extra batch alembic current
 ```
 
-Подробный пошаговый runbook: [docs/runbooks/postgres_backend.md](docs/runbooks/postgres_backend.md).
+## Тесты
 
-## CI/CD каркас
+Полный набор:
 
-- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — основной CI: линтеры, типизация, тесты с coverage-порогом, архитектурные проверки.
-- [`.github/workflows/infra-ci.yml`](.github/workflows/infra-ci.yml) — проверка инфраструктурного контура: валидность compose и DAG-артефактов.
-- [`.github/workflows/batch-e2e.yml`](.github/workflows/batch-e2e.yml) — e2e backfill сценарий для batch-контура (по расписанию и вручную).
+```bash
+uv run --extra dev --extra batch pytest
+```
+
+Только postgres integration tests:
+
+```bash
+APP_TEST_POSTGRES_DSN=postgresql://<user>:<password>@127.0.0.1:5432/<db> uv run --extra dev --extra batch pytest tests/test_postgres_repositories.py -m integration
+```
+
+Postgres integration tests используют реальные Alembic migrations.
+Для изоляции каждый тест поднимает собственную временную schema внутри указанной test database.
+
+## Полезные команды
+
+```bash
+make up
+make up-postgres
+make down
+make db-migrate
+make test
+```
+
+## Batch и прочая документация
+
+- [infra/README.md](infra/README.md)
+- [docs/runbooks/postgres_backend.md](docs/runbooks/postgres_backend.md)
+- [docs/runbooks/batch_operations.md](docs/runbooks/batch_operations.md)
+- [docs/runbooks/batch_demo_playbook.md](docs/runbooks/batch_demo_playbook.md)
+- [docs/architecture/batch_contour.md](docs/architecture/batch_contour.md)
+- [docs/ml_system_design_doc.md](docs/ml_system_design_doc.md)

@@ -1,141 +1,125 @@
 # PostgreSQL backend for API Gateway
 
-Этот runbook описывает, как включить persistent backend для `missions`,
-`alerts`, `frame_events` и `episodes`, не меняя текущую логику хранения
-артефактов.
-
-## Что хранится в PostgreSQL
+Этот runbook описывает только operational storage API Gateway:
 
 - `missions`
 - `alerts`
 - `frame_events`
 - `episodes`
 
-Важно:
+Артефакты миссии по-прежнему идут через `ArtifactStorage`:
 
-- кадры, изображения alert-ов и JSON-отчеты не пишутся в PostgreSQL;
-- бинарные артефакты продолжают идти через `ArtifactStorage`;
-- `ARTIFACTS_MODE=s3` с автоматическим fallback на local остается без изменений.
+- кадры и image URIs не переносятся в PostgreSQL;
+- mission report JSON не хранится в PostgreSQL;
+- `ARTIFACTS_*` отвечают только за artifact storage.
 
-## 1. Установить зависимости
+## Env
 
-Для локальной разработки и миграций нужен dev-окружение с postgres-драйвером:
-
-```bash
-uv sync --extra dev --extra batch
-```
-
-Через `make`:
-
-```bash
-make install
-```
-
-## 2. Поднять локальный PostgreSQL
-
-В репозитории есть минимальный compose-файл:
-
-```bash
-docker compose -f docker-compose.postgres.yml up -d
-```
-
-По умолчанию он поднимает базу:
-
-- host: `127.0.0.1`
-- port: `5432`
-- db: `rescue_ai`
-- user: `rescue_ai`
-- password: `rescue_ai_dev`
-
-Остановить контейнер:
-
-```bash
-docker compose -f docker-compose.postgres.yml down
-```
-
-## 3. Настроить env
-
-Добавьте или обновите переменные окружения:
+Минимальный набор переменных для postgres backend:
 
 ```env
 APP_REPOSITORY_BACKEND=postgres
-APP_POSTGRES_DSN=postgresql://rescue_ai:rescue_ai_dev@127.0.0.1:5432/rescue_ai
+APP_POSTGRES_HOST=127.0.0.1
+APP_POSTGRES_PORT=5432
+APP_POSTGRES_DB=rescue_ai
+APP_POSTGRES_USER=rescue_ai
+APP_POSTGRES_PASSWORD=change-me
 ```
 
-Настройки артефактов остаются отдельными:
+Если удобнее, можно задать единый DSN:
 
 ```env
-ARTIFACTS_MODE=s3
-ARTIFACTS_S3_ENDPOINT=...
-ARTIFACTS_S3_REGION=...
-ARTIFACTS_S3_ACCESS_KEY_ID=...
-ARTIFACTS_S3_SECRET_ACCESS_KEY=...
-ARTIFACTS_S3_BUCKET=...
+APP_POSTGRES_DSN=postgresql://<user>:<password>@127.0.0.1:5432/<db>
 ```
 
-Если S3-ключи не заданы, сервис по-прежнему сохраняет артефакты в
-`runtime/artifacts`.
+`APP_POSTGRES_DSN` имеет приоритет над `APP_POSTGRES_HOST/PORT/DB/USER/PASSWORD`.
 
-## 4. Применить миграции
+## Docker Compose
+
+В проекте используется один `docker-compose.yml`.
+
+Запуск API без Postgres:
 
 ```bash
-APP_POSTGRES_DSN=postgresql://rescue_ai:rescue_ai_dev@127.0.0.1:5432/rescue_ai \
+docker compose up --build
+```
+
+Запуск API вместе с Postgres:
+
+```bash
+docker compose --profile postgres up --build
+```
+
+В docker-сценарии API контейнер автоматически использует hostname `postgres`.
+Отдельно прописывать `host.docker.internal` не нужно.
+Если задаете `APP_POSTGRES_DSN`, host в нем тоже должен быть `postgres`.
+
+При `APP_REPOSITORY_BACKEND=postgres` контейнер API:
+
+1. дожидается доступности БД;
+2. выполняет `alembic upgrade head`;
+3. запускает uvicorn.
+
+## Локальный запуск без Docker
+
+```bash
+uv run --extra dev --extra batch python -m services.api_gateway.run
+```
+
+В этом сценарии используйте `APP_POSTGRES_HOST=127.0.0.1`, если Postgres поднят локально.
+
+## Миграции
+
+Применить миграции вручную:
+
+```bash
+make db-migrate
+```
+
+или:
+
+```bash
 uv run --extra dev --extra batch alembic upgrade head
 ```
 
 Проверить текущую ревизию:
 
 ```bash
-APP_POSTGRES_DSN=postgresql://rescue_ai:rescue_ai_dev@127.0.0.1:5432/rescue_ai \
 uv run --extra dev --extra batch alembic current
 ```
 
-## 5. Запустить API с postgres backend
+## `episodes` projection
 
-Через текущий `docker compose`/`.env`:
+`episodes` не является отдельной core-сущностью.
+Это read-model, собранная из `frame_events`.
 
-```env
-APP_REPOSITORY_BACKEND=postgres
-APP_POSTGRES_DSN=postgresql://rescue_ai:rescue_ai_dev@host.docker.internal:5432/rescue_ai
-```
+Поле `found_by_alert` синхронизировано с логикой mission report:
 
-После этого:
+- `episodes_found` в отчете считает эпизод найденным, если в окно эпизода попал любой alert;
+- `episodes.found_by_alert` использует ту же семантику;
+- review outcomes остаются в `alerts_*` и `ttfc_sec`.
 
-```bash
-docker compose up --build
-```
+## Тесты
 
-Локально без Docker:
+Полный suite:
 
 ```bash
-uv run --extra dev --extra batch python -m uvicorn services.api_gateway.app:app --host 0.0.0.0 --port 8000
-```
-
-## 6. Запустить тесты
-
-Unit + integration:
-
-```bash
-APP_TEST_POSTGRES_DSN=postgresql://rescue_ai:rescue_ai_dev@127.0.0.1:5432/rescue_ai \
-BATCH_TEST_POSTGRES_DSN=postgresql://rescue_ai:rescue_ai_dev@127.0.0.1:5432/rescue_ai \
 uv run --extra dev --extra batch pytest
 ```
 
 Только postgres integration:
 
 ```bash
-APP_TEST_POSTGRES_DSN=postgresql://rescue_ai:rescue_ai_dev@127.0.0.1:5432/rescue_ai \
-uv run --extra dev --extra batch pytest tests/test_postgres_repositories.py -m integration
+APP_TEST_POSTGRES_DSN=postgresql://<user>:<password>@127.0.0.1:5432/<db> uv run --extra dev --extra batch pytest tests/test_postgres_repositories.py -m integration
 ```
 
-## 7. Откатиться на memory backend
+Integration tests не создают таблицы вручную.
+Они поднимают временную schema и применяют к ней реальные Alembic migrations (`upgrade head`).
 
-Чтобы вернуться к текущему in-memory режиму:
+## Возврат в memory
 
 ```env
 APP_REPOSITORY_BACKEND=memory
 ```
 
-`APP_POSTGRES_DSN` можно оставить незаданным.
-
-Дополнительных изменений для `ARTIFACTS_MODE` не требуется.
+Остальные Postgres переменные можно оставить незаполненными.

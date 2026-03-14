@@ -15,6 +15,9 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --extra inference --extra batch
 
+COPY alembic ./alembic
+COPY alembic.ini ./alembic.ini
+COPY config.py ./config.py
 COPY configs ./configs
 COPY libs ./libs
 COPY services ./services
@@ -22,4 +25,4 @@ RUN mkdir -p /app/runtime
 
 EXPOSE 8000
 
-CMD ["uv", "run", "python", "-m", "uvicorn", "services.api_gateway.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "python", "-m", "services.api_gateway.run"]

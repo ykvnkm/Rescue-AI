@@ -1,10 +1,19 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-import os
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+from alembic import context
+from libs.infra.postgres import resolve_postgres_dsn, to_sqlalchemy_url
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover
+    load_dotenv = None
+
+if load_dotenv is not None:
+    load_dotenv()
 
 config = context.config
 
@@ -44,18 +53,12 @@ def run_migrations_online() -> None:
 
 
 def _resolve_sqlalchemy_url() -> str:
-    raw_url = (
-        os.getenv("APP_POSTGRES_DSN")
-        or config.get_main_option("sqlalchemy.url")
-        or ""
-    )
+    raw_url = resolve_postgres_dsn() or config.get_main_option("sqlalchemy.url") or ""
     if not raw_url:
-        raise RuntimeError("APP_POSTGRES_DSN or sqlalchemy.url must be set")
-    if raw_url.startswith("postgresql://"):
-        return raw_url.replace("postgresql://", "postgresql+psycopg://", 1)
-    if raw_url.startswith("postgres://"):
-        return raw_url.replace("postgres://", "postgresql+psycopg://", 1)
-    return raw_url
+        raise RuntimeError(
+            "Set APP_POSTGRES_DSN or APP_POSTGRES_HOST/PORT/DB/USER/PASSWORD"
+        )
+    return to_sqlalchemy_url(raw_url)
 
 
 if context.is_offline_mode():

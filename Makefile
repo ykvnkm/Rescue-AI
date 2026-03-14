@@ -3,24 +3,26 @@ UV := PYTHONPATH=$(PYTHONPATH) uv run
 PLATFORM_COMPOSE := docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env
 
 .PHONY: help install format lint test test-arch test-batch ci \
-	up down batch-build batch-up batch-down batch-logs batch-backfill
+	up up-postgres down db-migrate batch-build batch-up batch-down batch-logs batch-backfill
 
 help:
-	@echo "Доступные команды:"
-	@echo "  make install         - установить dev-зависимости через uv"
-	@echo "  make format          - отформатировать код (black + isort)"
-	@echo "  make lint            - проверить код (black/isort/flake8/mypy/pylint)"
-	@echo "  make test            - запустить все тесты"
-	@echo "  make test-arch       - запустить архитектурные тесты границ слоев"
-	@echo "  make test-batch      - запустить batch smoke/unit тесты с порогом coverage >= 70%"
-	@echo "  make ci              - локально повторить основной CI (lint + test + arch + batch)"
-	@echo "  make up              - поднять основной сервис (docker compose)"
-	@echo "  make down            - остановить основной сервис"
-	@echo "  make batch-build     - собрать образ batch-runner для Airflow DockerOperator"
-	@echo "  make batch-up        - поднять batch-платформу (Airflow-контур)"
-	@echo "  make batch-down      - остановить batch-платформу"
-	@echo "  make batch-logs      - смотреть логи airflow-webserver"
-	@echo "  make batch-backfill  - запустить demo backfill (диапазон дат можно изменить)"
+	@echo "Available commands:"
+	@echo "  make install         - install dev dependencies with uv"
+	@echo "  make format          - format code with black + isort"
+	@echo "  make lint            - run black/isort/flake8/mypy/pylint"
+	@echo "  make test            - run the full pytest suite"
+	@echo "  make test-arch       - run architecture boundary tests"
+	@echo "  make test-batch      - run batch smoke/unit tests with coverage >= 70%"
+	@echo "  make ci              - run the local CI bundle"
+	@echo "  make up              - start the API in memory mode"
+	@echo "  make up-postgres     - start the API and Postgres from one compose file"
+	@echo "  make down            - stop the local compose services"
+	@echo "  make db-migrate      - apply Alembic migrations to the configured Postgres"
+	@echo "  make batch-build     - build the batch-runner image for Airflow"
+	@echo "  make batch-up        - start the batch platform"
+	@echo "  make batch-down      - stop the batch platform"
+	@echo "  make batch-logs      - tail airflow-webserver logs"
+	@echo "  make batch-backfill  - run the demo Airflow backfill"
 
 install:
 	uv sync --extra dev --extra batch
@@ -50,8 +52,14 @@ ci: lint test test-arch test-batch
 up:
 	docker compose up --build
 
+up-postgres:
+	docker compose --profile postgres up --build
+
 down:
 	docker compose down
+
+db-migrate:
+	$(UV) alembic upgrade head
 
 batch-build:
 	$(PLATFORM_COMPOSE) --profile batch-build build batch-runner-image

@@ -12,23 +12,24 @@ from libs.core.application.contracts import (
 )
 from libs.core.application.models import AlertRuleConfig
 from libs.core.application.pilot_service import PilotService
+from libs.infra.memory import (
+    InMemoryAlertRepository,
+    InMemoryDatabase,
+    InMemoryFrameEventRepository,
+    InMemoryMissionRepository,
+)
 from libs.infra.postgres import (
     EpisodeProjectionSettings,
     PostgresAlertRepository,
     PostgresDatabase,
     PostgresFrameEventRepository,
     PostgresMissionRepository,
+    resolve_postgres_dsn,
 )
 from services.api_gateway.infrastructure import (
     DetectionStreamController,
     build_artifact_storage,
     load_alert_rules_and_metadata,
-)
-from services.api_gateway.infrastructure.memory_store import (
-    InMemoryAlertRepository,
-    InMemoryDatabase,
-    InMemoryFrameEventRepository,
-    InMemoryMissionRepository,
 )
 
 
@@ -101,9 +102,12 @@ def _build_repositories(
             lambda: _reset_memory_database(db),
         )
     if backend == "postgres":
-        dsn = config.get_non_empty("APP_POSTGRES_DSN")
+        dsn = resolve_postgres_dsn()
         if not dsn:
-            raise ValueError("APP_POSTGRES_DSN is required for postgres backend")
+            raise ValueError(
+                "Postgres backend requires APP_POSTGRES_DSN or "
+                "APP_POSTGRES_HOST/PORT/DB/USER/PASSWORD"
+            )
 
         db = PostgresDatabase(dsn=dsn)
         episode_settings = EpisodeProjectionSettings(
@@ -116,9 +120,7 @@ def _build_repositories(
             PostgresFrameEventRepository(db, episode_settings=episode_settings),
             db.truncate_all,
         )
-    raise ValueError(
-        "APP_REPOSITORY_BACKEND must be one of: memory, postgres"
-    )
+    raise ValueError("APP_REPOSITORY_BACKEND must be one of: memory, postgres")
 
 
 def _reset_memory_database(db: InMemoryDatabase) -> None:

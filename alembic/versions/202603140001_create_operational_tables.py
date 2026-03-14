@@ -1,10 +1,11 @@
-"""Create operational Postgres tables for mission state."""
+﻿"""Create operational Postgres tables for mission state."""
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "202603140001"
 down_revision = None
@@ -56,12 +57,16 @@ def upgrade() -> None:
         sa.Column("ts_sec", sa.Float(), nullable=False),
         sa.Column("image_uri", sa.Text(), nullable=False),
         sa.Column("people_detected", sa.Integer(), nullable=False),
-        sa.Column("primary_bbox", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column(
+            "primary_bbox", postgresql.JSONB(astext_type=sa.Text()), nullable=False
+        ),
         sa.Column("primary_score", sa.Float(), nullable=False),
         sa.Column("primary_label", sa.Text(), nullable=False),
         sa.Column("primary_model_name", sa.Text(), nullable=False),
         sa.Column("primary_explanation", sa.Text(), nullable=True),
-        sa.Column("detections", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column(
+            "detections", postgresql.JSONB(astext_type=sa.Text()), nullable=False
+        ),
         sa.Column("status", sa.Text(), nullable=False),
         sa.Column("reviewed_by", sa.Text(), nullable=True),
         sa.Column("reviewed_at_sec", sa.Float(), nullable=True),
@@ -98,7 +103,7 @@ def upgrade() -> None:
         sa.Column("start_sec", sa.Float(), nullable=False),
         sa.Column("end_sec", sa.Float(), nullable=False),
         sa.Column(
-            "found_by_confirmed_alert",
+            "found_by_alert",
             sa.Boolean(),
             nullable=False,
             server_default=sa.text("false"),
@@ -113,7 +118,7 @@ def upgrade() -> None:
     op.create_index(
         "ix_episodes_mission_found",
         "episodes",
-        ["mission_id", "found_by_confirmed_alert"],
+        ["mission_id", "found_by_alert"],
         unique=False,
     )
 

@@ -1,4 +1,4 @@
-"""Backward-compatible import surface for shared in-memory repositories."""
+"""In-memory persistence adapters shared across app and tests."""
 
 from libs.infra.memory.repositories import (
     InMemoryAlertRepository,

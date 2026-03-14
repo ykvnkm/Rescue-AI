@@ -63,7 +63,7 @@ gt_episode_id
 
 @dataclass(frozen=True)
 class EpisodeProjectionSettings:
-    """Settings used to keep the `episodes` projection consistent."""
+    """Settings used to keep the `episodes` projection aligned with reports."""
 
     gt_gap_end_sec: float
     match_tolerance_sec: float
@@ -98,14 +98,14 @@ class PostgresDatabase:
 
 
 class _EpisodeProjectionStore:
-    """Refreshes `episodes` rows from stored frame events and reviewed alerts."""
+    """Refreshes `episodes` rows from stored frame events and alert matches."""
 
     def __init__(self, settings: EpisodeProjectionSettings) -> None:
         self._settings = settings
 
     def refresh(self, conn: Any, mission_id: str) -> None:
         frames = self._load_frames(conn=conn, mission_id=mission_id)
-        confirmed_alert_ts = self._load_confirmed_alert_timestamps(
+        alert_ts = self._load_alert_timestamps(
             conn=conn,
             mission_id=mission_id,
         )
@@ -128,10 +128,10 @@ class _EpisodeProjectionStore:
                     episode_index,
                     start_sec,
                     end_sec,
-                    _episode_found_by_confirmed_alert(
+                    _episode_found_by_alert(
                         start_sec=start_sec,
                         end_sec=end_sec,
-                        confirmed_alert_ts=confirmed_alert_ts,
+                        alert_ts=alert_ts,
                         tolerance_sec=self._settings.match_tolerance_sec,
                     ),
                 )
@@ -144,7 +144,7 @@ class _EpisodeProjectionStore:
                     episode_index,
                     start_sec,
                     end_sec,
-                    found_by_confirmed_alert
+                    found_by_alert
                 )
                 VALUES (%s, %s, %s, %s, %s)
                 """,
@@ -164,13 +164,13 @@ class _EpisodeProjectionStore:
             )
             return [_frame_event_from_row(row) for row in cursor.fetchall()]
 
-    def _load_confirmed_alert_timestamps(self, conn: Any, mission_id: str) -> list[float]:
+    def _load_alert_timestamps(self, conn: Any, mission_id: str) -> list[float]:
         with conn.cursor() as cursor:
             cursor.execute(
                 """
                 SELECT ts_sec
                 FROM alerts
-                WHERE mission_id = %s AND status = 'reviewed_confirmed'
+                WHERE mission_id = %s
                 ORDER BY ts_sec
                 """,
                 (mission_id,),
@@ -350,6 +350,8 @@ class PostgresAlertRepository(AlertRepository):
                         alert.lifecycle.decision_reason,
                     ),
                 )
+                if self._episodes is not None:
+                    self._episodes.refresh(conn=conn, mission_id=alert.mission_id)
             conn.commit()
 
     def get(self, alert_id: str) -> Alert | None:
@@ -626,20 +628,20 @@ def _parse_iso_datetime(value: str) -> datetime:
 
 def _as_iso_datetime(value: Any) -> str:
     if isinstance(value, datetime):
-        normalized = value if value.tzinfo is not None else value.replace(
-            tzinfo=timezone.utc
+        normalized = (
+            value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
         )
         return normalized.isoformat()
     return str(value)
 
 
-def _episode_found_by_confirmed_alert(
+def _episode_found_by_alert(
     *,
     start_sec: float,
     end_sec: float,
-    confirmed_alert_ts: list[float],
+    alert_ts: list[float],
     tolerance_sec: float,
 ) -> bool:
     window_start = start_sec - tolerance_sec
     window_end = end_sec + tolerance_sec
-    return any(window_start <= ts_sec <= window_end for ts_sec in confirmed_alert_ts)
+    return any(window_start <= ts_sec <= window_end for ts_sec in alert_ts)
