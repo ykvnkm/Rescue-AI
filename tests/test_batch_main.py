@@ -36,13 +36,28 @@ def test_default_backends(monkeypatch, tmp_path: Path) -> None:
 
 def test_default_backends_for_staging(monkeypatch) -> None:
     monkeypatch.setenv("BATCH_RUNTIME_ENV", "staging")
+
     monkeypatch.delenv("BATCH_STATUS_BACKEND", raising=False)
     monkeypatch.delenv("BATCH_ARTIFACT_BACKEND", raising=False)
     monkeypatch.delenv("BATCH_POSTGRES_DSN", raising=False)
+
     monkeypatch.delenv("BATCH_S3_BUCKET", raising=False)
+    monkeypatch.delenv("BATCH_S3_ENDPOINT", raising=False)
+    monkeypatch.delenv("BATCH_S3_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("BATCH_S3_SECRET_KEY", raising=False)
+    monkeypatch.delenv("BATCH_S3_REGION", raising=False)
+    monkeypatch.delenv("BATCH_S3_PREFIX", raising=False)
+
+    monkeypatch.delenv("ARTIFACTS_S3_BUCKET", raising=False)
+    monkeypatch.delenv("ARTIFACTS_S3_ENDPOINT", raising=False)
+    monkeypatch.delenv("ARTIFACTS_S3_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("ARTIFACTS_S3_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("ARTIFACTS_S3_REGION", raising=False)
+    monkeypatch.delenv("ARTIFACTS_S3_PREFIX", raising=False)
 
     with pytest.raises(ValueError):
         batch_main.build_status_store()
+
     with pytest.raises(ValueError):
         batch_main.build_artifact_store()
 

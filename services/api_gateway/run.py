@@ -22,7 +22,11 @@ def _prepare_postgres_backend() -> None:
     if backend != "postgres":
         return
 
-    dsn = resolve_postgres_dsn()
+    try:
+        dsn = resolve_postgres_dsn()
+    except ValueError as error:
+        raise RuntimeError(f"Invalid Postgres configuration: {error}") from error
+
     if not dsn:
         raise RuntimeError(
             "Postgres backend requires APP_POSTGRES_DSN or "

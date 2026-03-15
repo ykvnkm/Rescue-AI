@@ -8,7 +8,11 @@ services:
     environment:
       APP_HOST: "0.0.0.0"
       APP_PORT: "8000"
-      APP_POSTGRES_HOST: "postgres"
+      APP_POSTGRES_HOST: "${APP_POSTGRES_HOST:-}"
+      APP_POSTGRES_PORT: "${APP_POSTGRES_PORT:-}"
+      APP_POSTGRES_DB: "${APP_POSTGRES_DB:-}"
+      APP_POSTGRES_USER: "${APP_POSTGRES_USER:-}"
+      APP_POSTGRES_PASSWORD: "${APP_POSTGRES_PASSWORD:-}"
       APP_POSTGRES_AUTO_MIGRATE: "${APP_POSTGRES_AUTO_MIGRATE:-true}"
       APP_POSTGRES_READY_TIMEOUT_SEC: "${APP_POSTGRES_READY_TIMEOUT_SEC:-30}"
     volumes:
@@ -20,20 +24,16 @@ services:
     profiles: ["postgres"]
     restart: unless-stopped
     environment:
-      POSTGRES_DB: "${APP_POSTGRES_DB:-rescue_ai}"
-      POSTGRES_USER: "${APP_POSTGRES_USER:-rescue_ai}"
-      POSTGRES_PASSWORD: "${APP_POSTGRES_PASSWORD:-}"
+      POSTGRES_DB: "${APP_POSTGRES_DB}"
+      POSTGRES_USER: "${APP_POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${APP_POSTGRES_PASSWORD}"
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U ${APP_POSTGRES_USER:-rescue_ai} -d ${APP_POSTGRES_DB:-rescue_ai}",
-        ]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 10
     ports:
-      - "${APP_POSTGRES_PORT:-5432}:5432"
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
