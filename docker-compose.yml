@@ -17,7 +17,8 @@ services:
       APP_POSTGRES_READY_TIMEOUT_SEC: "${APP_POSTGRES_READY_TIMEOUT_SEC:-30}"
     volumes:
       - "${MISSION_DIR:-./artifacts/public}:/data/mission:ro"
-      - "./runtime:/app/runtime"
+      - "./runtime/artifacts:/app/runtime/artifacts"
+      - model_cache:/app/runtime/models
 
   postgres:
     image: postgres:16
@@ -38,4 +39,5 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
 volumes:
+  model_cache:
   postgres_data:

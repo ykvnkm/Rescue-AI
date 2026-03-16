@@ -133,10 +133,22 @@ def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
     )
     if mission is None:
         raise HTTPException(status_code=404, detail="Mission not found")
+    try:
+        state = stream_controller.start(config)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (OSError, RuntimeError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Mission preflight failed: detection model is not ready for local "
+                f"runtime ({type(error).__name__}: {error})"
+            ),
+        ) from error
+
     started = service.start_mission(mission.mission_id)
     if started is None:
         raise HTTPException(status_code=404, detail="Mission not found")
-    state = stream_controller.start(config)
 
     return {
         "mission_id": mission.mission_id,
