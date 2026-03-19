@@ -12,7 +12,6 @@ DAG_ID = "rescue_ml_pipeline_daily"
 MISSION_ID = os.getenv("BATCH_MISSION_ID", "demo_mission")
 CODE_VERSION = os.getenv("BATCH_CODE_VERSION", "dev")
 MODEL_VERSION = os.getenv("BATCH_MODEL_VERSION", "yolov8n_baseline_multiscale")
-MIN_ACCURACY = os.getenv("BATCH_VALIDATION_MIN_ACCURACY", "0.75")
 
 
 COMMON_ENV = {
@@ -38,10 +37,20 @@ COMMON_ENV = {
     "ARTIFACTS_S3_REGION": os.getenv("ARTIFACTS_S3_REGION", ""),
 }
 
+RUN_BATCH_COMMAND = (
+    "uv run python -m services.batch_runner.main "
+    f"--mission-id {MISSION_ID} "
+    "--ds {{ ds }} "
+    f"--model-version {MODEL_VERSION} "
+    f"--code-version {CODE_VERSION}"
+)
 
 with DAG(
     dag_id=DAG_ID,
-    description="Rescue-AI data->train->validate pipeline (DockerOperator + S3 + backfill)",
+    description=(
+        "Rescue-AI prepare->train->validate pipeline "
+        "(DockerOperator, local batch runner)"
+    ),
     start_date=datetime(2026, 3, 1),
     schedule="@daily",
     catchup=True,
@@ -64,14 +73,7 @@ with DAG(
             Mount(source="airflow_shared_data", target="/opt/airflow/data", type="volume")
         ],
         environment=COMMON_ENV,
-        command=(
-            "uv run python -m services.batch_runner.s3_ml_pipeline "
-            "--stage data "
-            f"--mission-id {MISSION_ID} "
-            "--ds {{ ds }} "
-            f"--model-version {MODEL_VERSION} "
-            f"--code-version {CODE_VERSION}"
-        ),
+        command=RUN_BATCH_COMMAND,
     )
 
     train_model = DockerOperator(
@@ -85,14 +87,7 @@ with DAG(
             Mount(source="airflow_shared_data", target="/opt/airflow/data", type="volume")
         ],
         environment=COMMON_ENV,
-        command=(
-            "uv run python -m services.batch_runner.s3_ml_pipeline "
-            "--stage train "
-            f"--mission-id {MISSION_ID} "
-            "--ds {{ ds }} "
-            f"--model-version {MODEL_VERSION} "
-            f"--code-version {CODE_VERSION}"
-        ),
+        command=RUN_BATCH_COMMAND,
     )
 
     validate_model = DockerOperator(
@@ -106,15 +101,7 @@ with DAG(
             Mount(source="airflow_shared_data", target="/opt/airflow/data", type="volume")
         ],
         environment=COMMON_ENV,
-        command=(
-            "uv run python -m services.batch_runner.s3_ml_pipeline "
-            "--stage validate "
-            f"--mission-id {MISSION_ID} "
-            "--ds {{ ds }} "
-            f"--model-version {MODEL_VERSION} "
-            f"--code-version {CODE_VERSION} "
-            f"--min-accuracy {MIN_ACCURACY}"
-        ),
+        command=RUN_BATCH_COMMAND,
     )
 
     prepare_data >> train_model >> validate_model
