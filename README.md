@@ -63,8 +63,8 @@ tests/
 ```text
 <mission>/
   images/
-    frame_0001.jpg
-    frame_0002.jpg
+    01_1_000001.jpg
+    01_1_000002.jpg
     ...
   annotations/
     *.json   # COCO annotations
@@ -170,6 +170,5 @@ docker compose up --build
 
 ## CI/CD каркас
 
-- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — основной CI: линтеры, типизация, тесты с coverage-порогом, архитектурные проверки.
-- [`.github/workflows/infra-ci.yml`](.github/workflows/infra-ci.yml) — проверка инфраструктурного контура: валидность compose и DAG-артефактов.
-- [`.github/workflows/batch-e2e.yml`](.github/workflows/batch-e2e.yml) — e2e backfill сценарий для batch-контура (по расписанию и вручную).
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — основной и единственный GitHub Actions quality gate: линтеры, типизация, unit/smoke-тесты с coverage-порогом и проверки архитектурных границ.
+- Интеграционный сценарий batch-контура не включен в обязательный workflow: он документирован отдельно в runbook и не влияет на стабильность основного CI.
