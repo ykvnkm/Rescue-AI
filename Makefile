@@ -1,6 +1,5 @@
 PYTHONPATH := $(shell pwd)
 UV := PYTHONPATH=$(PYTHONPATH) uv run
-PLATFORM_COMPOSE := docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env
 
 .PHONY: help install format lint test test-arch test-batch ci \
 	up up-postgres down db-migrate batch-build batch-up batch-down batch-logs batch-backfill
@@ -37,17 +36,15 @@ lint:
 	$(UV) flake8 services libs tests
 	$(UV) mypy services libs tests
 	$(UV) pylint services libs tests
+	python -m py_compile infra/airflow/dags/idempotent_docker_backfill_demo.py
 
 test:
-	$(UV) pytest
+	$(UV) pytest tests --ignore=tests/architecture -m "not integration" --cov=services --cov=libs --cov-fail-under=70
 
 test-arch:
 	$(UV) pytest tests/architecture --no-cov
 
-test-batch:
-	$(UV) pytest tests/test_batch_runner.py tests/test_batch_stores.py tests/test_batch_smoke.py tests/test_batch_source.py tests/test_batch_main.py tests/test_batch_pilot_engine.py tests/test_batch_detector_runtime.py tests/test_batch_quality_gate.py -m "not integration" --cov=libs/batch --cov=services/batch_runner --cov-fail-under=70
-
-ci: lint test test-arch test-batch
+ci: lint test test-arch
 
 up:
 	docker compose up --build

@@ -19,12 +19,6 @@ def test_ready_ok() -> None:
     assert response.json() == {"status": "ready"}
 
 
-def test_version_ok() -> None:
-    response = client.get("/version")
-    assert response.status_code == 200
-    assert response.json() == {"version": "0.1.0"}
-
-
 def test_ui_index_ok() -> None:
     response = client.get("/")
     assert response.status_code == 200

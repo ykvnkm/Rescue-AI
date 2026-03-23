@@ -27,7 +27,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra batch
 
       - name: Run black
         run: uv run black --check services libs tests
@@ -48,6 +48,9 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: uv run pylint services libs tests
 
+      - name: Validate batch DAG syntax
+        run: python -m py_compile infra/airflow/dags/idempotent_docker_backfill_demo.py
+
   test:
     runs-on: ubuntu-latest
 
@@ -66,14 +69,14 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra batch
 
-      - name: Run tests
+      - name: Run unit and smoke tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest -m "not integration" --cov=services --cov=libs --cov-fail-under=70
+        run: uv run pytest tests --ignore=tests/architecture -m "not integration" --cov=services --cov=libs --cov-fail-under=70
 
-  architecture:
+  architecture-boundaries:
     runs-on: ubuntu-latest
 
     steps:
@@ -91,7 +94,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra batch
 
       - name: Verify architecture boundaries
         env:

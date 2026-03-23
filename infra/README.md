@@ -106,7 +106,7 @@ docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.en
 - Для S3 используйте единый набор переменных `ARTIFACTS_S3_*`; `BATCH_S3_*` поддерживается как совместимый override.
 - Полный runbook: `docs/runbooks/batch_operations.md`.
 
-## E2E Backfill в CI
+## E2E Backfill сценарий
 
 - Nightly workflow: `.github/workflows/batch-e2e.yml`.
 - Сценарий поднимает платформу, seed'ит миссию, выполняет `airflow dags backfill rescue_ml_pipeline_daily` и проверяет status/artifacts.
