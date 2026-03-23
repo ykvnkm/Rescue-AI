@@ -145,7 +145,7 @@ jobs:
     needs:
       - lint
       - test
-      - architecture
+      - architecture-boundaries
       - batch-smoke
       - secrets
     if: ${{ always() }}
@@ -155,10 +155,10 @@ jobs:
         run: |
           if [ "${{ needs.lint.result }}" != "success" ] || \
              [ "${{ needs.test.result }}" != "success" ] || \
-             [ "${{ needs.architecture.result }}" != "success" ] || \
+             [ "${{ needs.architecture-boundaries.result }}" != "success" ] || \
              [ "${{ needs.batch-smoke.result }}" != "success" ] || \
              [ "${{ needs.secrets.result }}" != "success" ]; then
-            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}, architecture=${{ needs.architecture.result }}, batch-smoke=${{ needs.batch-smoke.result }}, secrets=${{ needs.secrets.result }}"
+            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}, architecture-boundaries=${{ needs.architecture-boundaries.result }}, batch-smoke=${{ needs.batch-smoke.result }}, secrets=${{ needs.secrets.result }}"
             exit 1
           fi
 
