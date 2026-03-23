@@ -101,19 +101,65 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: uv run pytest tests/architecture --no-cov
 
+  batch-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          uv-version: "0.10.4"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run batch unit and smoke tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run pytest tests/test_batch_runner.py tests/test_batch_stores.py tests/test_batch_smoke.py tests/test_batch_source.py tests/test_batch_main.py tests/test_batch_pilot_engine.py tests/test_batch_detector_runtime.py tests/test_batch_quality_gate.py -m "not integration" --cov=libs/batch --cov=services/batch_runner --cov-fail-under=70
+
+  secrets:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   quality-gate:
     runs-on: ubuntu-latest
     needs:
       - lint
       - test
       - architecture-boundaries
+      - batch-smoke
+      - secrets
     if: ${{ always() }}
 
     steps:
       - name: Validate upstream jobs
         run: |
-          if [ "${{ needs.lint.result }}" != "success" ] || [ "${{ needs.test.result }}" != "success" ] || [ "${{ needs.architecture-boundaries.result }}" != "success" ]; then
-            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}, architecture-boundaries=${{ needs.architecture-boundaries.result }}"
+          if [ "${{ needs.lint.result }}" != "success" ] || \
+             [ "${{ needs.test.result }}" != "success" ] || \
+             [ "${{ needs.architecture-boundaries.result }}" != "success" ] || \
+             [ "${{ needs.batch-smoke.result }}" != "success" ] || \
+             [ "${{ needs.secrets.result }}" != "success" ]; then
+            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}, architecture-boundaries=${{ needs.architecture-boundaries.result }}, batch-smoke=${{ needs.batch-smoke.result }}, secrets=${{ needs.secrets.result }}"
             exit 1
           fi
+
           echo "Quality gate passed"

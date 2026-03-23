@@ -127,19 +127,36 @@ def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    mission.total_frames = len(config.frame_files)
-    started = service.start_mission(mission.mission_id)
+    updated_mission = service.update_mission(
+        mission_id=mission.mission_id,
+        total_frames=len(config.frame_files),
+    )
+    if updated_mission is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    try:
+        state = stream_controller.start(config)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (OSError, RuntimeError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Mission preflight failed: detection model is not ready for local "
+                f"runtime ({type(error).__name__}: {error})"
+            ),
+        ) from error
+
+    started = service.start_mission(updated_mission.mission_id)
     if started is None:
         raise HTTPException(status_code=404, detail="Mission not found")
-    state = stream_controller.start(config)
 
     return {
         "mission_id": mission.mission_id,
         "status": started.status,
-        "created_at": mission.created_at,
-        "source_name": mission.source_name,
-        "fps": mission.fps,
-        "total_frames": mission.total_frames,
+        "created_at": updated_mission.created_at,
+        "source_name": updated_mission.source_name,
+        "fps": updated_mission.fps,
+        "total_frames": updated_mission.total_frames,
         "stream": {
             "running": state.running,
             "processed_frames": state.processed_frames,

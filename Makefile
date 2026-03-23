@@ -1,19 +1,27 @@
 PYTHONPATH := $(shell pwd)
 UV := PYTHONPATH=$(PYTHONPATH) uv run
 
-.PHONY: help install format lint test test-arch ci \
-	up down
+.PHONY: help install format lint test test-arch test-batch ci \
+	up up-postgres down db-migrate batch-build batch-up batch-down batch-logs batch-backfill
 
 help:
-	@echo "Доступные команды:"
-	@echo "  make install         - установить dev-зависимости через uv"
-	@echo "  make format          - отформатировать код (black + isort)"
-	@echo "  make lint            - проверить код и синтаксис batch DAG"
-	@echo "  make test            - запустить unit/smoke тесты без architecture"
-	@echo "  make test-arch       - запустить архитектурные тесты границ слоев"
-	@echo "  make ci              - локально повторить основной CI (lint + test + arch)"
-	@echo "  make up              - поднять основной сервис (docker compose)"
-	@echo "  make down            - остановить основной сервис"
+	@echo "Available commands:"
+	@echo "  make install         - install dev dependencies with uv"
+	@echo "  make format          - format code with black + isort"
+	@echo "  make lint            - run black/isort/flake8/mypy/pylint"
+	@echo "  make test            - run the full pytest suite"
+	@echo "  make test-arch       - run architecture boundary tests"
+	@echo "  make test-batch      - run batch smoke/unit tests with coverage >= 70%"
+	@echo "  make ci              - run the local CI bundle"
+	@echo "  make up              - start the API in memory mode"
+	@echo "  make up-postgres     - start the API and Postgres from one compose file"
+	@echo "  make down            - stop the local compose services"
+	@echo "  make db-migrate      - apply Alembic migrations to the configured Postgres"
+	@echo "  make batch-build     - build the batch-runner image for Airflow"
+	@echo "  make batch-up        - start the batch platform"
+	@echo "  make batch-down      - stop the batch platform"
+	@echo "  make batch-logs      - tail airflow-webserver logs"
+	@echo "  make batch-backfill  - run the demo Airflow backfill"
 
 install:
 	uv sync --extra dev --extra batch
@@ -41,5 +49,26 @@ ci: lint test test-arch
 up:
 	docker compose up --build
 
+up-postgres:
+	docker compose --profile postgres up --build
+
 down:
 	docker compose down
+
+db-migrate:
+	$(UV) alembic upgrade head
+
+batch-build:
+	$(PLATFORM_COMPOSE) --profile batch-build build batch-runner-image
+
+batch-up:
+	$(PLATFORM_COMPOSE) up -d
+
+batch-down:
+	$(PLATFORM_COMPOSE) down
+
+batch-logs:
+	$(PLATFORM_COMPOSE) logs -f airflow-webserver
+
+batch-backfill:
+	$(PLATFORM_COMPOSE) exec airflow-webserver airflow dags backfill rescue_batch_daily -s 2026-03-10 -e 2026-03-12

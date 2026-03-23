@@ -80,6 +80,21 @@ class PilotService:
     def get_mission(self, mission_id: str) -> Mission | None:
         return self._missions.get(mission_id)
 
+    def update_mission(
+        self,
+        mission_id: str,
+        *,
+        source_name: str | None = None,
+        total_frames: int | None = None,
+        fps: float | None = None,
+    ) -> Mission | None:
+        return self._missions.update_details(
+            mission_id=mission_id,
+            source_name=source_name,
+            total_frames=total_frames,
+            fps=fps,
+        )
+
     def start_mission(self, mission_id: str) -> Mission | None:
         return self._missions.update_status(mission_id=mission_id, status="running")
 
@@ -109,24 +124,24 @@ class PilotService:
         ):
             return []
 
-        # Keep frame timeline ingestion lightweight: persist frame bytes only when
-        # an alert is actually produced for this frame.
-        self._frames.add(frame_event)
         alerts = self._evaluate_alert_rules(
             frame_event=frame_event,
             detections=detections,
         )
-        if not alerts:
-            return []
 
-        stored_image_uri = self._artifacts.store_frame(
-            mission_id=frame_event.mission_id,
-            frame_id=frame_event.frame_id,
-            source_uri=frame_event.image_uri,
-        )
-        frame_event.image_uri = stored_image_uri
+        if alerts:
+            stored_image_uri = self._artifacts.store_frame(
+                mission_id=frame_event.mission_id,
+                frame_id=frame_event.frame_id,
+                source_uri=frame_event.image_uri,
+            )
+            frame_event.image_uri = stored_image_uri
+            for alert in alerts:
+                alert.image_uri = stored_image_uri
+
+        self._frames.add(frame_event)
         for alert in alerts:
-            alert.image_uri = stored_image_uri
+            self._alerts.add(alert)
         return alerts
 
     def list_alerts(
@@ -331,7 +346,6 @@ class PilotService:
             ),
             lifecycle=AlertLifecycle(status="queued"),
         )
-        self._alerts.add(alert)
         return alert
 
 

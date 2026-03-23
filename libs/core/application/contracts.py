@@ -20,6 +20,15 @@ class MissionRepository(Protocol):
 
     def get(self, mission_id: str) -> Mission | None: ...
 
+    def update_details(
+        self,
+        mission_id: str,
+        *,
+        source_name: str | None = None,
+        total_frames: int | None = None,
+        fps: float | None = None,
+    ) -> Mission | None: ...
+
     def update_status(
         self,
         mission_id: str,

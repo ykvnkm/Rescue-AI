@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import services.batch_runner.main as batch_main
+import services.batch_runner.s3_ml_pipeline as s3_pipeline
 from libs.core.application.models import AlertRuleConfig
 
 
@@ -36,13 +37,28 @@ def test_default_backends(monkeypatch, tmp_path: Path) -> None:
 
 def test_default_backends_for_staging(monkeypatch) -> None:
     monkeypatch.setenv("BATCH_RUNTIME_ENV", "staging")
+
     monkeypatch.delenv("BATCH_STATUS_BACKEND", raising=False)
     monkeypatch.delenv("BATCH_ARTIFACT_BACKEND", raising=False)
     monkeypatch.delenv("BATCH_POSTGRES_DSN", raising=False)
+
     monkeypatch.delenv("BATCH_S3_BUCKET", raising=False)
+    monkeypatch.delenv("BATCH_S3_ENDPOINT", raising=False)
+    monkeypatch.delenv("BATCH_S3_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("BATCH_S3_SECRET_KEY", raising=False)
+    monkeypatch.delenv("BATCH_S3_REGION", raising=False)
+    monkeypatch.delenv("BATCH_S3_PREFIX", raising=False)
+
+    monkeypatch.delenv("ARTIFACTS_S3_BUCKET", raising=False)
+    monkeypatch.delenv("ARTIFACTS_S3_ENDPOINT", raising=False)
+    monkeypatch.delenv("ARTIFACTS_S3_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("ARTIFACTS_S3_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("ARTIFACTS_S3_REGION", raising=False)
+    monkeypatch.delenv("ARTIFACTS_S3_PREFIX", raising=False)
 
     with pytest.raises(ValueError):
         batch_main.build_status_store()
+
     with pytest.raises(ValueError):
         batch_main.build_artifact_store()
 
@@ -198,3 +214,153 @@ def test_main_smoke(monkeypatch, capsys) -> None:
 
     payload = json.loads(capsys.readouterr().out.strip())
     assert payload["status"] == "completed"
+
+
+class _FakeS3:
+    def __init__(self) -> None:
+        self.storage: dict[str, dict[str, object]] = {}
+
+    def exists(self, key: str) -> bool:
+        return key in self.storage
+
+    def read_json(self, key: str) -> dict[str, object]:
+        return self.storage[key]
+
+    def write_json(self, key: str, payload: dict[str, object]) -> None:
+        self.storage[key] = payload
+
+    def uri(self, key: str) -> str:
+        return f"s3://bucket/{key}"
+
+
+def _paths() -> s3_pipeline.S3Paths:
+    return s3_pipeline.S3Paths(
+        prefix="batch",
+        mission_id="mission-1",
+        ds="2026-03-01",
+        model_version="model-v1",
+        code_version="code-v1",
+    )
+
+
+def test_s3_paths_build_keys() -> None:
+    paths = _paths()
+
+    assert paths.base == "batch/ml_pipeline/mission=mission-1/ds=2026-03-01"
+    assert paths.data_key.endswith("/dataset.json")
+    assert "model_model_v1_code_v1.json" in paths.model_key
+    assert "validation_model_v1_code_v1.json" in paths.validation_key
+
+
+def test_s3_pipeline_data_stage_completed_and_skip(capsys) -> None:
+    s3 = _FakeS3()
+    paths = _paths()
+
+    s3_pipeline.run_data_stage(s3=s3, paths=paths, force=False)
+    first_payload = json.loads(capsys.readouterr().out.strip())
+
+    assert first_payload["stage"] == "data"
+    assert first_payload["status"] == "completed"
+    assert paths.data_key in s3.storage
+
+    s3_pipeline.run_data_stage(s3=s3, paths=paths, force=False)
+    second_payload = json.loads(capsys.readouterr().out.strip())
+    assert second_payload["status"] == "idempotent_skip"
+
+
+def test_s3_pipeline_train_stage_validations_and_skip(capsys) -> None:
+    s3 = _FakeS3()
+    paths = _paths()
+
+    with pytest.raises(RuntimeError, match="dataset is missing"):
+        s3_pipeline.run_train_stage(s3=s3, paths=paths, force=False)
+
+    s3.storage[paths.data_key] = {"rows_total": 100, "rows_positive": 25}
+    s3_pipeline.run_train_stage(s3=s3, paths=paths, force=False)
+    first_payload = json.loads(capsys.readouterr().out.strip())
+    assert first_payload["status"] == "completed"
+    assert paths.model_key in s3.storage
+
+    s3_pipeline.run_train_stage(s3=s3, paths=paths, force=False)
+    second_payload = json.loads(capsys.readouterr().out.strip())
+    assert second_payload["status"] == "idempotent_skip"
+
+
+def test_s3_pipeline_train_stage_zero_rows_error() -> None:
+    s3 = _FakeS3()
+    paths = _paths()
+    s3.storage[paths.data_key] = {"rows_total": 0, "rows_positive": 0}
+
+    with pytest.raises(RuntimeError, match="dataset has zero rows"):
+        s3_pipeline.run_train_stage(s3=s3, paths=paths, force=False)
+
+
+def test_s3_pipeline_validate_stage_completed(capsys) -> None:
+    s3 = _FakeS3()
+    paths = _paths()
+    s3.storage[paths.data_key] = {"rows_total": 100, "rows_positive": 30}
+    s3.storage[paths.model_key] = {"class_ratio": 0.3}
+
+    s3_pipeline.run_validate_stage(
+        s3=s3,
+        paths=paths,
+        force=False,
+        min_accuracy=0.70,
+    )
+    payload = json.loads(capsys.readouterr().out.strip())
+
+    assert payload["stage"] == "validate"
+    assert payload["status"] == "completed"
+    assert paths.validation_key in s3.storage
+
+
+def test_s3_pipeline_validate_stage_fail_threshold_and_skip(capsys) -> None:
+    s3 = _FakeS3()
+    paths = _paths()
+    s3.storage[paths.data_key] = {"rows_total": 100, "rows_positive": 20}
+    s3.storage[paths.model_key] = {"class_ratio": 0.2}
+
+    with pytest.raises(RuntimeError, match="validation failed"):
+        s3_pipeline.run_validate_stage(
+            s3=s3,
+            paths=paths,
+            force=False,
+            min_accuracy=0.99,
+        )
+    assert paths.validation_key in s3.storage
+
+    s3_pipeline.run_validate_stage(
+        s3=s3,
+        paths=paths,
+        force=False,
+        min_accuracy=0.70,
+    )
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] == "idempotent_skip"
+
+
+def test_build_s3_settings_from_artifacts_env(monkeypatch) -> None:
+    monkeypatch.delenv("BATCH_S3_BUCKET", raising=False)
+    monkeypatch.setenv("ARTIFACTS_S3_BUCKET", "bucket-a")
+    monkeypatch.setenv("ARTIFACTS_S3_PREFIX", "batch")
+    monkeypatch.setenv("ARTIFACTS_S3_ENDPOINT", "https://storage.yandexcloud.net")
+    monkeypatch.setenv("ARTIFACTS_S3_REGION", "ru-central1")
+    monkeypatch.setenv("ARTIFACTS_S3_ACCESS_KEY_ID", "key-a")
+    monkeypatch.setenv("ARTIFACTS_S3_SECRET_ACCESS_KEY", "secret-a")
+
+    settings = s3_pipeline.build_s3_settings()
+
+    assert settings.bucket == "bucket-a"
+    assert settings.prefix == "batch"
+    assert settings.endpoint_url == "https://storage.yandexcloud.net"
+    assert settings.region_name == "ru-central1"
+    assert settings.access_key == "key-a"
+    assert settings.secret_key == "secret-a"
+
+
+def test_build_s3_settings_requires_bucket(monkeypatch) -> None:
+    monkeypatch.delenv("BATCH_S3_BUCKET", raising=False)
+    monkeypatch.delenv("ARTIFACTS_S3_BUCKET", raising=False)
+
+    with pytest.raises(ValueError, match="required"):
+        s3_pipeline.build_s3_settings()

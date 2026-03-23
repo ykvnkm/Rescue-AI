@@ -79,10 +79,17 @@ class StreamOrchestrator:
     def get_stream_state(self, mission_id: str) -> StreamState | None:
         return self._registry.get(mission_id)
 
+    def set_detector_factory(self, detector_factory: DetectorFactory) -> None:
+        """Override detector factory for runtime/test wiring."""
+        self._detector_factory = detector_factory
+
     def start_stream(self, config: StreamConfig) -> StreamState:
         existing = self._registry.get(config.mission_id)
         if existing is not None and existing.running:
             raise ValueError("Stream already running for mission")
+
+        detector = self._detector_factory(config.inference)
+        detector.warmup()
 
         state = StreamState(
             mission_id=config.mission_id,
@@ -96,7 +103,11 @@ class StreamOrchestrator:
         self._registry.set(state)
         self._registry.set_stop(config.mission_id, False)
 
-        thread = threading.Thread(target=self._run_stream, args=(config,), daemon=True)
+        thread = threading.Thread(
+            target=self._run_stream,
+            args=(config, detector),
+            daemon=True,
+        )
         thread.start()
         return state
 
@@ -123,10 +134,9 @@ class StreamOrchestrator:
             time.sleep(0.05)
         return self._registry.get(mission_id)
 
-    def _run_stream(self, config: StreamConfig) -> None:
+    def _run_stream(self, config: StreamConfig, detector: DetectorPort) -> None:
         dt = 1.0 / config.fps if config.fps > 0 else 0.5
         try:
-            detector = self._detector_factory(config.inference)
             base_frame_num = self._frame_source.extract_frame_number(
                 config.frame_files[0]
             )

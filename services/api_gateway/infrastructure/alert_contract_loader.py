@@ -39,7 +39,7 @@ def load_alert_rules_and_metadata() -> tuple[AlertRuleConfig, dict[str, object]]
     report_metadata: dict[str, object] = {
         "config_name": str(payload.get("name", "unknown_contract")),
         "config_hash": hashlib.sha256(DEFAULT_CONTRACT_PATH.read_bytes()).hexdigest(),
-        "config_path": str(DEFAULT_CONTRACT_PATH),
+        "config_path": DEFAULT_CONTRACT_PATH.as_posix(),
         "model_url": str(payload.get("model_url", DEFAULT_MODEL_URL)),
         "service_version": config.service_version(),
     }
