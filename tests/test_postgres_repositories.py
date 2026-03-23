@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Generator
 
 import pytest
 
@@ -25,8 +25,8 @@ from tests.support.pilot_service import InMemoryArtifactStorageDouble
 from tests.support.postgres import migrated_postgres_database, resolve_test_postgres_dsn
 
 
-@pytest.fixture()
-def postgres_runtime() -> dict[str, Any]:
+@pytest.fixture(name="postgres_runtime")
+def _postgres_runtime_fixture() -> Generator[dict[str, Any], None, None]:
     dsn = resolve_test_postgres_dsn()
     if not dsn:
         pytest.skip("APP_TEST_POSTGRES_DSN or APP_POSTGRES_DSN is not set")
@@ -230,6 +230,13 @@ def test_postgres_pilot_service_report_flow_persists_episode_projection(
     started = service.start_mission(mission.mission_id)
     assert started is not None
 
+    initial_detection = DetectionInput(
+        bbox=(10.0, 20.0, 30.0, 40.0),
+        score=0.95,
+        label="person",
+        model_name="yolo8n",
+        explanation="alert-1",
+    )
     first_alert_id = service.ingest_frame_event(
         frame_event=FrameEvent(
             mission_id=mission.mission_id,
@@ -239,15 +246,7 @@ def test_postgres_pilot_service_report_flow_persists_episode_projection(
             gt_person_present=True,
             gt_episode_id="ep-1",
         ),
-        detections=[
-            DetectionInput(
-                bbox=(10.0, 20.0, 30.0, 40.0),
-                score=0.95,
-                label="person",
-                model_name="yolo8n",
-                explanation="alert-1",
-            )
-        ],
+        detections=[initial_detection],
     )[0].alert_id
     service.ingest_frame_event(
         frame_event=FrameEvent(

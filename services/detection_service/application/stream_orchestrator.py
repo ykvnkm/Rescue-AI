@@ -79,6 +79,10 @@ class StreamOrchestrator:
     def get_stream_state(self, mission_id: str) -> StreamState | None:
         return self._registry.get(mission_id)
 
+    def set_detector_factory(self, detector_factory: DetectorFactory) -> None:
+        """Override detector factory for runtime/test wiring."""
+        self._detector_factory = detector_factory
+
     def start_stream(self, config: StreamConfig) -> StreamState:
         existing = self._registry.get(config.mission_id)
         if existing is not None and existing.running:

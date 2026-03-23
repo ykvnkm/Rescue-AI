@@ -5,6 +5,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Protocol
 
 import boto3
 from botocore.exceptions import ClientError
@@ -14,6 +15,8 @@ from config import config
 
 @dataclass(frozen=True)
 class S3Settings:
+    """Connection and namespace settings for S3 stage artifacts."""
+
     bucket: str
     prefix: str
     endpoint_url: str | None
@@ -48,7 +51,9 @@ def build_s3_settings() -> S3Settings:
             default="",
         )
         or None,
-        region_name=_env_value("BATCH_S3_REGION", "ARTIFACTS_S3_REGION", default="us-east-1"),
+        region_name=_env_value(
+            "BATCH_S3_REGION", "ARTIFACTS_S3_REGION", default="us-east-1"
+        ),
         access_key=_env_value(
             "BATCH_S3_ACCESS_KEY",
             "ARTIFACTS_S3_ACCESS_KEY_ID",
@@ -89,6 +94,8 @@ def main() -> None:
 
 
 class S3IO:
+    """Minimal S3 JSON IO adapter used by pipeline stage handlers."""
+
     def __init__(self, settings: S3Settings) -> None:
         self.settings = settings
         self._client = boto3.client(
@@ -104,7 +111,9 @@ class S3IO:
             self._client.head_object(Bucket=self.settings.bucket, Key=key)
             return True
         except ClientError as error:
-            status_code = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            status_code = error.response.get("ResponseMetadata", {}).get(
+                "HTTPStatusCode"
+            )
             if status_code == 404:
                 return False
             error_code = str(error.response.get("Error", {}).get("Code", ""))
@@ -125,8 +134,22 @@ class S3IO:
         return f"s3://{self.settings.bucket}/{key}"
 
 
+class StageStorage(Protocol):
+    """Storage interface for stage handlers (real S3 or test doubles)."""
+
+    def exists(self, key: str) -> bool: ...
+
+    def read_json(self, key: str) -> dict[str, object]: ...
+
+    def write_json(self, key: str, payload: dict[str, object]) -> None: ...
+
+    def uri(self, key: str) -> str: ...
+
+
 @dataclass(frozen=True)
 class S3Paths:
+    """Deterministic key builder for dataset/model/validation artifacts."""
+
     prefix: str
     mission_id: str
     ds: str
@@ -146,7 +169,8 @@ class S3Paths:
     @property
     def model_key(self) -> str:
         return (
-            f"{self.base}/model_{_slug(self.model_version)}_{_slug(self.code_version)}.json"
+            f"{self.base}/model_{_slug(self.model_version)}_"
+            f"{_slug(self.code_version)}.json"
         )
 
     @property
@@ -157,7 +181,7 @@ class S3Paths:
         )
 
 
-def run_data_stage(s3: S3IO, paths: S3Paths, force: bool) -> None:
+def run_data_stage(s3: StageStorage, paths: S3Paths, force: bool) -> None:
     if s3.exists(paths.data_key) and not force:
         _print_result("data", "idempotent_skip", s3.uri(paths.data_key))
         return
@@ -180,7 +204,7 @@ def run_data_stage(s3: S3IO, paths: S3Paths, force: bool) -> None:
     _print_result("data", "completed", s3.uri(paths.data_key))
 
 
-def run_train_stage(s3: S3IO, paths: S3Paths, force: bool) -> None:
+def run_train_stage(s3: StageStorage, paths: S3Paths, force: bool) -> None:
     if not s3.exists(paths.data_key):
         raise RuntimeError(f"dataset is missing: {s3.uri(paths.data_key)}")
     if s3.exists(paths.model_key) and not force:
@@ -188,8 +212,8 @@ def run_train_stage(s3: S3IO, paths: S3Paths, force: bool) -> None:
         return
 
     dataset = s3.read_json(paths.data_key)
-    rows_total = int(dataset.get("rows_total", 0))
-    rows_positive = int(dataset.get("rows_positive", 0))
+    rows_total = _as_int(dataset.get("rows_total"), field_name="rows_total")
+    rows_positive = _as_int(dataset.get("rows_positive"), field_name="rows_positive")
     if rows_total <= 0:
         raise RuntimeError("dataset has zero rows")
 
@@ -212,7 +236,7 @@ def run_train_stage(s3: S3IO, paths: S3Paths, force: bool) -> None:
 
 
 def run_validate_stage(
-    s3: S3IO,
+    s3: StageStorage,
     paths: S3Paths,
     force: bool,
     min_accuracy: float,
@@ -227,8 +251,8 @@ def run_validate_stage(
 
     dataset = s3.read_json(paths.data_key)
     model = s3.read_json(paths.model_key)
-    rows_total = int(dataset.get("rows_total", 0))
-    class_ratio = float(model.get("class_ratio", 0.0))
+    rows_total = _as_int(dataset.get("rows_total"), field_name="rows_total")
+    class_ratio = _as_float(model.get("class_ratio"), field_name="class_ratio")
     if rows_total <= 0:
         raise RuntimeError("dataset has zero rows")
 
@@ -258,7 +282,9 @@ def _stable_number(value: str) -> int:
 
 
 def _slug(value: str) -> str:
-    return "".join(ch if ch.isalnum() else "_" for ch in value.strip().lower()).strip("_")
+    return "".join(ch if ch.isalnum() else "_" for ch in value.strip().lower()).strip(
+        "_"
+    )
 
 
 def _now_iso() -> str:
@@ -267,6 +293,34 @@ def _now_iso() -> str:
 
 def _env_value(*names: str, default: str | None = None) -> str:
     return config.get_non_empty(*names, default=default)
+
+
+def _as_int(value: object, *, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise RuntimeError(f"{field_name} must be an integer")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError as error:
+            raise RuntimeError(f"{field_name} must be an integer") from error
+    raise RuntimeError(f"{field_name} must be an integer")
+
+
+def _as_float(value: object, *, field_name: str) -> float:
+    if isinstance(value, bool):
+        raise RuntimeError(f"{field_name} must be numeric")
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError as error:
+            raise RuntimeError(f"{field_name} must be numeric") from error
+    raise RuntimeError(f"{field_name} must be numeric")
 
 
 def _print_result(stage: str, status: str, output_uri: str) -> None:

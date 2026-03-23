@@ -30,7 +30,12 @@ class InMemoryArtifactStorageDouble:
         return stored_uri
 
     def load_frame(self, image_uri: str) -> ArtifactBlob | None:
-        _ = image_uri
+        if image_uri in self.stored_frames.values():
+            return ArtifactBlob(
+                content=b"",
+                media_type="image/jpeg",
+                filename=image_uri.split("/")[-1] or "frame.jpg",
+            )
         return None
 
     def save_mission_report(self, mission_id: str, report: dict[str, object]) -> str:

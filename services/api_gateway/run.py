@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 
 import uvicorn
@@ -39,10 +40,11 @@ def _prepare_postgres_backend() -> None:
     wait_for_postgres(dsn, timeout_sec=timeout_sec)
 
     if config.get_bool("APP_POSTGRES_AUTO_MIGRATE", default=True):
-        from alembic import command
-        from alembic.config import Config as AlembicConfig
+        command = importlib.import_module("alembic.command")
+        alembic_config_module = importlib.import_module("alembic.config")
+        alembic_config_cls = getattr(alembic_config_module, "Config")
 
-        alembic_config = AlembicConfig("alembic.ini")
+        alembic_config = alembic_config_cls("alembic.ini")
         alembic_config.set_main_option("script_location", "db_migrations")
         command.upgrade(alembic_config, "head")
 

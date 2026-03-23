@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import importlib
 import os
 import time
 from collections.abc import Mapping
 from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
-
 
 _FATAL_SQLSTATES = {
     "28P01",  # invalid_password
@@ -93,7 +93,7 @@ def wait_for_postgres(
     interval_sec: float = 1.0,
 ) -> None:
     """Poll the database until a simple SELECT succeeds."""
-    import psycopg
+    psycopg = importlib.import_module("psycopg")
 
     deadline = time.monotonic() + timeout_sec
     last_error: Exception | None = None

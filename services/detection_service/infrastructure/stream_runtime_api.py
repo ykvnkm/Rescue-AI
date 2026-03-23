@@ -9,6 +9,7 @@ from services.detection_service.application.stream_config import (
     build_stream_config as build_stream_config_use_case,
 )
 from services.detection_service.application.stream_orchestrator import (
+    DetectorFactory,
     StreamOrchestrator,
     StreamState,
 )
@@ -46,6 +47,11 @@ def start_stream(config: StreamConfig) -> StreamState:
 
 def stop_stream(mission_id: str) -> StreamState | None:
     return _orchestrator.stop_stream(mission_id)
+
+
+def set_detector_factory(detector_factory: DetectorFactory) -> None:
+    """Override detector factory (used in tests)."""
+    _orchestrator.set_detector_factory(detector_factory)
 
 
 def wait_stream_stopped(

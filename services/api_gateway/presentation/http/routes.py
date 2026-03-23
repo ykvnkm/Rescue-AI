@@ -127,11 +127,11 @@ def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    mission = service.update_mission(
+    updated_mission = service.update_mission(
         mission_id=mission.mission_id,
         total_frames=len(config.frame_files),
     )
-    if mission is None:
+    if updated_mission is None:
         raise HTTPException(status_code=404, detail="Mission not found")
     try:
         state = stream_controller.start(config)
@@ -146,17 +146,17 @@ def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
             ),
         ) from error
 
-    started = service.start_mission(mission.mission_id)
+    started = service.start_mission(updated_mission.mission_id)
     if started is None:
         raise HTTPException(status_code=404, detail="Mission not found")
 
     return {
         "mission_id": mission.mission_id,
         "status": started.status,
-        "created_at": mission.created_at,
-        "source_name": mission.source_name,
-        "fps": mission.fps,
-        "total_frames": mission.total_frames,
+        "created_at": updated_mission.created_at,
+        "source_name": updated_mission.source_name,
+        "fps": updated_mission.fps,
+        "total_frames": updated_mission.total_frames,
         "stream": {
             "running": state.running,
             "processed_frames": state.processed_frames,

@@ -4,12 +4,17 @@ import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
 
 from fastapi.testclient import TestClient
 
 from services.api_gateway.app import app
-from services.api_gateway.dependencies import get_pilot_service, get_container, reset_state
+from services.api_gateway.dependencies import (
+    get_container,
+    get_pilot_service,
+    reset_state,
+)
+from services.detection_service.infrastructure import stream_runtime_api
 
 client = TestClient(app)
 
@@ -21,7 +26,7 @@ class _FakeDetector:
     def warmup(self) -> None:
         return None
 
-    def predict(self, frame_path: Path) -> list[object]:
+    def predict(self, _frame_path: Path) -> list[object]:
         return []
 
 
@@ -29,9 +34,7 @@ def setup_function() -> None:
     os.environ["ARTIFACTS_MODE"] = "local"
     get_container.cache_clear()
     reset_state()
-    from services.detection_service.infrastructure import stream_runtime_api
-
-    stream_runtime_api._orchestrator._detector_factory = _FakeDetector
+    stream_runtime_api.set_detector_factory(cast(Any, _FakeDetector))
 
 
 def _build_mission_source_layout(root: Path) -> Path:
@@ -651,19 +654,19 @@ def test_start_flow_creates_and_starts_mission() -> None:
 
 
 def test_start_flow_returns_503_when_detector_preflight_fails() -> None:
-    from services.detection_service.infrastructure import stream_runtime_api
-
     class _FailingDetector:
         def __init__(self, config: object) -> None:
             self._config = config
 
         def warmup(self) -> None:
-            raise RuntimeError("model cache is empty and remote download is unavailable")
+            raise RuntimeError(
+                "model cache is empty and remote download is unavailable"
+            )
 
-        def predict(self, frame_path: Path) -> list[object]:
+        def predict(self, _frame_path: Path) -> list[object]:
             return []
 
-    stream_runtime_api._orchestrator._detector_factory = _FailingDetector
+    stream_runtime_api.set_detector_factory(cast(Any, _FailingDetector))
 
     with TemporaryDirectory() as temp_dir:
         images_dir = _build_mission_source_layout(Path(temp_dir))

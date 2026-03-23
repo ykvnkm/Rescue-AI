@@ -94,12 +94,12 @@ def _build_repositories(
 ]:
     backend = config.get_non_empty("APP_REPOSITORY_BACKEND", default="memory").lower()
     if backend == "memory":
-        db = InMemoryDatabase()
+        memory_db = InMemoryDatabase()
         return (
-            InMemoryMissionRepository(db),
-            InMemoryAlertRepository(db),
-            InMemoryFrameEventRepository(db),
-            lambda: _reset_memory_database(db),
+            InMemoryMissionRepository(memory_db),
+            InMemoryAlertRepository(memory_db),
+            InMemoryFrameEventRepository(memory_db),
+            lambda: _reset_memory_database(memory_db),
         )
     if backend == "postgres":
         dsn = resolve_postgres_dsn()
@@ -109,16 +109,18 @@ def _build_repositories(
                 "APP_POSTGRES_HOST/PORT/DB/USER/PASSWORD"
             )
 
-        db = PostgresDatabase(dsn=dsn)
+        postgres_db = PostgresDatabase(dsn=dsn)
         episode_settings = EpisodeProjectionSettings(
             gt_gap_end_sec=alert_rules.gt_gap_end_sec,
             match_tolerance_sec=alert_rules.match_tolerance_sec,
         )
         return (
-            PostgresMissionRepository(db),
-            PostgresAlertRepository(db, episode_settings=episode_settings),
-            PostgresFrameEventRepository(db, episode_settings=episode_settings),
-            db.truncate_all,
+            PostgresMissionRepository(postgres_db),
+            PostgresAlertRepository(postgres_db, episode_settings=episode_settings),
+            PostgresFrameEventRepository(
+                postgres_db, episode_settings=episode_settings
+            ),
+            postgres_db.truncate_all,
         )
     raise ValueError("APP_REPOSITORY_BACKEND must be one of: memory, postgres")
 

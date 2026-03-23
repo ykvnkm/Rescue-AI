@@ -103,6 +103,10 @@ class _EpisodeProjectionStore:
     def __init__(self, settings: EpisodeProjectionSettings) -> None:
         self._settings = settings
 
+    def settings(self) -> EpisodeProjectionSettings:
+        """Return projection settings used for refresh operations."""
+        return self._settings
+
     def refresh(self, conn: Any, mission_id: str) -> None:
         frames = self._load_frames(conn=conn, mission_id=mission_id)
         alert_ts = self._load_alert_timestamps(
