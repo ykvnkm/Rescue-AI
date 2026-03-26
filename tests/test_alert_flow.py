@@ -9,7 +9,12 @@ from typing import Any, cast
 from fastapi.testclient import TestClient
 
 from rescue_ai.interfaces.api.app import app
-from rescue_ai.interfaces.api.dependencies import get_pilot_service, reset_state
+from rescue_ai.interfaces.api.dependencies import (
+    get_container,
+    get_pilot_service,
+    get_stream_controller,
+    reset_state,
+)
 
 client = TestClient(app)
 
@@ -29,7 +34,7 @@ def setup_function() -> None:
     os.environ["ARTIFACTS_MODE"] = "local"
     get_container.cache_clear()
     reset_state()
-    stream_runtime_api.set_detector_factory(cast(Any, _FakeDetector))
+    get_stream_controller()._orchestrator.set_detector_factory(cast(Any, _FakeDetector))
 
 
 def _build_mission_source_layout(root: Path) -> Path:
@@ -661,7 +666,9 @@ def test_start_flow_returns_503_when_detector_preflight_fails() -> None:
         def predict(self, _frame_path: Path) -> list[object]:
             return []
 
-    stream_runtime_api.set_detector_factory(cast(Any, _FailingDetector))
+    get_stream_controller()._orchestrator.set_detector_factory(
+        cast(Any, _FailingDetector)
+    )
 
     with TemporaryDirectory() as temp_dir:
         images_dir = _build_mission_source_layout(Path(temp_dir))

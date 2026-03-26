@@ -79,9 +79,11 @@ class PostgresDatabase:
     def truncate_all(self) -> None:
         with self.connect() as conn:
             with conn.cursor() as cursor:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     TRUNCATE TABLE episodes, alerts, frame_events, missions CASCADE
-                    """)
+                    """
+                )
             conn.commit()
 
 

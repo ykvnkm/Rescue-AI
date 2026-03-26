@@ -135,6 +135,7 @@ class PilotService:
         self._frames.add(frame_event)
 
         for alert in alerts:
+            alert.image_uri = stored_image_uri
             self._alerts.add(alert)
         return alerts
 

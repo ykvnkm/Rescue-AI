@@ -139,10 +139,23 @@ def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    service.update_mission(mission.mission_id, total_frames=len(config.frame_files))
+    updated_mission = service.update_mission(
+        mission.mission_id, total_frames=len(config.frame_files)
+    )
+    if updated_mission is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+
     started = service.start_mission(mission.mission_id)
     if started is None:
         raise HTTPException(status_code=404, detail="Mission not found")
+
+    try:
+        state = stream_controller.start(config)
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Mission preflight failed: {error}",
+        ) from error
 
     return {
         "mission_id": mission.mission_id,

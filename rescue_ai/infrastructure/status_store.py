@@ -118,7 +118,8 @@ class PostgresStatusStore:
     def _ensure_schema(self) -> None:
         with self._psycopg.connect(self._dsn) as conn:
             with conn.cursor() as cursor:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS batch_mission_runs (
                       run_key TEXT PRIMARY KEY,
                       status TEXT NOT NULL,
@@ -127,7 +128,8 @@ class PostgresStatusStore:
                       debug_uri TEXT NULL,
                       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     )
-                    """)
+                    """
+                )
             conn.commit()
 
 
