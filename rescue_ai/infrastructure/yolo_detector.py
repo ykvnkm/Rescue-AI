@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 from urllib.request import urlretrieve
 
 from rescue_ai.application.inference_config import InferenceConfig
 from rescue_ai.domain.entities import Detection
-
-try:
-    from ultralytics import YOLO
-except ImportError:
-    YOLO = None
 
 MODEL_CACHE_DIR = Path("runtime/models")
 
@@ -24,7 +21,7 @@ class YoloDetector:
     def __init__(self, config: InferenceConfig, model_version: str = "yolo8n") -> None:
         self._config = config
         self._model_version = model_version
-        self._model = None
+        self._model: Any | None = None
 
     def detect(self, image_uri: str) -> list[Detection]:
         """Run detection on a single frame and return normalized detections."""
@@ -63,11 +60,13 @@ class YoloDetector:
         if self._model is not None:
             return self._model
 
-        if YOLO is None:
+        try:
+            yolo_cls = getattr(importlib.import_module("ultralytics"), "YOLO")
+        except (ImportError, AttributeError) as error:
             raise RuntimeError(
                 "ultralytics is not installed.\n"
                 "Install: uv sync --extra inference --extra dev"
-            )
+            ) from error
 
         model_path = _resolve_model_cache_path(self._config.model_url)
         MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -79,7 +78,7 @@ class YoloDetector:
             model_path=model_path,
             expected_sha256=self._config.model_sha256,
         )
-        self._model = YOLO(str(model_path))
+        self._model = yolo_cls(str(model_path))
         return self._model
 
 
