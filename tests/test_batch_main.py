@@ -112,9 +112,27 @@ def test_parse_args_smoke(monkeypatch) -> None:
 
 def test_main_data_stage_smoke(monkeypatch, capsys, tmp_path: Path) -> None:
     """Smoke test: run data stage end-to-end via main()."""
+    mission_root = tmp_path / "missions" / "m" / "2026-03-01"
+    images_dir = mission_root / "images"
+    annotations_dir = mission_root / "annotations"
+    images_dir.mkdir(parents=True)
+    annotations_dir.mkdir(parents=True)
+    (images_dir / "frame_0001.jpg").write_bytes(b"\xff\xd8\xff\xd9")
+    (annotations_dir / "mission.json").write_text(
+        json.dumps(
+            {
+                "images": [{"id": 1, "file_name": "frame_0001.jpg"}],
+                "categories": [{"id": 1, "name": "person"}],
+                "annotations": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
     monkeypatch.setenv("BATCH_RUNTIME_ENV", "local")
     monkeypatch.setenv("BATCH_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
     monkeypatch.setenv("BATCH_STATUS_PATH", str(tmp_path / "status" / "runs.json"))
+    monkeypatch.setenv("BATCH_MISSION_ROOT", str(tmp_path / "missions"))
     get_settings.cache_clear()
 
     monkeypatch.setattr(

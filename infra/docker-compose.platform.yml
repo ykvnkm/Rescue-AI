@@ -1,7 +1,12 @@
 name: rescue-platform
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.9.3-python3.11
+  build:
+    context: .
+    dockerfile: airflow/Dockerfile
+    network: host
+  image: rescue-airflow:local
+  user: "0:0"
   env_file:
     - ${PLATFORM_ENV_FILE:-./platform.env}
   environment:
@@ -18,7 +23,6 @@ x-airflow-common: &airflow-common
     BATCH_ARTIFACT_ROOT: ${BATCH_ARTIFACT_ROOT}
     BATCH_STATUS_PATH: ${BATCH_STATUS_PATH}
     BATCH_POSTGRES_DSN: ${BATCH_POSTGRES_DSN}
-    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-docker==3.11.0"
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - airflow_logs:/opt/airflow/logs
@@ -53,6 +57,7 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      network: host
     image: rescue-ai-batch:local
     command: ["bash", "-lc", "echo rescue-ai-batch image built"]
     profiles:
@@ -85,5 +90,6 @@ services:
 
 volumes:
   postgres_data:
+  airflow_logs:
   airflow_shared_data:
     name: airflow_shared_data

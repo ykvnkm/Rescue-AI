@@ -183,14 +183,50 @@ def main() -> None:
     )
 
     if args.stage == "data":
-        result = run_data_stage(store, paths, force=args.force)
+        source = build_source()
+        result = run_data_stage(
+            store,
+            paths,
+            force=args.force,
+            mission_loader=lambda: source.load(args.mission_id, args.ds),
+        )
 
     elif args.stage == "train":
-        result = run_train_stage(store, paths, force=args.force)
+        contract = load_stream_contract()
+        detector = YoloDetector(
+            config=contract.inference, model_version=args.model_version
+        )
+
+        def _model_probe():
+            detector.warmup()
+            return {
+                "runtime": detector.runtime_name(),
+                "model_url": contract.inference.model_url,
+                "model_ready": True,
+            }
+
+        result = run_train_stage(
+            store,
+            paths,
+            force=args.force,
+            model_probe=_model_probe,
+        )
 
     elif args.stage == "validate":
+        contract = load_stream_contract()
+        detector = YoloDetector(
+            config=contract.inference, model_version=args.model_version
+        )
+
+        def _detector_predict(image_uri: str) -> bool:
+            return bool(detector.detect(image_uri))
+
         result = run_validate_stage(
-            store, paths, force=args.force, min_accuracy=args.min_accuracy
+            store,
+            paths,
+            force=args.force,
+            min_accuracy=args.min_accuracy,
+            detector_predict=_detector_predict,
         )
 
     elif args.stage == "inference":

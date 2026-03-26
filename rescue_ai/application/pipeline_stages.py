@@ -91,26 +91,53 @@ def run_data_stage(
     paths: PipelinePaths,
     *,
     force: bool = False,
+    mission_loader=None,
 ) -> dict[str, object]:
-    """Scan mission frames, split 80/20 train/val, write dataset manifest."""
+    """Build dataset manifest from real mission frames."""
     if store.exists(paths.data_key) and not force:
         return _skip("data", store.uri(paths.data_key))
 
-    seed = _stable_number(f"data:{paths.mission_id}:{paths.ds}")
-    total = 100 + (seed % 50)
-    positives = max(1, total // 5 + seed % 7)
-    train_count = int(total * 0.8)
-    val_count = total - train_count
+    if mission_loader is None:
+        raise RuntimeError("mission_loader is required for data stage")
+
+    mission_input = mission_loader()
+    valid_frames = [frame for frame in mission_input.frames if not frame.is_corrupted]
+    corrupted_count = len(mission_input.frames) - len(valid_frames)
+    if not valid_frames:
+        raise RuntimeError("mission has no valid frames")
+
+    split_index = max(1, int(len(valid_frames) * 0.8))
+    split_index = min(split_index, len(valid_frames))
+    train_frames = valid_frames[:split_index]
+    val_frames = valid_frames[split_index:] or valid_frames[-1:]
+    positives = sum(1 for frame in valid_frames if frame.gt_person_present)
 
     payload: dict[str, object] = {
         "stage": "data",
         "created_at": _now_iso(),
         "mission_id": paths.mission_id,
         "ds": paths.ds,
-        "rows_total": total,
+        "source_uri": mission_input.source_uri,
+        "gt_available": mission_input.gt_available,
+        "rows_total": len(valid_frames),
         "rows_positive": positives,
-        "train_count": train_count,
-        "val_count": val_count,
+        "rows_corrupted": corrupted_count,
+        "train_count": len(train_frames),
+        "val_count": len(val_frames),
+        "train_manifest": [
+            {
+                "image_uri": frame.image_uri,
+                "gt_person_present": bool(frame.gt_person_present),
+            }
+            for frame in train_frames
+        ],
+        "val_manifest": [
+            {
+                "image_uri": frame.image_uri,
+                "gt_person_present": bool(frame.gt_person_present),
+            }
+            for frame in val_frames
+        ],
         "feature_hash": hashlib.sha256(
             f"{paths.mission_id}:{paths.ds}".encode()
         ).hexdigest()[:16],
@@ -127,8 +154,9 @@ def run_train_stage(
     paths: PipelinePaths,
     *,
     force: bool = False,
+    model_probe=None,
 ) -> dict[str, object]:
-    """Download/cache model weights, hash them, write model card."""
+    """Prepare runtime model and write model card."""
     if not store.exists(paths.data_key):
         raise RuntimeError(f"dataset is missing: {store.uri(paths.data_key)}")
     if store.exists(paths.model_key) and not force:
@@ -139,6 +167,12 @@ def run_train_stage(
     rows_positive = _as_int(dataset.get("rows_positive"), field_name="rows_positive")
     if rows_total <= 0:
         raise RuntimeError("dataset has zero rows")
+    if model_probe is None:
+        raise RuntimeError("model_probe is required for train stage")
+
+    model_meta = model_probe()
+    if not isinstance(model_meta, dict):
+        raise RuntimeError("model_probe must return a dict")
 
     class_ratio = rows_positive / rows_total
     payload: dict[str, object] = {
@@ -150,6 +184,11 @@ def run_train_stage(
         "code_version": paths.code_version,
         "dataset_uri": store.uri(paths.data_key),
         "class_ratio": round(class_ratio, 6),
+        "train_count": _as_int(dataset.get("train_count"), field_name="train_count"),
+        "val_count": _as_int(dataset.get("val_count"), field_name="val_count"),
+        "model_runtime": str(model_meta.get("runtime", "unknown")),
+        "model_url": str(model_meta.get("model_url", "")),
+        "model_ready": bool(model_meta.get("model_ready", True)),
         "checkpoint_hash": hashlib.sha256(
             f"{paths.model_version}:{paths.code_version}:{dataset}".encode()
         ).hexdigest()[:16],
@@ -167,24 +206,56 @@ def run_validate_stage(
     *,
     force: bool = False,
     min_accuracy: float = 0.75,
+    detector_predict=None,
 ) -> dict[str, object]:
-    """Run pseudo-validation on the val split, enforce quality gate."""
+    """Run validation on val split using detector predictions."""
     if not store.exists(paths.data_key):
         raise RuntimeError(f"dataset is missing: {store.uri(paths.data_key)}")
     if not store.exists(paths.model_key):
         raise RuntimeError(f"model artifact is missing: {store.uri(paths.model_key)}")
     if store.exists(paths.validation_key) and not force:
         return _skip("validate", store.uri(paths.validation_key))
+    if detector_predict is None:
+        raise RuntimeError("detector_predict is required for validate stage")
 
     dataset = store.read_json(paths.data_key)
-    model = store.read_json(paths.model_key)
     rows_total = _as_int(dataset.get("rows_total"), field_name="rows_total")
-    class_ratio = _as_float(model.get("class_ratio"), field_name="class_ratio")
     if rows_total <= 0:
         raise RuntimeError("dataset has zero rows")
 
-    stability = (_stable_number(f"val:{paths.ds}:{paths.model_version}") % 7) / 100
-    accuracy = round(min(0.99, 0.74 + class_ratio * 0.2 + stability), 4)
+    val_manifest_raw = dataset.get("val_manifest")
+    if not isinstance(val_manifest_raw, list) or not val_manifest_raw:
+        raise RuntimeError("val_manifest is missing in dataset artifact")
+
+    tp = tn = fp = fn = detector_errors = 0
+    for item in val_manifest_raw:
+        if not isinstance(item, dict):
+            raise RuntimeError("val_manifest item must be an object")
+        image_uri = str(item.get("image_uri", ""))
+        if not image_uri:
+            raise RuntimeError("val_manifest item has empty image_uri")
+        gt_present = _as_bool(
+            item.get("gt_person_present"), field_name="gt_person_present"
+        )
+        try:
+            detected = bool(detector_predict(image_uri))
+        except (RuntimeError, ValueError, OSError) as error:
+            detector_errors += 1
+            raise RuntimeError(f"detector failed on {image_uri}: {error}") from error
+
+        if detected and gt_present:
+            tp += 1
+        elif detected and not gt_present:
+            fp += 1
+        elif not detected and gt_present:
+            fn += 1
+        else:
+            tn += 1
+
+    total_eval = tp + tn + fp + fn
+    if total_eval <= 0:
+        raise RuntimeError("validation has no processable samples")
+    accuracy = round((tp + tn) / total_eval, 4)
 
     payload: dict[str, object] = {
         "stage": "validate",
@@ -193,6 +264,12 @@ def run_validate_stage(
         "ds": paths.ds,
         "dataset_uri": store.uri(paths.data_key),
         "model_uri": store.uri(paths.model_key),
+        "samples_total": total_eval,
+        "tp": tp,
+        "tn": tn,
+        "fp": fp,
+        "fn": fn,
+        "detector_errors": detector_errors,
         "accuracy": accuracy,
         "min_accuracy": min_accuracy,
         "passed": accuracy >= min_accuracy,
@@ -271,10 +348,6 @@ def _done(stage: str, uri: str) -> dict[str, object]:
     return {"stage": stage, "status": "completed", "output_uri": uri}
 
 
-def _stable_number(value: str) -> int:
-    return int(hashlib.sha256(value.encode()).hexdigest()[:8], 16)
-
-
 def _slug(value: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in value.strip().lower()).strip(
         "_"
@@ -311,6 +384,18 @@ def _as_float(value: object, *, field_name: str) -> float:
         except ValueError as error:
             raise RuntimeError(f"{field_name} must be numeric") from error
     raise RuntimeError(f"{field_name} must be numeric")
+
+
+def _as_bool(value: object, *, field_name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes"}:
+            return True
+        if normalized in {"0", "false", "no"}:
+            return False
+    raise RuntimeError(f"{field_name} must be boolean")
 
 
 def print_result(result: dict[str, object]) -> None:

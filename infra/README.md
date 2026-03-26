@@ -41,7 +41,7 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 `rescue_batch_daily`:
 
 - Запускается ежедневно (`@daily`) с `catchup=True`.
-- Оркестрирует 4 шага в отдельных `DockerOperator`: `data -> train -> validate -> inference`.
+- Оркестрирует 4 шага в отдельных `DockerOperator`: `stage_data -> stage_train -> stage_validate -> stage_inference`.
 - Передача между тасками идет через S3: каждый шаг пишет артефакт в S3, следующий читает по детерминированному ключу.
 - Идемпотентность по каждому шагу: при повторном запуске на ту же `ds` шаг возвращает `idempotent_skip`, если артефакт уже существует.
 - Для демонстрации backfill оставлен `catchup=True` и CLI-команда `airflow dags backfill`.
