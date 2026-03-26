@@ -91,7 +91,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra batch --extra inference --extra postgres
+        run: uv sync --extra dev --extra batch --extra postgres
 
       - name: Run all tests
         env:

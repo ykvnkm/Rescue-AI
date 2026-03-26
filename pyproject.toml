@@ -15,6 +15,7 @@ dev = [
   "pytest==8.3.4",
   "pytest-cov==6.0.0",
   "httpx==0.27.2",
+  "numpy>=1.26,<3",
   "black==24.10.0",
   "flake8==7.1.1",
   "isort==5.13.2",
