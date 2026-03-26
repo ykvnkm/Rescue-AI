@@ -10,7 +10,7 @@ help:
 	@echo "  make install         - install dev dependencies via uv"
 	@echo "  make format          - format code (black + isort)"
 	@echo "  make lint            - check code and batch DAG syntax"
-	@echo "  make test            - run unit/smoke tests (no architecture)"
+	@echo "  make test            - run all tests except architecture"
 	@echo "  make test-arch       - run architecture boundary tests"
 	@echo "  make ci              - full local CI (lint + test + arch)"
 	@echo "  make up              - start main service (docker compose)"
@@ -32,7 +32,7 @@ lint:
 	python -m py_compile infra/airflow/dags/rescue_batch_daily.py
 
 test:
-	$(UV) pytest tests --ignore=tests/architecture -m "not integration" --cov=rescue_ai --cov-fail-under=70
+	$(UV) pytest tests --ignore=tests/architecture --cov=rescue_ai --cov-fail-under=70
 
 test-arch:
 	$(UV) pytest tests/architecture --no-cov
