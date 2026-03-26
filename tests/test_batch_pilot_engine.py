@@ -3,10 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import cast
 
-from libs.batch.infrastructure.pilot_engine import PilotMissionEngine
-from libs.core.application.models import DetectionInput
-from libs.core.application.pilot_service import PilotService
-from libs.core.domain.entities import FrameEvent
+from rescue_ai.application.pilot_service import PilotService
+from rescue_ai.domain.entities import Detection, FrameEvent
+from rescue_ai.infrastructure.pilot_engine import PilotMissionEngine
 
 
 @dataclass
@@ -29,14 +28,20 @@ class _PilotStub:
         _ = mission_id
         return _Mission("m1")
 
-    def ingest_frame_event(
-        self, frame_event: FrameEvent, detections: list[DetectionInput]
-    ):
+    def ingest_frame_event(self, frame_event: FrameEvent, detections: list[Detection]):
         _ = (frame_event, detections)
         return []
 
-    def review_alert(self, alert_id: str, decision: dict[str, object]):
-        _ = (alert_id, decision)
+    def review_alert(
+        self,
+        alert_id: str,
+        *,
+        status: str,
+        reviewed_by: str | None = None,
+        reviewed_at_sec: float | None = None,
+        decision_reason: str | None = None,
+    ):
+        _ = (alert_id, status, reviewed_by, reviewed_at_sec, decision_reason)
         return object()
 
     def complete_mission(self, mission_id: str, completed_frame_id: int | None):

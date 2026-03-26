@@ -1545,6 +1545,9 @@ dev = [
 inference = [
     { name = "ultralytics" },
 ]
+postgres = [
+    { name = "psycopg", extra = ["binary"] },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1557,6 +1560,7 @@ requires-dist = [
     { name = "isort", marker = "extra == 'dev'", specifier = "==5.13.2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.11.2" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'batch'", specifier = "==3.2.3" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = "==3.2.3" },
     { name = "pylint", marker = "extra == 'dev'", specifier = "==3.3.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==8.3.4" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = "==6.0.0" },
@@ -1565,7 +1569,7 @@ requires-dist = [
     { name = "ultralytics", marker = "extra == 'inference'", specifier = "==8.3.57" },
     { name = "uvicorn", extras = ["standard"], specifier = "==0.30.6" },
 ]
-provides-extras = ["dev", "inference", "batch"]
+provides-extras = ["dev", "inference", "postgres", "batch"]
 
 [[package]]
 name = "s3transfer"

@@ -5,27 +5,24 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
 
-from libs.batch.application.mission_batch_runner import (
-    MissionBatchRunner,
-    MissionBatchRunnerDeps,
-)
-from libs.batch.application.ports import MissionEngineFactoryPort, MissionEnginePort
-from libs.batch.domain.models import (
+from rescue_ai.application.batch_runner import (
     BatchRunRequest,
     FrameRecord,
+    MissionBatchRunner,
+    MissionBatchRunnerDeps,
+    MissionEngineFactoryPort,
+    MissionEnginePort,
     MissionInput,
     RunStatusRecord,
 )
-from libs.batch.infrastructure.artifact_store import LocalArtifactStore
-from libs.batch.infrastructure.status_store import JsonStatusStore
-from libs.core.application.models import AlertRuleConfig, DetectionInput
-from libs.core.domain.entities import (
+from rescue_ai.domain.entities import (
     Alert,
-    AlertEvidence,
-    AlertLifecycle,
-    DetectionData,
+    AlertRuleConfig,
+    Detection,
     FrameEvent,
 )
+from rescue_ai.infrastructure.s3_artifact_store import LocalArtifactStorage
+from rescue_ai.infrastructure.status_store import JsonStatusStore
 
 
 class FakeSource:
@@ -45,16 +42,19 @@ class FakeSource:
 class FakeDetector:
     """Detector test double that always returns one person detection."""
 
-    def detect(self, image_uri: str) -> list[DetectionInput]:
+    def detect(self, image_uri: str) -> list[Detection]:
         _ = image_uri
         return [
-            DetectionInput(
+            Detection(
                 bbox=(0.0, 0.0, 1.0, 1.0),
                 score=0.95,
                 label="person",
                 model_name="yolo-model",
             )
         ]
+
+    def warmup(self) -> None:
+        return
 
     def runtime_name(self) -> str:
         return "fake-detector"
@@ -63,9 +63,12 @@ class FakeDetector:
 class ErrorDetector:
     """Detector test double that fails for every frame."""
 
-    def detect(self, image_uri: str) -> list[DetectionInput]:
+    def detect(self, image_uri: str) -> list[Detection]:
         _ = image_uri
         raise RuntimeError("detector boom")
+
+    def warmup(self) -> None:
+        return
 
     def runtime_name(self) -> str:
         return "error-detector"
@@ -92,7 +95,7 @@ class FakeEngine(MissionEnginePort):
         self,
         mission_id: str,
         frame_event: FrameEvent,
-        detections: list[DetectionInput],
+        detections: list[Detection],
     ) -> list[Alert]:
         if not detections:
             return []
@@ -104,16 +107,13 @@ class FakeEngine(MissionEnginePort):
                 frame_id=frame_event.frame_id,
                 ts_sec=frame_event.ts_sec,
                 image_uri=frame_event.image_uri,
-                evidence=AlertEvidence(
-                    people_detected=1,
-                    primary_detection=DetectionData(
-                        bbox=(0.0, 0.0, 1.0, 1.0),
-                        score=0.95,
-                        label="person",
-                        model_name="yolo-model",
-                    ),
+                people_detected=1,
+                primary_detection=Detection(
+                    bbox=(0.0, 0.0, 1.0, 1.0),
+                    score=0.95,
+                    label="person",
+                    model_name="yolo-model",
                 ),
-                lifecycle=AlertLifecycle(status="queued"),
             )
         ]
 
@@ -174,7 +174,7 @@ def _runner(
         MissionBatchRunnerDeps(
             source=FakeSource(mission_input),
             detector=detector,
-            artifacts=LocalArtifactStore(root_dir=Path(temp_dir) / "artifacts"),
+            artifacts=LocalArtifactStorage(root=Path(temp_dir) / "artifacts"),
             statuses=statuses,
             engine_factory=FakeEngineFactory(engine),
         )

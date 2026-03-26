@@ -1,55 +1,49 @@
 # Rescue AI
 
-Rescue AI — система для обнаружения людей на потоке кадров с БПЛА без облачной поддержки, обеспечивающая высокую точность детекции человека в реальном времени и применимая в реальных поисково-спасательных операциях, включая стихийные бедствия, горы и леса.
+Rescue AI — система для обнаружения людей на потоке кадров с БПЛА, обеспечивающая высокую точность детекции человека в реальном времени и применимая в реальных поисково-спасательных операциях, включая стихийные бедствия, горы и леса.
 
-Текущая версия проекта ориентирована на базовый сценарий: загрузить набор кадров, запустить поток, получить алерты и итоговый отчет по миссии. В рамках MVP планируется перенос артефактов на удаленное хранилище и полный переход на чтение потока с периферийного устройства через RTSP/UDP-протокол.
+## Что умеет система
 
-## Что умеет сервис
-
-- Запускает миссию по потоку кадров.
-- Выполняет детекцию людей на каждом кадре потока.
-- Формирует алерты присутствия человека и дает оператору подтвердить/отклонить их в UI.
-- Считает ключевые метрики миссии: количество эпизодов реального присутствия человека в кадре `episodes_total`, найденных эпизодов `episodes_found`, полнота по эпизодам `recall_event`, время до первой подтвержденной детекции `ttfc_sec`, число ложных алертов `false_alerts_total`, ложных алертов в минуту `fp_per_minute`.
+- Запускает миссию по потоку кадров (online) или по дате из файловой структуры (batch).
+- Выполняет детекцию людей на каждом кадре с помощью YOLOv8n.
+- Формирует алерты присутствия человека (sliding window + quorum + cooldown + gap).
+- Позволяет оператору подтвердить/отклонить алерты в UI (online) или автоматически ревьюит по GT (batch).
+- Считает метрики миссии: `recall_event`, `ttfc_sec`, `fp_per_minute`, `episodes_total`, `episodes_found`, `false_alerts_total`.
+- Сохраняет артефакты (отчеты, кадры) в S3 (Yandex Cloud Storage) или локально.
 
 Подробности по продуктовой и ML-логике: [ML System Design Doc](docs/ml_system_design_doc.md).
 
-## Структура проекта
+## Архитектура
 
 ```text
-config.py                # единая точка доступа к переменным окружения
-configs/                 # YAML-контракт детекции и алертинга
-docs/                    # документация: архитектура, runbook'и, ML SDD
-infra/                   # инфраструктура для батчевого сервиса (Airflow, Postgres, monitoring)
-  airflow/dags/          # DAG-и Airflow
-  docker-compose.platform.yml  # compose для запуска batch-платформы
-libs/
-  core/
-    domain/              # сущности миссии/алертов
-    application/         # бизнес-правила, расчет метрик, сервис миссии
-  batch/
-    domain/              # модели batch-запуска и результатов
-    application/         # batch use-case (идемпотентный прогон миссии)
-    infrastructure/      # адаптеры: S3/local artifact store, status store, runtime
-  infra/postgres/        # postgres-адаптеры репозиториев
-services/
-  api_gateway/
-    presentation/        # HTTP-роуты и UI оператора
-    infrastructure/      # адаптеры хранилищ и интеграций API
-    dependencies.py      # сборка контейнера зависимостей приложения
-  detection_service/
-    domain/              # модели и интерфейсы детекции
-    application/         # оркестрация обработки потока кадров
-    infrastructure/      # интеграции с YAML, YOLO и HTTP
-    presentation/        # API для запуска и контроля стрима
-  batch_runner/
-    main.py              # основной файл запуска батч-обработки
+rescue_ai/
+├── config.py               # все переменные окружения читаются здесь и только здесь
+│
+├── domain/                 # бизнес-логика: что такое миссия, алерт, детекция, кадр
+│                             правила предметной области и интерфейсы (порты),
+│                             которые реализуют внешние слои
+│
+├── application/            # сценарии использования (use cases): как проходит миссия,
+│                             как считаются метрики, batch-прогон, стадии ML-пайплайна
+│
+├── infrastructure/         # интеграции с внешним миром
+│                             детекция через YOLO, хранение в S3, работа с Postgres,
+│                             чтение кадров, загрузка YAML-конфигов
+│
+└── interfaces/             # точки входа в приложение
+    ├── api/                  REST API на FastAPI + UI оператора
+    └── cli/                  CLI для batch-пайплайна и запуска API-сервера
+
+configs/                    # YAML-контракт детекции и алертинга
+docs/                       # документация, ML System Design Doc, runbook'и
+infra/                      # Airflow DAG, docker-compose, инициализация Postgres
+scripts/                    # вспомогательные скрипты (quality gate)
 tests/
-  architecture/          # тесты границ слоев (import boundaries)
-  test_*.py              # unit/integration/e2e тесты сервисов
-.github/workflows/       # сценарии автоматических проверок и запусков в GHA
+├── architecture/           # автотесты: проверяют, что слои не нарушают границы
+└── test_*.py               # unit- и smoke-тесты
 ```
 
-## Запуск через Docker
+## Запуск online-сервиса (Docker)
 
 ### Требования
 
@@ -63,11 +57,11 @@ tests/
 ```text
 <mission>/
   images/
-    01_1_000001.jpg
-    01_1_000002.jpg
+    <mission>_000001.jpg
+    <mission>_0002.jpg
     ...
   annotations/
-    *.json   # COCO annotations
+    *.json   # COCO annotations (опционально)
 ```
 
 ### Шаги запуска
@@ -84,91 +78,106 @@ cp .env.example .env
 MISSION_DIR=/abs/path/to/mission
 ```
 
-Настройте, куда сохранять артефакты миссии (кадры и отчеты):
+3. Настройте хранилище артефактов:
 
 ```env
-ARTIFACTS_MODE=s3
-```
-
-Как это работает:
-- по умолчанию используется режим `s3`;
-- если ключи `ARTIFACTS_S3_ACCESS_KEY_ID` и `ARTIFACTS_S3_SECRET_ACCESS_KEY` не заданы, сервис автоматически пишет артефакты локально;
-- если ключи заданы, но не хватает остальных параметров S3, сервис завершится с понятной ошибкой на старте.
-
-Что обязательно заполнить для записи в S3-бакет:
-
-```env
-ARTIFACTS_S3_ENDPOINT=...
-ARTIFACTS_S3_REGION=...
+# По умолчанию — S3. Если ключи не заданы, пишет локально.
+ARTIFACTS_S3_ENDPOINT=https://storage.yandexcloud.net
+ARTIFACTS_S3_REGION=ru-central1
 ARTIFACTS_S3_ACCESS_KEY_ID=...
 ARTIFACTS_S3_SECRET_ACCESS_KEY=...
 ARTIFACTS_S3_BUCKET=...
-ARTIFACTS_S3_STRICT=true
 ```
 
-3. Поднимите сервис:
+4. Поднимите сервис:
 
 ```bash
 docker compose up --build
 ```
 
-4. Проверьте health:
+5. Проверьте health:
 
 ```bash
 curl http://127.0.0.1:8000/health
+# {"status":"ok"}
 ```
 
-Ожидаемый ответ:
-
-```json
-{"status":"ok"}
-```
-
-## Как воспроизвести базовый сценарий в UI
+### Сценарий работы в UI
 
 1. Откройте UI: `http://127.0.0.1:8000/`
-2. В поле **«Путь к папке с кадрами»** укажите:
-
-```text
-/data/mission/images
-```
-
+2. Укажите путь к кадрам: `/data/mission/images`
 3. Нажмите **«Начать миссию»**.
-4. В процессе обработки подтверждайте/отклоняйте алерты.
-5. После окончания нажмите **«Закончить миссию»** и **«Отчет по миссии»**.
-6. В таблице отчета получите рассчитанные метрики миссии.
+4. Подтверждайте/отклоняйте алерты.
+5. Нажмите **«Закончить миссию»** → **«Отчет по миссии»**.
 
-## Остановка и повторный запуск
+## Batch-сервис (Airflow)
 
-- Остановить сервис:
+Batch-сервис запускается как отдельный Docker-контейнер через Airflow DockerOperator.
 
-```bash
-docker compose down
-```
-
-- Повторно запустить с теми же параметрами:
+### Запуск Airflow-контура
 
 ```bash
-docker compose up --build
+cd infra
+cp platform.env.example platform.env
+# Заполните обязательные поля в platform.env (пароли Postgres, Airflow)
+
+# Соберите batch-образ
+docker compose -f docker-compose.platform.yml --profile batch-build up batch-runner-image
+
+# Запустите платформу
+docker compose -f docker-compose.platform.yml up -d
 ```
 
-- Если нужно прогнать другую миссию:
-1. Измените `MISSION_DIR` в `.env` на новый путь.
-2. Перезапустите контейнер: `docker compose down && docker compose up --build`.
+Airflow UI: `http://localhost:8080`
 
-## Батчевый сервис (Airflow)
+### Ручной запуск batch без Airflow
 
-- [infra/README.md](infra/README.md) — как поднять Airflow-контур и что именно происходит в DAG.
-- [docs/runbooks/batch_operations.md](docs/runbooks/batch_operations.md) — эксплуатация: safe rerun, диагностика `failed/partial`, проверка статусов.
-- [docs/runbooks/batch_demo_playbook.md](docs/runbooks/batch_demo_playbook.md) — сценарий демонстрации батча на реальных данных.
-- [docs/architecture/batch_contour.md](docs/architecture/batch_contour.md) — архитектурная схема batch-контура.
-- [docs/batch_evidence_pack.md](docs/batch_evidence_pack.md) — что собрать для защиты/сдачи.
+```bash
+# Запуск отдельной стадии пайплайна
+uv run python -m rescue_ai.interfaces.cli.batch \
+  --stage data \
+  --mission-id demo_mission \
+  --ds 2026-03-01
 
-- Airflow оркестрирует запуск batch-runner контейнера через `DockerOperator`.
-- Бизнес-логика находится в коде проекта (`libs/batch/application`), а DAG управляет расписанием и backfill.
-- Идемпотентность обеспечивается run-key и статусами, чтобы повторный запуск на тот же ключ не создавал дублей без `--force`.
+# Все стадии последовательно
+for stage in data train validate inference; do
+  uv run python -m rescue_ai.interfaces.cli.batch \
+    --stage $stage \
+    --mission-id demo_mission \
+    --ds 2026-03-01 \
+    --model-version yolov8n_baseline_multiscale
+done
+```
 
-## CI/CD каркас
+Подробнее:
+- [docs/runbooks/batch_operations.md](docs/runbooks/batch_operations.md) — эксплуатация batch.
+- [docs/architecture/batch_contour.md](docs/architecture/batch_contour.md) — архитектурная схема.
 
-- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — основной и единственный GitHub Actions quality gate: линтеры, типизация, unit/smoke-тесты с coverage-порогом и проверки архитектурных границ.
-- Интеграционный сценарий batch-контура не включен в обязательный workflow: он документирован отдельно в runbook и не влияет на стабильность основного CI.
+## Локальная разработка
+
+### Установка зависимостей
+
+```bash
+uv sync --extra dev --extra batch
+```
+
+### Команды
+
+```bash
+make format    # форматирование (black + isort)
+make lint      # проверка (black, isort, flake8, mypy, pylint, DAG syntax)
+make test      # unit/smoke тесты с coverage >= 70%
+make test-arch # тесты архитектурных границ
+make ci        # полный CI (lint + test + test-arch)
+```
+
+### Запуск без Docker
+
+```bash
+uv run python -m rescue_ai.interfaces.cli.online
+```
+
+## CI/CD
+
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — GitHub Actions: линтеры, типизация, unit/smoke-тесты с coverage >= 70%, архитектурные границы.
+- Quality gate требует прохождения всех трех джобов: `lint`, `test`, `architecture-boundaries`.

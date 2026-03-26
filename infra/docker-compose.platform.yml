@@ -10,10 +10,6 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: "False"
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
     AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-    AIRFLOW__METRICS__STATSD_ON: "True"
-    AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
-    AIRFLOW__METRICS__STATSD_PORT: 9125
-    AIRFLOW__METRICS__STATSD_PREFIX: airflow
     BATCH_RUNTIME_ENV: ${BATCH_RUNTIME_ENV}
     BATCH_MISSION_ID: ${BATCH_MISSION_ID}
     BATCH_CODE_VERSION: ${BATCH_CODE_VERSION}
@@ -53,24 +49,6 @@ services:
       timeout: 5s
       retries: 5
 
-  postgres-exporter:
-    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
-    env_file:
-      - ${PLATFORM_ENV_FILE:-./platform.env}
-    environment:
-      DATA_SOURCE_NAME: postgresql://${POSTGRES_ADMIN_USER}:${POSTGRES_ADMIN_PASSWORD}@postgres:5432/${POSTGRES_DEFAULT_DB}?sslmode=disable
-    ports:
-      - "9187:9187"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  statsd-exporter:
-    image: prom/statsd-exporter:v0.27.2
-    ports:
-      - "9102:9102"
-      - "9125:9125/udp"
-
   batch-runner-image:
     build:
       context: ..
@@ -105,37 +83,7 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
-  prometheus:
-    image: prom/prometheus:v2.55.1
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.retention.time=14d
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-
-  grafana:
-    image: grafana/grafana:11.2.2
-    env_file:
-      - ${PLATFORM_ENV_FILE:-./platform.env}
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
-      GF_USERS_ALLOW_SIGN_UP: "false"
-    ports:
-      - "3000:3000"
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
-    depends_on:
-      - prometheus
-
 volumes:
   postgres_data:
-  prometheus_data:
-  grafana_data:
   airflow_shared_data:
     name: airflow_shared_data

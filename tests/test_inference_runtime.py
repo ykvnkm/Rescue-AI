@@ -7,16 +7,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.detection_service.application.stream_runner import (
-    _build_frame_payload,
-    _serialize_detections,
-    build_annotation_index,
-)
-from services.detection_service.domain.models import InferenceConfig
-from services.detection_service.infrastructure.yolo_detector import (
-    YoloDetector,
-    _resolve_person_ids,
-)
+from rescue_ai.application.annotation_index import build_annotation_index
+from rescue_ai.application.payloads import build_frame_payload, serialize_detections
+from rescue_ai.domain.entities import InferenceConfig
+from rescue_ai.infrastructure.yolo_detector import YoloDetector, _resolve_person_ids
 
 
 def test_build_annotation_index_from_coco_json() -> None:
@@ -55,12 +49,12 @@ def test_serialize_detections_and_payload() -> None:
         SimpleNamespace(bbox=(5.0, 6.0, 7.0, 8.0), score=0.8),
     ]
 
-    serialized = _serialize_detections(
+    serialized = serialize_detections(
         detections=detections,
         min_detections_per_frame=2,
     )
 
-    payload = _build_frame_payload(
+    payload = build_frame_payload(
         frame_id=1,
         ts_sec=0.5,
         frame_path=Path("/tmp/frame_0001.jpg"),
@@ -97,7 +91,7 @@ def test_yolo_detector_warmup_requires_ultralytics(
     detector = YoloDetector(config)
 
     monkeypatch.setattr(
-        "services.detection_service.infrastructure.yolo_detector.YOLO",
+        "rescue_ai.infrastructure.yolo_detector.YOLO",
         None,
     )
 

@@ -5,33 +5,33 @@ UV := PYTHONPATH=$(PYTHONPATH) uv run
 	up down
 
 help:
-	@echo "Доступные команды:"
-	@echo "  make install         - установить dev-зависимости через uv"
-	@echo "  make format          - отформатировать код (black + isort)"
-	@echo "  make lint            - проверить код и синтаксис batch DAG"
-	@echo "  make test            - запустить unit/smoke тесты без architecture"
-	@echo "  make test-arch       - запустить архитектурные тесты границ слоев"
-	@echo "  make ci              - локально повторить основной CI (lint + test + arch)"
-	@echo "  make up              - поднять основной сервис (docker compose)"
-	@echo "  make down            - остановить основной сервис"
+	@echo "Available commands:"
+	@echo "  make install         - install dev dependencies via uv"
+	@echo "  make format          - format code (black + isort)"
+	@echo "  make lint            - check code and batch DAG syntax"
+	@echo "  make test            - run unit/smoke tests (no architecture)"
+	@echo "  make test-arch       - run architecture boundary tests"
+	@echo "  make ci              - full local CI (lint + test + arch)"
+	@echo "  make up              - start main service (docker compose)"
+	@echo "  make down            - stop main service"
 
 install:
 	uv sync --extra dev --extra batch
 
 format:
-	$(UV) black services libs tests
-	$(UV) isort services libs tests
+	$(UV) black rescue_ai tests scripts
+	$(UV) isort rescue_ai tests scripts
 
 lint:
-	$(UV) black --check services libs tests
-	$(UV) isort --check-only services libs tests
-	$(UV) flake8 services libs tests
-	$(UV) mypy services libs tests
-	$(UV) pylint services libs tests
-	python -m py_compile infra/airflow/dags/idempotent_docker_backfill_demo.py
+	$(UV) black --check rescue_ai tests scripts
+	$(UV) isort --check-only rescue_ai tests scripts
+	$(UV) flake8 rescue_ai tests scripts
+	$(UV) mypy rescue_ai tests
+	$(UV) pylint rescue_ai tests scripts
+	python -m py_compile infra/airflow/dags/rescue_batch_daily.py
 
 test:
-	$(UV) pytest tests --ignore=tests/architecture -m "not integration" --cov=services --cov=libs --cov-fail-under=70
+	$(UV) pytest tests --ignore=tests/architecture -m "not integration" --cov=rescue_ai --cov-fail-under=70
 
 test-arch:
 	$(UV) pytest tests/architecture --no-cov

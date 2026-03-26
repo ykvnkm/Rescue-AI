@@ -7,8 +7,8 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from services.api_gateway.app import app
-from services.api_gateway.dependencies import get_pilot_service, reset_state
+from rescue_ai.interfaces.api.app import app
+from rescue_ai.interfaces.api.dependencies import get_pilot_service, reset_state
 
 client = TestClient(app)
 

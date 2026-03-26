@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from libs.batch.infrastructure.local_mission_source import LocalMissionSource
+from rescue_ai.infrastructure.local_mission_source import LocalMissionSource
 
 
 def test_local_mission_source_marks_corrupted_images() -> None:

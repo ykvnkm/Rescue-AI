@@ -24,6 +24,9 @@ dev = [
 inference = [
   "ultralytics==8.3.57",
 ]
+postgres = [
+  "psycopg[binary]==3.2.3",
+]
 batch = [
   "boto3==1.42.65",
   "psycopg[binary]==3.2.3",
@@ -39,7 +42,7 @@ line_length = 88
 
 [tool.mypy]
 python_version = "3.12"
-files = ["services", "libs", "tests"]
+files = ["rescue_ai", "tests"]
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true
@@ -47,9 +50,3 @@ warn_unused_configs = true
 
 [tool.pylint.main]
 py-version = "3.12"
-
-[tool.pylint.messages_control]
-disable = [
-  "missing-module-docstring",
-  "missing-function-docstring",
-]

@@ -16,10 +16,10 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --extra inference --extra batch
 
 COPY configs ./configs
-COPY libs ./libs
-COPY services ./services
+COPY rescue_ai ./rescue_ai
+COPY scripts ./scripts
 RUN mkdir -p /app/runtime
 
 EXPOSE 8000
 
-CMD ["uv", "run", "python", "-m", "uvicorn", "services.api_gateway.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "python", "-m", "rescue_ai.interfaces.cli.online"]

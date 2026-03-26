@@ -1,1 +1,0 @@
-"""Detection service package."""
