@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol, TypedDict
 
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
 
@@ -15,6 +15,51 @@ class ArtifactBlob:
     content: bytes
     media_type: str
     filename: str
+
+
+class AlertReviewPayload(TypedDict):
+    """Typed payload for applying an operator review to an alert."""
+
+    status: Literal["reviewed_confirmed", "reviewed_rejected"]
+    reviewed_by: str | None
+    reviewed_at_sec: float | None
+    decision_reason: str | None
+
+
+class DetectionPayload(TypedDict):
+    """Serialized detection item passed over frame-ingest API boundary."""
+
+    bbox: list[float]
+    score: float
+    label: str
+    model_name: str
+    explanation: str | None
+
+
+class FramePublishPayload(TypedDict):
+    """Typed payload for publishing one frame event to the mission API."""
+
+    frame_id: int
+    ts_sec: float
+    image_uri: str
+    gt_person_present: bool
+    gt_episode_id: str | None
+    detections: list[DetectionPayload]
+
+
+class ReportMetadataPayload(TypedDict, total=False):
+    """Typed report metadata attached to mission reports."""
+
+    config_name: str
+    config_hash: str
+    config_path: str
+    model_url: str
+    model_sha256: str
+    service_version: str
+    code_version: str
+    ds: str
+    model_version: str
+    run_key: str
 
 
 class MissionRepository(Protocol):
@@ -61,7 +106,7 @@ class AlertRepository(Protocol):
     def update_status(
         self,
         alert_id: str,
-        updates: dict[str, object],
+        updates: AlertReviewPayload,
     ) -> Alert | None:
         """Apply a review decision to an alert."""
 
@@ -99,6 +144,6 @@ class FramePublisherPort(Protocol):
     """Port for publishing frame payload into mission API."""
 
     def publish(
-        self, mission_id: str, api_base: str, payload: dict[str, object]
+        self, mission_id: str, api_base: str, payload: FramePublishPayload
     ) -> None: ...
     def endpoint(self, mission_id: str, api_base: str) -> str: ...

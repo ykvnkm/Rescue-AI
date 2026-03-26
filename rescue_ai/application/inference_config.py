@@ -23,3 +23,4 @@ class InferenceConfig:
     nms_iou: float
     max_det: int
     confidence_threshold: float
+    model_sha256: str | None = None

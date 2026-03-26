@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
+from typing import Literal, cast
 
 from rescue_ai.application.batch_dtos import (
     BatchRunRequest,
@@ -18,6 +18,7 @@ from rescue_ai.application.batch_runner import (
     MissionBatchRunnerDeps,
 )
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent
+from rescue_ai.domain.ports import ReportMetadataPayload
 from rescue_ai.domain.value_objects import AlertRuleConfig
 from rescue_ai.infrastructure.s3_artifact_store import LocalArtifactStorage
 from rescue_ai.infrastructure.status_store import JsonStatusStore
@@ -84,7 +85,7 @@ class FakeEngine(MissionEnginePort):
         source_name: str,
         total_frames: int,
         fps: float,
-        report_metadata: dict[str, object],
+        report_metadata: ReportMetadataPayload,
     ) -> str:
         _ = (source_name, total_frames, fps, report_metadata)
         return "internal-mission-1"
@@ -118,7 +119,7 @@ class FakeEngine(MissionEnginePort):
     def review_alert(
         self,
         alert_id: str,
-        status: str,
+        status: Literal["reviewed_confirmed", "reviewed_rejected"],
         reviewed_at_sec: float,
         reason: str,
     ) -> None:
@@ -151,7 +152,7 @@ class FakeEngineFactory(MissionEngineFactoryPort):
     def create(
         self,
         alert_rules: AlertRuleConfig,
-        report_metadata: dict[str, object],
+        report_metadata: ReportMetadataPayload,
     ) -> MissionEnginePort:
         _ = (alert_rules, report_metadata)
         return self.engine

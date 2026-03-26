@@ -33,6 +33,7 @@ from rescue_ai.application.pipeline_stages import (
     run_validate_stage,
 )
 from rescue_ai.config import get_settings
+from rescue_ai.domain.ports import ReportMetadataPayload
 from rescue_ai.domain.value_objects import AlertRuleConfig
 from rescue_ai.infrastructure.contract_loader import load_stream_contract
 from rescue_ai.infrastructure.local_mission_source import LocalMissionSource
@@ -65,7 +66,7 @@ class PilotMissionEngineFactory:
     def create(
         self,
         alert_rules: AlertRuleConfig,
-        report_metadata: dict[str, object],
+        report_metadata: ReportMetadataPayload,
     ) -> PilotMissionEngine:
         db = InMemoryDatabase()
         pilot = PilotService(

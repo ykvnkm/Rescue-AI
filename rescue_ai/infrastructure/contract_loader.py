@@ -9,6 +9,7 @@ from pathlib import Path
 import yaml
 
 from rescue_ai.application.inference_config import InferenceConfig
+from rescue_ai.domain.ports import ReportMetadataPayload
 from rescue_ai.domain.value_objects import AlertRuleConfig
 
 DEFAULT_CONTRACT_PATH = Path("configs/nsu_frames_yolov8n_alert_contract.yaml")
@@ -53,6 +54,8 @@ def load_stream_contract(service_version: str = "dev") -> StreamContract:
     confidence_threshold = float(thresholds[0] if thresholds else 0.2)
 
     model_url = str(payload.get("model_url", DEFAULT_MODEL_URL))
+    model_sha256_raw = payload.get("model_sha256")
+    model_sha256 = str(model_sha256_raw).strip().lower() if model_sha256_raw else None
     device = str(payload.get("device", "cpu"))
 
     rules = AlertRuleConfig(
@@ -72,6 +75,7 @@ def load_stream_contract(service_version: str = "dev") -> StreamContract:
         nms_iou=float(infer.get("nms_iou", 0.75)),
         max_det=int(infer.get("max_det", 1000)),
         confidence_threshold=confidence_threshold,
+        model_sha256=model_sha256,
     )
 
     return StreamContract(
@@ -88,15 +92,17 @@ def load_stream_contract(service_version: str = "dev") -> StreamContract:
 
 def load_alert_rules_and_metadata(
     service_version: str = "dev",
-) -> tuple[AlertRuleConfig, dict[str, object]]:
+) -> tuple[AlertRuleConfig, ReportMetadataPayload]:
     """Return alert rules and report metadata from the stream contract."""
     contract = load_stream_contract(service_version=service_version)
 
-    report_metadata: dict[str, object] = {
+    report_metadata: ReportMetadataPayload = {
         "config_name": contract.config_name,
         "config_hash": contract.config_hash,
         "config_path": contract.config_path,
         "model_url": contract.inference.model_url,
         "service_version": contract.service_version,
     }
+    if contract.inference.model_sha256:
+        report_metadata["model_sha256"] = contract.inference.model_sha256
     return contract.alert_rules, report_metadata

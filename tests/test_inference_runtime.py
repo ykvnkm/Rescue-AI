@@ -1,5 +1,6 @@
 """Tests for runtime contract, annotation loading and detector helpers."""
 
+import hashlib
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -96,4 +97,71 @@ def test_yolo_detector_warmup_requires_ultralytics(
     )
 
     with pytest.raises(RuntimeError):
+        detector.warmup()
+
+
+def test_yolo_detector_validates_checksum(monkeypatch: pytest.MonkeyPatch) -> None:
+    with TemporaryDirectory() as temp_dir:
+        cache_dir = Path(temp_dir) / "models"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        model_file = cache_dir / "model.pt"
+        model_file.write_bytes(b"fake-model")
+
+        monkeypatch.setattr(
+            "rescue_ai.infrastructure.yolo_detector.MODEL_CACHE_DIR", cache_dir
+        )
+
+        config = InferenceConfig(
+            model_url="https://example.com/model.pt",
+            device="cpu",
+            imgsz=640,
+            nms_iou=0.7,
+            max_det=100,
+            confidence_threshold=0.25,
+            model_sha256="0" * 64,
+        )
+        detector = YoloDetector(config)
+
+        class _FakeYolo:
+            def __init__(self, model_path: str) -> None:
+                _ = model_path
+
+        monkeypatch.setattr("rescue_ai.infrastructure.yolo_detector.YOLO", _FakeYolo)
+
+        with pytest.raises(RuntimeError, match="Model checksum mismatch"):
+            detector.warmup()
+
+
+def test_yolo_detector_accepts_matching_checksum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        cache_dir = Path(temp_dir) / "models"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        model_file = cache_dir / "model.pt"
+        payload = b"fake-model"
+        model_file.write_bytes(payload)
+        expected_hash = hashlib.sha256(payload).hexdigest()
+
+        monkeypatch.setattr(
+            "rescue_ai.infrastructure.yolo_detector.MODEL_CACHE_DIR", cache_dir
+        )
+
+        config = InferenceConfig(
+            model_url="https://example.com/model.pt",
+            device="cpu",
+            imgsz=640,
+            nms_iou=0.7,
+            max_det=100,
+            confidence_threshold=0.25,
+            model_sha256=expected_hash,
+        )
+        detector = YoloDetector(config)
+
+        class _FakeYolo:
+            def __init__(self, model_path: str) -> None:
+                self.model_path = model_path
+
+        monkeypatch.setattr("rescue_ai.infrastructure.yolo_detector.YOLO", _FakeYolo)
+
         detector.warmup()

@@ -22,7 +22,7 @@ from rescue_ai.application.batch_dtos import (
     RunStatusStorePort,
 )
 from rescue_ai.domain.entities import FrameEvent
-from rescue_ai.domain.ports import DetectorPort
+from rescue_ai.domain.ports import DetectorPort, ReportMetadataPayload
 
 PARTIAL_ERROR_RATE_THRESHOLD = 0.2
 
@@ -111,7 +111,7 @@ class MissionBatchRunner:
         mission_input = self._source.load(mission_id=request.mission_id, ds=request.ds)
         quality = DataQuality(total_frames=len(mission_input.frames))
 
-        report_metadata: dict[str, object] = {
+        report_metadata: ReportMetadataPayload = {
             "config_hash": request.config_hash,
             "model_version": request.model_version,
             "code_version": request.code_version,

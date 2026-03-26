@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent
+from rescue_ai.domain.ports import ReportMetadataPayload
 from rescue_ai.domain.value_objects import AlertRuleConfig
 
 # ── Data transfer objects ───────────────────────────────────────
@@ -145,7 +146,7 @@ class MissionEnginePort(Protocol):
         source_name: str,
         total_frames: int,
         fps: float,
-        report_metadata: dict[str, object],
+        report_metadata: ReportMetadataPayload,
     ) -> str:
         """Create a new mission and start processing."""
 
@@ -160,7 +161,7 @@ class MissionEnginePort(Protocol):
     def review_alert(
         self,
         alert_id: str,
-        status: str,
+        status: Literal["reviewed_confirmed", "reviewed_rejected"],
         reviewed_at_sec: float,
         reason: str,
     ) -> None:
@@ -179,7 +180,7 @@ class MissionEngineFactoryPort(Protocol):
     def create(
         self,
         alert_rules: AlertRuleConfig,
-        report_metadata: dict[str, object],
+        report_metadata: ReportMetadataPayload,
     ) -> MissionEnginePort:
         """Create a new mission engine instance for a batch run."""
 

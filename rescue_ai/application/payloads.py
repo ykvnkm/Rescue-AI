@@ -5,14 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Sequence
 
+from rescue_ai.domain.ports import DetectionPayload, FramePublishPayload
+
 
 def build_frame_payload(
     frame_id: int,
     ts_sec: float,
     frame_path: Path,
     gt_boxes: list[tuple[float, float, float, float]],
-    detections: list[dict[str, object]],
-) -> dict[str, object]:
+    detections: list[DetectionPayload],
+) -> FramePublishPayload:
     return {
         "frame_id": frame_id,
         "ts_sec": ts_sec,
@@ -26,8 +28,8 @@ def build_frame_payload(
 def serialize_detections(
     detections: Sequence[Any],
     min_detections_per_frame: int,
-) -> list[dict[str, object]]:
-    payload_detections: list[dict[str, object]] = []
+) -> list[DetectionPayload]:
+    payload_detections: list[DetectionPayload] = []
     if len(detections) >= min_detections_per_frame:
         for item in detections:
             payload_detections.append(

@@ -16,10 +16,12 @@ from rescue_ai.domain.mission_metrics import (
 )
 from rescue_ai.domain.ports import (
     AlertRepository,
+    AlertReviewPayload,
     ArtifactBlob,
     ArtifactStorage,
     FrameEventRepository,
     MissionRepository,
+    ReportMetadataPayload,
 )
 from rescue_ai.domain.value_objects import AlertRuleConfig
 
@@ -27,7 +29,7 @@ from rescue_ai.domain.value_objects import AlertRuleConfig
 class PilotServicePort(Protocol):
     """External contract of PilotService for infrastructure adapters."""
 
-    def set_report_metadata(self, payload: dict[str, object]) -> None: ...
+    def set_report_metadata(self, payload: ReportMetadataPayload) -> None: ...
 
     def create_mission(self, source_name: str, total_frames: int, fps: float): ...
 
@@ -39,7 +41,7 @@ class PilotServicePort(Protocol):
         detections: list[Detection],
     ) -> list[Alert]: ...
 
-    def review_alert(self, alert_id: str, updates: dict[str, object]): ...
+    def review_alert(self, alert_id: str, updates: AlertReviewPayload): ...
 
     def complete_mission(
         self,
@@ -71,9 +73,9 @@ class PilotService:
         self._deps = dependencies
         self._alert_state: dict[str, MissionAlertState] = {}
         self._alert_rules = alert_rules
-        self._report_metadata: dict[str, object] = {}
+        self._report_metadata: ReportMetadataPayload = {}
 
-    def set_report_metadata(self, metadata: dict[str, object]) -> None:
+    def set_report_metadata(self, metadata: ReportMetadataPayload) -> None:
         """Set reproducibility metadata attached to mission reports."""
         self._report_metadata = dict(metadata)
 
@@ -180,7 +182,7 @@ class PilotService:
     def review_alert(
         self,
         alert_id: str,
-        updates: dict[str, object],
+        updates: AlertReviewPayload,
     ) -> Alert | None:
         """Apply a review decision to an alert."""
         return self._deps.alert_repository.update_status(alert_id, updates)

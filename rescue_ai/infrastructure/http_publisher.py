@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from urllib import request
 
+from rescue_ai.domain.ports import FramePublishPayload
+
 
 class HttpFramePublisher:
     """HTTP adapter that publishes frame events to mission API."""
@@ -13,7 +15,7 @@ class HttpFramePublisher:
         self._timeout_sec = timeout_sec
 
     def publish(
-        self, mission_id: str, api_base: str, payload: dict[str, object]
+        self, mission_id: str, api_base: str, payload: FramePublishPayload
     ) -> None:
         """Post a frame event payload to the mission API endpoint."""
         url = self.endpoint(mission_id=mission_id, api_base=api_base)

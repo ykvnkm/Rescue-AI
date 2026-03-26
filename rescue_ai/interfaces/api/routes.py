@@ -1,13 +1,14 @@
 """FastAPI route handlers for mission and stream endpoints."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent
+from rescue_ai.domain.ports import AlertReviewPayload
 from rescue_ai.interfaces.api.dependencies import (
     get_pilot_service,
     get_stream_controller,
@@ -297,15 +298,19 @@ def get_alert_frame(alert_id: str) -> Response:
 @router.post("/v1/alerts/{alert_id}/confirm")
 def confirm_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
     service = get_pilot_service()
+    review_payload = cast(
+        AlertReviewPayload,
+        {
+            "status": "reviewed_confirmed",
+            "reviewed_by": payload.reviewed_by,
+            "reviewed_at_sec": payload.reviewed_at_sec,
+            "decision_reason": payload.decision_reason,
+        },
+    )
     try:
         alert = service.review_alert(
             alert_id,
-            {
-                "status": "reviewed_confirmed",
-                "reviewed_by": payload.reviewed_by,
-                "reviewed_at_sec": payload.reviewed_at_sec,
-                "decision_reason": payload.decision_reason,
-            },
+            review_payload,
         )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -317,15 +322,19 @@ def confirm_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
 @router.post("/v1/alerts/{alert_id}/reject")
 def reject_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
     service = get_pilot_service()
+    review_payload = cast(
+        AlertReviewPayload,
+        {
+            "status": "reviewed_rejected",
+            "reviewed_by": payload.reviewed_by,
+            "reviewed_at_sec": payload.reviewed_at_sec,
+            "decision_reason": payload.decision_reason,
+        },
+    )
     try:
         alert = service.review_alert(
             alert_id,
-            {
-                "status": "reviewed_rejected",
-                "reviewed_by": payload.reviewed_by,
-                "reviewed_at_sec": payload.reviewed_at_sec,
-                "decision_reason": payload.decision_reason,
-            },
+            review_payload,
         )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error

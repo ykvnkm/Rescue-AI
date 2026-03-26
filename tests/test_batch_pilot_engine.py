@@ -5,6 +5,7 @@ from typing import cast
 
 from rescue_ai.application.pilot_service import PilotServicePort
 from rescue_ai.domain.entities import Detection, FrameEvent
+from rescue_ai.domain.ports import AlertReviewPayload, ReportMetadataPayload
 from rescue_ai.infrastructure.pilot_engine import PilotMissionEngine
 
 
@@ -15,9 +16,9 @@ class _Mission:
 
 class _PilotStub:
     def __init__(self) -> None:
-        self.metadata: dict[str, object] = {}
+        self.metadata: ReportMetadataPayload = {}
 
-    def set_report_metadata(self, payload: dict[str, object]) -> None:
+    def set_report_metadata(self, payload: ReportMetadataPayload) -> None:
         self.metadata = payload
 
     def create_mission(self, source_name: str, total_frames: int, fps: float):
@@ -32,8 +33,8 @@ class _PilotStub:
         _ = (frame_event, detections)
         return []
 
-    def review_alert(self, alert_id: str, updates: dict[str, object]):
-        """Stub review_alert that accepts a dict."""
+    def review_alert(self, alert_id: str, updates: AlertReviewPayload):
+        """Stub review_alert that accepts typed review payload."""
         _ = (alert_id, updates)
         return object()
 

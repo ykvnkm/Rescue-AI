@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 
 from rescue_ai.domain.entities import Alert, FrameEvent, Mission
-from rescue_ai.domain.ports import ArtifactBlob
+from rescue_ai.domain.ports import AlertReviewPayload, ArtifactBlob
 
 
 @dataclass
@@ -91,7 +91,7 @@ class InMemoryAlertRepository:
     def update_status(
         self,
         alert_id: str,
-        updates: dict[str, object],
+        updates: AlertReviewPayload,
     ) -> Alert | None:
         """Apply a review decision to an alert."""
         alert = self._db.alerts.get(alert_id)

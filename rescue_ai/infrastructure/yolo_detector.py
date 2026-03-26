@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlretrieve
@@ -74,6 +75,10 @@ class YoloDetector:
         if not model_path.exists():
             urlretrieve(self._config.model_url, model_path)
 
+        _verify_model_integrity(
+            model_path=model_path,
+            expected_sha256=self._config.model_sha256,
+        )
         self._model = YOLO(str(model_path))
         return self._model
 
@@ -82,6 +87,19 @@ def _resolve_model_cache_path(model_url: str) -> Path:
     parsed = urlparse(model_url)
     filename = Path(parsed.path).name or "model.pt"
     return MODEL_CACHE_DIR / filename
+
+
+def _verify_model_integrity(model_path: Path, expected_sha256: str | None) -> None:
+    if not expected_sha256:
+        return
+    normalized = expected_sha256.strip().lower()
+    if len(normalized) != 64 or not all(ch in "0123456789abcdef" for ch in normalized):
+        raise RuntimeError("Invalid model_sha256 format in runtime config")
+    actual = hashlib.sha256(model_path.read_bytes()).hexdigest()
+    if actual != normalized:
+        raise RuntimeError(
+            f"Model checksum mismatch for {model_path.name}: expected {normalized}, got {actual}"
+        )
 
 
 def _extract_detections(

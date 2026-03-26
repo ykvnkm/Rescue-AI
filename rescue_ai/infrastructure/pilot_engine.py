@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from rescue_ai.application.pilot_service import PilotServicePort
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent
+from rescue_ai.domain.ports import AlertReviewPayload, ReportMetadataPayload
 
 
 class PilotMissionEngine:
@@ -17,7 +20,7 @@ class PilotMissionEngine:
         source_name: str,
         total_frames: int,
         fps: float,
-        report_metadata: dict[str, object],
+        report_metadata: ReportMetadataPayload,
     ) -> str:
         self._pilot.set_report_metadata(report_metadata)
         mission = self._pilot.create_mission(
@@ -45,19 +48,20 @@ class PilotMissionEngine:
     def review_alert(
         self,
         alert_id: str,
-        status: str,
+        status: Literal["reviewed_confirmed", "reviewed_rejected"],
         reviewed_at_sec: float,
         reason: str,
     ) -> None:
         """Forward an auto-review decision to the pilot service."""
+        payload: AlertReviewPayload = {
+            "status": status,
+            "reviewed_by": "batch-auto-review",
+            "reviewed_at_sec": reviewed_at_sec,
+            "decision_reason": reason,
+        }
         result = self._pilot.review_alert(
             alert_id,
-            {
-                "status": status,
-                "reviewed_by": "batch-auto-review",
-                "reviewed_at_sec": reviewed_at_sec,
-                "decision_reason": reason,
-            },
+            payload,
         )
         if result is None:
             raise ValueError("Alert not found")

@@ -10,6 +10,7 @@ from typing import Any, Sequence
 
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
 from rescue_ai.domain.mission_metrics import build_gt_episodes
+from rescue_ai.domain.ports import AlertReviewPayload
 
 MISSION_COLUMNS = """
 mission_id,
@@ -395,7 +396,7 @@ class PostgresAlertRepository:
     def update_status(
         self,
         alert_id: str,
-        updates: dict[str, object],
+        updates: AlertReviewPayload,
     ) -> Alert | None:
         """Apply a review decision to an alert."""
         status = str(updates.get("status", ""))
