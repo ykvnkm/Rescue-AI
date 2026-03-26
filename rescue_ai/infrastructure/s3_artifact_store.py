@@ -6,6 +6,7 @@ import csv
 import json
 import mimetypes
 import threading
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from io import StringIO
@@ -123,7 +124,7 @@ class LocalArtifactStorage:
             filename=image_path.name,
         )
 
-    def save_mission_report(self, mission_id: str, report: dict[str, object]) -> str:
+    def save_mission_report(self, mission_id: str, report: Mapping[str, object]) -> str:
         report_path = self._report_path(mission_id)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(
@@ -132,7 +133,7 @@ class LocalArtifactStorage:
         )
         return str(report_path.resolve())
 
-    def load_mission_report(self, mission_id: str) -> dict[str, object] | None:
+    def load_mission_report(self, mission_id: str) -> Mapping[str, object] | None:
         report_path = self._report_path(mission_id)
         if not report_path.exists() or not report_path.is_file():
             return None
@@ -257,7 +258,7 @@ class S3ArtifactStorage:
             filename=Path(key).name or "frame.bin",
         )
 
-    def save_mission_report(self, mission_id: str, report: dict[str, object]) -> str:
+    def save_mission_report(self, mission_id: str, report: Mapping[str, object]) -> str:
         key = self._report_key(mission_id)
         payload = json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8")
         try:
@@ -273,7 +274,7 @@ class S3ArtifactStorage:
             return self._fallback.save_mission_report(mission_id, report)
         return f"s3://{self._settings.bucket}/{key}"
 
-    def load_mission_report(self, mission_id: str) -> dict[str, object] | None:
+    def load_mission_report(self, mission_id: str) -> Mapping[str, object] | None:
         key = self._report_key(mission_id)
         try:
             response = self._client.get_object(Bucket=self._settings.bucket, Key=key)

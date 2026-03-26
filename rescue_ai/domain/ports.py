@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypedDict
 
@@ -126,10 +127,10 @@ class ArtifactStorage(Protocol):
     def load_frame(self, image_uri: str) -> ArtifactBlob | None: ...
 
     def save_mission_report(
-        self, mission_id: str, report: dict[str, object]
+        self, mission_id: str, report: Mapping[str, object]
     ) -> str: ...
 
-    def load_mission_report(self, mission_id: str) -> dict[str, object] | None: ...
+    def load_mission_report(self, mission_id: str) -> Mapping[str, object] | None: ...
 
 
 class DetectorPort(Protocol):

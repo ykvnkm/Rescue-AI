@@ -91,9 +91,12 @@ def test_yolo_detector_warmup_requires_ultralytics(
 
     detector = YoloDetector(config)
 
+    def _raise_import_error():
+        raise ImportError("missing ultralytics")
+
     monkeypatch.setattr(
-        "rescue_ai.infrastructure.yolo_detector.YOLO",
-        None,
+        "rescue_ai.infrastructure.yolo_detector._load_yolo_class",
+        _raise_import_error,
     )
 
     with pytest.raises(RuntimeError):
@@ -126,7 +129,10 @@ def test_yolo_detector_validates_checksum(monkeypatch: pytest.MonkeyPatch) -> No
             def __init__(self, model_path: str) -> None:
                 _ = model_path
 
-        monkeypatch.setattr("rescue_ai.infrastructure.yolo_detector.YOLO", _FakeYolo)
+        monkeypatch.setattr(
+            "rescue_ai.infrastructure.yolo_detector._load_yolo_class",
+            lambda: _FakeYolo,
+        )
 
         with pytest.raises(RuntimeError, match="Model checksum mismatch"):
             detector.warmup()
@@ -162,6 +168,9 @@ def test_yolo_detector_accepts_matching_checksum(
             def __init__(self, model_path: str) -> None:
                 self.model_path = model_path
 
-        monkeypatch.setattr("rescue_ai.infrastructure.yolo_detector.YOLO", _FakeYolo)
+        monkeypatch.setattr(
+            "rescue_ai.infrastructure.yolo_detector._load_yolo_class",
+            lambda: _FakeYolo,
+        )
 
         detector.warmup()

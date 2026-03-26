@@ -1,5 +1,6 @@
 """In-memory repository implementations for testing."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from rescue_ai.domain.entities import Alert, FrameEvent, Mission
@@ -157,11 +158,11 @@ class InMemoryArtifactStorage:
             )
         return None
 
-    def save_mission_report(self, mission_id: str, report: dict[str, object]) -> str:
+    def save_mission_report(self, mission_id: str, report: Mapping[str, object]) -> str:
         self._reports[mission_id] = dict(report)
         return f"memory://missions/{mission_id}/report.json"
 
-    def load_mission_report(self, mission_id: str) -> dict[str, object] | None:
+    def load_mission_report(self, mission_id: str) -> Mapping[str, object] | None:
         payload = self._reports.get(mission_id)
         return dict(payload) if payload is not None else None
 

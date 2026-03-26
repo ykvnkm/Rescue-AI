@@ -15,6 +15,10 @@ from rescue_ai.domain.entities import Detection
 MODEL_CACHE_DIR = Path("runtime/models")
 
 
+def _load_yolo_class():
+    return getattr(importlib.import_module("ultralytics"), "YOLO")
+
+
 class YoloDetector:
     """YOLO detector with lazy model loading from public model URL."""
 
@@ -61,7 +65,7 @@ class YoloDetector:
             return self._model
 
         try:
-            yolo_cls = getattr(importlib.import_module("ultralytics"), "YOLO")
+            yolo_cls = _load_yolo_class()
         except (ImportError, AttributeError) as error:
             raise RuntimeError(
                 "ultralytics is not installed.\n"

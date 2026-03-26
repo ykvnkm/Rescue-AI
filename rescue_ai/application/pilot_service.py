@@ -198,7 +198,7 @@ class PilotService:
         if mission.status == "completed":
             cached_report = self._deps.artifact_storage.load_mission_report(mission_id)
             if cached_report is not None:
-                return cached_report
+                return dict(cached_report)
 
         report = self._build_mission_report(mission_id, mission.completed_frame_id)
         self._deps.artifact_storage.save_mission_report(mission_id, report)
