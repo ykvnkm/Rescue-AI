@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from rescue_ai.application.pilot_service import PilotService
-from rescue_ai.domain.entities import Detection, FrameEvent
+from rescue_ai.domain.entities import AlertRuleConfig, Detection, FrameEvent
 from rescue_ai.infrastructure.memory_repositories import (
     InMemoryAlertRepository,
     InMemoryArtifactStorage,
@@ -15,13 +15,23 @@ def _build_pilot_service(
     artifact_storage: InMemoryArtifactStorage | None = None,
 ) -> tuple[PilotService, InMemoryDatabase]:
     db = InMemoryDatabase()
+    alert_rules = AlertRuleConfig(
+        score_threshold=0.2,
+        window_sec=1.0,
+        quorum_k=1,
+        cooldown_sec=1.5,
+        gap_end_sec=1.2,
+        gt_gap_end_sec=1.0,
+        match_tolerance_sec=1.2,
+    )
     service = PilotService(
         dependencies=PilotService.Dependencies(
             mission_repository=InMemoryMissionRepository(db),
             alert_repository=InMemoryAlertRepository(db),
             frame_event_repository=InMemoryFrameEventRepository(db),
             artifact_storage=artifact_storage or InMemoryArtifactStorage(),
-        )
+        ),
+        alert_rules=alert_rules,
     )
     return service, db
 

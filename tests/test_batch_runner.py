@@ -183,7 +183,15 @@ def _request(force: bool = False) -> BatchRunRequest:
         config_hash="cfg",
         model_version="model-v1",
         code_version="code-v1",
-        alert_rules=AlertRuleConfig(),
+        alert_rules=AlertRuleConfig(
+            score_threshold=0.2,
+            window_sec=1.0,
+            quorum_k=1,
+            cooldown_sec=1.5,
+            gap_end_sec=1.2,
+            gt_gap_end_sec=1.0,
+            match_tolerance_sec=1.2,
+        ),
         force=force,
     )
 

@@ -64,13 +64,13 @@ class Alert:
 class AlertRuleConfig:
     """Alert sliding-window thresholds loaded from contract YAML."""
 
-    score_threshold: float = 0.2
-    window_sec: float = 1.0
-    quorum_k: int = 1
-    cooldown_sec: float = 1.5
-    gap_end_sec: float = 1.2
-    gt_gap_end_sec: float = 1.0
-    match_tolerance_sec: float = 1.2
+    score_threshold: float
+    window_sec: float
+    quorum_k: int
+    cooldown_sec: float
+    gap_end_sec: float
+    gt_gap_end_sec: float
+    match_tolerance_sec: float
 
 
 @dataclass(frozen=True)

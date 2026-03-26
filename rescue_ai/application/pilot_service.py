@@ -43,12 +43,12 @@ class PilotService:
     def __init__(
         self,
         dependencies: Dependencies,
-        alert_rules: AlertRuleConfig | None = None,
+        alert_rules: AlertRuleConfig,
     ) -> None:
-        """Initialise service with injected dependencies and optional alert rules."""
+        """Initialise service with injected dependencies and alert rules."""
         self._deps = dependencies
         self._alert_state: dict[str, MissionAlertState] = {}
-        self._alert_rules = alert_rules or AlertRuleConfig()
+        self._alert_rules = alert_rules
         self._report_metadata: dict[str, object] = {}
 
     def set_report_metadata(self, metadata: dict[str, object]) -> None:
