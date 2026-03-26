@@ -178,7 +178,7 @@ class TestInferenceStage:
             debug_uri = "debug://uri"
 
         class FakeRunner:
-            def run(self, request):
+            def run(self, _request):
                 return FakeResult()
 
         class FakeRequest:
@@ -203,7 +203,7 @@ class TestInferenceStage:
             debug_uri = "d"
 
         class FakeRunner:
-            def run(self, request):
+            def run(self, _request):
                 return FakeResult()
 
         def factory():

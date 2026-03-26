@@ -14,56 +14,56 @@ from rescue_ai.infrastructure.postgres_repositories import (
 
 
 def _mission(mid: str = "m-1", **kw: object) -> Mission:
-    defaults = dict(
-        mission_id=mid,
-        source_name="dataset-a",
-        status="created",
-        created_at="2026-03-14T00:00:00+00:00",
-        total_frames=10,
-        fps=2.5,
-    )
+    defaults = {
+        "mission_id": mid,
+        "source_name": "dataset-a",
+        "status": "created",
+        "created_at": "2026-03-14T00:00:00+00:00",
+        "total_frames": 10,
+        "fps": 2.5,
+    }
     defaults.update(kw)
     return Mission(**defaults)  # type: ignore[arg-type]
 
 
 def _frame(mid: str = "m-1", fid: int = 1, **kw: object) -> FrameEvent:
-    defaults = dict(
-        mission_id=mid,
-        frame_id=fid,
-        ts_sec=0.5 * fid,
-        image_uri=f"s3://bucket/frames/{fid}.jpg",
-        gt_person_present=False,
-        gt_episode_id=None,
-    )
+    defaults = {
+        "mission_id": mid,
+        "frame_id": fid,
+        "ts_sec": 0.5 * fid,
+        "image_uri": f"s3://bucket/frames/{fid}.jpg",
+        "gt_person_present": False,
+        "gt_episode_id": None,
+    }
     defaults.update(kw)
     return FrameEvent(**defaults)  # type: ignore[arg-type]
 
 
 def _detection(**kw: object) -> Detection:
-    defaults = dict(
-        bbox=(10.0, 20.0, 30.0, 40.0),
-        score=0.95,
-        label="person",
-        model_name="yolo8n",
-        explanation="hit",
-    )
+    defaults = {
+        "bbox": (10.0, 20.0, 30.0, 40.0),
+        "score": 0.95,
+        "label": "person",
+        "model_name": "yolo8n",
+        "explanation": "hit",
+    }
     defaults.update(kw)
     return Detection(**defaults)  # type: ignore[arg-type]
 
 
 def _alert(aid: str = "a-1", mid: str = "m-1", fid: int = 1, **kw: object) -> Alert:
     det = _detection()
-    defaults = dict(
-        alert_id=aid,
-        mission_id=mid,
-        frame_id=fid,
-        ts_sec=0.5,
-        image_uri="s3://bucket/frames/1.jpg",
-        people_detected=1,
-        primary_detection=det,
-        detections=[det],
-        status="queued",
-    )
+    defaults = {
+        "alert_id": aid,
+        "mission_id": mid,
+        "frame_id": fid,
+        "ts_sec": 0.5,
+        "image_uri": "s3://bucket/frames/1.jpg",
+        "people_detected": 1,
+        "primary_detection": det,
+        "detections": [det],
+        "status": "queued",
+    }
     defaults.update(kw)
     return Alert(**defaults)  # type: ignore[arg-type]
 
@@ -204,10 +204,12 @@ def test_update_alert_status(pg_db: PostgresDatabase) -> None:
 
     reviewed = alerts.update_status(
         "a-1",
-        status="reviewed_confirmed",
-        reviewed_by="operator-1",
-        reviewed_at_sec=1.0,
-        decision_reason="valid",
+        {
+            "status": "reviewed_confirmed",
+            "reviewed_by": "operator-1",
+            "reviewed_at_sec": 1.0,
+            "decision_reason": "valid",
+        },
     )
     assert reviewed is not None
     assert reviewed.status == "reviewed_confirmed"
@@ -223,23 +225,23 @@ def test_update_already_reviewed_raises(pg_db: PostgresDatabase) -> None:
     missions.create(_mission())
     frames.add(_frame())
     alerts.add(_alert())
-    alerts.update_status("a-1", status="reviewed_confirmed")
+    alerts.update_status("a-1", {"status": "reviewed_confirmed"})
 
     with pytest.raises(ValueError, match="already reviewed"):
-        alerts.update_status("a-1", status="reviewed_rejected")
+        alerts.update_status("a-1", {"status": "reviewed_rejected"})
 
 
 @pytest.mark.integration
 def test_update_invalid_status_raises(pg_db: PostgresDatabase) -> None:
     alerts = PostgresAlertRepository(pg_db)
     with pytest.raises(ValueError, match="Invalid target status"):
-        alerts.update_status("a-1", status="bogus")
+        alerts.update_status("a-1", {"status": "bogus"})
 
 
 @pytest.mark.integration
 def test_update_returns_none_for_missing(pg_db: PostgresDatabase) -> None:
     alerts = PostgresAlertRepository(pg_db)
-    assert alerts.update_status("nope", status="reviewed_confirmed") is None
+    assert alerts.update_status("nope", {"status": "reviewed_confirmed"}) is None
 
 
 # ── PostgresDatabase ────────────────────────────────────────────────────

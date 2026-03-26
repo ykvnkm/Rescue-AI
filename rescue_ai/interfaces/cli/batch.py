@@ -74,32 +74,26 @@ def parse_args() -> argparse.Namespace:
 def build_stage_store():
     """Build stage artifact store (local or S3) from settings."""
     settings = get_settings()
-    if settings.batch.artifact_backend == "s3" and settings.batch.s3.ready:
-        return S3StageStore(
-            endpoint_url=settings.batch.s3.endpoint,
-            region_name=settings.batch.s3.region,
-            access_key=settings.batch.s3.access_key_id,
-            secret_key=settings.batch.s3.secret_access_key,
-            bucket=settings.batch.s3.bucket or "",
-        )
-    return LocalStageStore(root=settings.batch.artifact_root / "stages")
+    if settings.batch.backends.artifact == "s3" and settings.batch.s3.ready:
+        return S3StageStore(settings.batch.s3)
+    return LocalStageStore(root=settings.batch.paths.artifact_root / "stages")
 
 
 def build_status_store():
     """Build run status store based on environment configuration."""
     settings = get_settings()
-    if settings.batch.status_backend == "postgres":
-        dsn = settings.batch.postgres_dsn
+    if settings.batch.backends.status == "postgres":
+        dsn = settings.batch.backends.postgres_dsn
         if not dsn:
             raise ValueError("BATCH_POSTGRES_DSN is required for postgres backend")
         return PostgresStatusStore(dsn=dsn)
-    return JsonStatusStore(path=settings.batch.status_path)
+    return JsonStatusStore(path=settings.batch.paths.status_path)
 
 
 def build_artifact_store():
     """Build artifact store based on environment configuration."""
     settings = get_settings()
-    if settings.batch.artifact_backend == "s3":
+    if settings.batch.backends.artifact == "s3":
         bucket = settings.batch.s3.bucket
         if not bucket:
             raise ValueError("BATCH_S3_BUCKET is required for s3 backend")
@@ -110,16 +104,16 @@ def build_artifact_store():
             secret_access_key=settings.batch.s3.secret_access_key,
             bucket=bucket,
         )
-        fallback = LocalArtifactStorage(root=settings.batch.artifact_root)
+        fallback = LocalArtifactStorage(root=settings.batch.paths.artifact_root)
         return S3ArtifactStorage(settings=s3_settings, fallback_storage=fallback)
-    return LocalArtifactStorage(root=settings.batch.artifact_root)
+    return LocalArtifactStorage(root=settings.batch.paths.artifact_root)
 
 
 def build_source() -> LocalMissionSource:
     """Build local mission source for batch processing."""
     settings = get_settings()
     return LocalMissionSource(
-        root_dir=settings.batch.mission_root,
+        root_dir=settings.batch.paths.mission_root,
         fps=settings.batch.source_fps,
     )
 

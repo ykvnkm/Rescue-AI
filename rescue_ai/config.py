@@ -79,6 +79,7 @@ class S3Settings:
 
     @property
     def ready(self) -> bool:
+        """Return True when all required S3 fields are populated."""
         return bool(
             self.endpoint
             and self.region
@@ -89,6 +90,7 @@ class S3Settings:
 
     @property
     def has_credentials(self) -> bool:
+        """Return True when both access-key and secret-key are set."""
         return bool(self.access_key_id and self.secret_access_key)
 
 
@@ -103,19 +105,33 @@ class ArtifactSettings:
 
 
 @dataclass(frozen=True)
+class BatchPathSettings:
+    """Filesystem paths used by the batch pipeline."""
+
+    status_path: Path = Path("/opt/airflow/data/status/runs.json")
+    artifact_root: Path = Path("/opt/airflow/data/artifacts")
+    mission_root: Path = Path("/opt/airflow/data/missions")
+
+
+@dataclass(frozen=True)
+class BatchBackendSettings:
+    """Backend selection and connection details for batch processing."""
+
+    status: str = "json"
+    artifact: str = "local"
+    postgres_dsn: str | None = None
+
+
+@dataclass(frozen=True)
 class BatchSettings:
     """Batch processing settings."""
 
     model_version: str = "yolov8n_baseline_multiscale"
     code_version: str = "dev"
     runtime_env: str = "local"
-    status_backend: str = "json"
-    artifact_backend: str = "local"
-    status_path: Path = Path("/opt/airflow/data/status/runs.json")
-    artifact_root: Path = Path("/opt/airflow/data/artifacts")
-    mission_root: Path = Path("/opt/airflow/data/missions")
+    backends: BatchBackendSettings = BatchBackendSettings()
+    paths: BatchPathSettings = BatchPathSettings()
     source_fps: float = 6.0
-    postgres_dsn: str | None = None
     s3: S3Settings = S3Settings()
 
 
@@ -217,17 +233,23 @@ def get_settings() -> Settings:
             model_version=_env("BATCH_MODEL_VERSION", "yolov8n_baseline_multiscale"),
             code_version=_env("BATCH_CODE_VERSION", "dev"),
             runtime_env=runtime_env,
-            status_backend=_resolve_batch_status_backend(runtime_env),
-            artifact_backend=_resolve_batch_artifact_backend(runtime_env),
-            status_path=Path(
-                _env("BATCH_STATUS_PATH", "/opt/airflow/data/status/runs.json")
+            backends=BatchBackendSettings(
+                status=_resolve_batch_status_backend(runtime_env),
+                artifact=_resolve_batch_artifact_backend(runtime_env),
+                postgres_dsn=_env_optional("BATCH_POSTGRES_DSN"),
             ),
-            artifact_root=Path(
-                _env("BATCH_ARTIFACT_ROOT", "/opt/airflow/data/artifacts")
+            paths=BatchPathSettings(
+                status_path=Path(
+                    _env("BATCH_STATUS_PATH", "/opt/airflow/data/status/runs.json")
+                ),
+                artifact_root=Path(
+                    _env("BATCH_ARTIFACT_ROOT", "/opt/airflow/data/artifacts")
+                ),
+                mission_root=Path(
+                    _env("BATCH_MISSION_ROOT", "/opt/airflow/data/missions")
+                ),
             ),
-            mission_root=Path(_env("BATCH_MISSION_ROOT", "/opt/airflow/data/missions")),
             source_fps=_env_float("BATCH_SOURCE_FPS", 6.0),
-            postgres_dsn=_env_optional("BATCH_POSTGRES_DSN"),
             s3=_build_batch_s3(),
         ),
         detection=DetectionSettings(

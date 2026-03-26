@@ -14,6 +14,7 @@ class HttpFramePublisher:
     def publish(
         self, mission_id: str, api_base: str, payload: dict[str, object]
     ) -> None:
+        """Post a frame event payload to the mission API endpoint."""
         url = self.endpoint(mission_id=mission_id, api_base=api_base)
         req = request.Request(
             url=url,
@@ -26,4 +27,5 @@ class HttpFramePublisher:
             return
 
     def endpoint(self, mission_id: str, api_base: str) -> str:
+        """Build the frames endpoint URL for a given mission."""
         return f"{api_base}/v1/missions/{mission_id}/frames"

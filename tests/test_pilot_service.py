@@ -101,10 +101,12 @@ def test_review_alert_cannot_be_applied_twice() -> None:
 
     reviewed = service.review_alert(
         alert.alert_id,
-        status="reviewed_confirmed",
-        reviewed_by="operator-1",
-        reviewed_at_sec=None,
-        decision_reason="valid target",
+        {
+            "status": "reviewed_confirmed",
+            "reviewed_by": "operator-1",
+            "reviewed_at_sec": None,
+            "decision_reason": "valid target",
+        },
     )
 
     assert reviewed is not None
@@ -113,10 +115,12 @@ def test_review_alert_cannot_be_applied_twice() -> None:
     try:
         service.review_alert(
             alert.alert_id,
-            status="reviewed_rejected",
-            reviewed_by="operator-2",
-            reviewed_at_sec=1.0,
-            decision_reason="should fail",
+            {
+                "status": "reviewed_rejected",
+                "reviewed_by": "operator-2",
+                "reviewed_at_sec": 1.0,
+                "decision_reason": "should fail",
+            },
         )
     except ValueError as error:
         assert str(error) == "Alert already reviewed"

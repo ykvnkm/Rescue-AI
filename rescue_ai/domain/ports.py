@@ -16,9 +16,11 @@ from rescue_ai.domain.entities import (
 class MissionRepository(Protocol):
     """Mission persistence contract."""
 
-    def create(self, mission: Mission) -> None: ...
+    def create(self, mission: Mission) -> None:
+        """Persist a new mission."""
 
-    def get(self, mission_id: str) -> Mission | None: ...
+    def get(self, mission_id: str) -> Mission | None:
+        """Retrieve a mission by its identifier."""
 
     def update_details(
         self,
@@ -27,14 +29,16 @@ class MissionRepository(Protocol):
         source_name: str | None = None,
         total_frames: int | None = None,
         fps: float | None = None,
-    ) -> Mission | None: ...
+    ) -> Mission | None:
+        """Update mutable mission metadata fields."""
 
     def update_status(
         self,
         mission_id: str,
         status: str,
         completed_frame_id: int | None = None,
-    ) -> Mission | None: ...
+    ) -> Mission | None:
+        """Transition mission to a new status."""
 
 
 class AlertRepository(Protocol):
@@ -53,12 +57,9 @@ class AlertRepository(Protocol):
     def update_status(
         self,
         alert_id: str,
-        *,
-        status: str,
-        reviewed_by: str | None = None,
-        reviewed_at_sec: float | None = None,
-        decision_reason: str | None = None,
-    ) -> Alert | None: ...
+        updates: dict[str, object],
+    ) -> Alert | None:
+        """Apply a review decision to an alert."""
 
 
 class FrameEventRepository(Protocol):

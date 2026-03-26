@@ -45,10 +45,8 @@ class PilotService:
         dependencies: Dependencies,
         alert_rules: AlertRuleConfig | None = None,
     ) -> None:
-        self._missions = dependencies.mission_repository
-        self._alerts = dependencies.alert_repository
-        self._frames = dependencies.frame_event_repository
-        self._artifacts = dependencies.artifact_storage
+        """Initialise service with injected dependencies and optional alert rules."""
+        self._deps = dependencies
         self._alert_state: dict[str, MissionAlertState] = {}
         self._alert_rules = alert_rules or AlertRuleConfig()
         self._report_metadata: dict[str, object] = {}
@@ -63,6 +61,7 @@ class PilotService:
         total_frames: int,
         fps: float,
     ) -> Mission:
+        """Create a new mission and persist it."""
         mission = Mission(
             mission_id=str(uuid4()),
             source_name=source_name,
@@ -71,11 +70,12 @@ class PilotService:
             total_frames=total_frames,
             fps=fps,
         )
-        self._missions.create(mission)
+        self._deps.mission_repository.create(mission)
         return mission
 
     def get_mission(self, mission_id: str) -> Mission | None:
-        return self._missions.get(mission_id)
+        """Return a mission by ID, or None if not found."""
+        return self._deps.mission_repository.get(mission_id)
 
     def update_mission(
         self,
@@ -85,7 +85,8 @@ class PilotService:
         total_frames: int | None = None,
         fps: float | None = None,
     ) -> Mission | None:
-        return self._missions.update_details(
+        """Update mutable mission details (name, frames, fps)."""
+        return self._deps.mission_repository.update_details(
             mission_id,
             source_name=source_name,
             total_frames=total_frames,
@@ -93,14 +94,18 @@ class PilotService:
         )
 
     def start_mission(self, mission_id: str) -> Mission | None:
-        return self._missions.update_status(mission_id=mission_id, status="running")
+        """Transition a mission to the running state."""
+        return self._deps.mission_repository.update_status(
+            mission_id=mission_id, status="running"
+        )
 
     def complete_mission(
         self,
         mission_id: str,
         completed_frame_id: int | None = None,
     ) -> Mission | None:
-        return self._missions.update_status(
+        """Mark a mission as completed, optionally recording the last frame."""
+        return self._deps.mission_repository.update_status(
             mission_id=mission_id,
             status="completed",
             completed_frame_id=completed_frame_id,
@@ -111,7 +116,8 @@ class PilotService:
         frame_event: FrameEvent,
         detections: list[Detection],
     ) -> list[Alert]:
-        mission = self._missions.get(frame_event.mission_id)
+        """Process a frame event, evaluate alert rules, and persist results."""
+        mission = self._deps.mission_repository.get(frame_event.mission_id)
         if mission is None:
             raise ValueError("Mission not found")
         if (
@@ -126,17 +132,17 @@ class PilotService:
             detections=detections,
         )
 
-        stored_image_uri = self._artifacts.store_frame(
+        stored_image_uri = self._deps.artifact_storage.store_frame(
             mission_id=frame_event.mission_id,
             frame_id=frame_event.frame_id,
             source_uri=frame_event.image_uri,
         )
         frame_event.image_uri = stored_image_uri
-        self._frames.add(frame_event)
+        self._deps.frame_event_repository.add(frame_event)
 
         for alert in alerts:
             alert.image_uri = stored_image_uri
-            self._alerts.add(alert)
+            self._deps.alert_repository.add(alert)
         return alerts
 
     def list_alerts(
@@ -144,51 +150,42 @@ class PilotService:
         mission_id: str | None = None,
         status: str | None = None,
     ) -> list[Alert]:
-        return self._alerts.list(mission_id=mission_id, status=status)
+        return self._deps.alert_repository.list(mission_id=mission_id, status=status)
 
     def get_alert(self, alert_id: str) -> Alert | None:
-        return self._alerts.get(alert_id)
+        return self._deps.alert_repository.get(alert_id)
 
     def review_alert(
         self,
         alert_id: str,
-        *,
-        status: str,
-        reviewed_by: str | None = None,
-        reviewed_at_sec: float | None = None,
-        decision_reason: str | None = None,
+        updates: dict[str, object],
     ) -> Alert | None:
-        return self._alerts.update_status(
-            alert_id=alert_id,
-            status=status,
-            reviewed_by=reviewed_by,
-            reviewed_at_sec=reviewed_at_sec,
-            decision_reason=decision_reason,
-        )
+        """Apply a review decision to an alert."""
+        return self._deps.alert_repository.update_status(alert_id, updates)
 
     def reset_runtime_state(self) -> None:
         self._alert_state.clear()
 
     def get_mission_report(self, mission_id: str) -> dict[str, object]:
-        mission = self._missions.get(mission_id)
+        mission = self._deps.mission_repository.get(mission_id)
         if mission is None:
             raise ValueError("Mission not found")
 
         if mission.status == "completed":
-            cached_report = self._artifacts.load_mission_report(mission_id)
+            cached_report = self._deps.artifact_storage.load_mission_report(mission_id)
             if cached_report is not None:
                 return cached_report
 
         report = self._build_mission_report(mission_id, mission.completed_frame_id)
-        self._artifacts.save_mission_report(mission_id, report)
+        self._deps.artifact_storage.save_mission_report(mission_id, report)
         return report
 
     def get_alert_frame_artifact(self, alert_id: str) -> ArtifactBlob:
-        alert = self._alerts.get(alert_id)
+        alert = self._deps.alert_repository.get(alert_id)
         if alert is None:
             raise ValueError("Alert not found")
 
-        artifact = self._artifacts.load_frame(alert.image_uri)
+        artifact = self._deps.artifact_storage.load_frame(alert.image_uri)
         if artifact is None:
             raise FileNotFoundError("Frame artifact not found")
         return artifact
@@ -221,10 +218,10 @@ class PilotService:
         completed_frame_id: int | None,
     ) -> MissionReportData:
         frames = sorted(
-            self._frames.list_by_mission(mission_id),
+            self._deps.frame_event_repository.list_by_mission(mission_id),
             key=lambda item: item.frame_id,
         )
-        alerts = self._alerts.list(mission_id=mission_id)
+        alerts = self._deps.alert_repository.list(mission_id=mission_id)
         if completed_frame_id is not None:
             frames = [item for item in frames if item.frame_id <= completed_frame_id]
             alerts = [item for item in alerts if item.frame_id <= completed_frame_id]
@@ -241,12 +238,12 @@ class PilotService:
         mission_id: str,
         limit: int = 200,
     ) -> dict[str, object]:
-        mission = self._missions.get(mission_id)
+        mission = self._deps.mission_repository.get(mission_id)
         if mission is None:
             raise ValueError("Mission not found")
 
         frames = sorted(
-            self._frames.list_by_mission(mission_id),
+            self._deps.frame_event_repository.list_by_mission(mission_id),
             key=lambda item: item.frame_id,
         )
         cutoff = mission.completed_frame_id

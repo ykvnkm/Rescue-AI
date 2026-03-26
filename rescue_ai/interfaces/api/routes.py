@@ -299,11 +299,13 @@ def confirm_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
     service = get_pilot_service()
     try:
         alert = service.review_alert(
-            alert_id=alert_id,
-            status="reviewed_confirmed",
-            reviewed_by=payload.reviewed_by,
-            reviewed_at_sec=payload.reviewed_at_sec,
-            decision_reason=payload.decision_reason,
+            alert_id,
+            {
+                "status": "reviewed_confirmed",
+                "reviewed_by": payload.reviewed_by,
+                "reviewed_at_sec": payload.reviewed_at_sec,
+                "decision_reason": payload.decision_reason,
+            },
         )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -317,11 +319,13 @@ def reject_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
     service = get_pilot_service()
     try:
         alert = service.review_alert(
-            alert_id=alert_id,
-            status="reviewed_rejected",
-            reviewed_by=payload.reviewed_by,
-            reviewed_at_sec=payload.reviewed_at_sec,
-            decision_reason=payload.decision_reason,
+            alert_id,
+            {
+                "status": "reviewed_rejected",
+                "reviewed_by": payload.reviewed_by,
+                "reviewed_at_sec": payload.reviewed_at_sec,
+                "decision_reason": payload.decision_reason,
+            },
         )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error

@@ -23,13 +23,17 @@ from typing import Protocol
 class StageStorage(Protocol):
     """Minimal JSON-based artifact store used by every stage."""
 
-    def exists(self, key: str) -> bool: ...
+    def exists(self, key: str) -> bool:
+        """Return True if an artifact exists at *key*."""
 
-    def read_json(self, key: str) -> dict[str, object]: ...
+    def read_json(self, key: str) -> dict[str, object]:
+        """Read and return the JSON artifact stored at *key*."""
 
-    def write_json(self, key: str, payload: dict[str, object]) -> None: ...
+    def write_json(self, key: str, payload: dict[str, object]) -> None:
+        """Serialise *payload* as JSON and write it to *key*."""
 
-    def uri(self, key: str) -> str: ...
+    def uri(self, key: str) -> str:
+        """Return the canonical URI for *key*."""
 
 
 # ── Deterministic key builder ───────────────────────────────────
@@ -47,28 +51,33 @@ class PipelinePaths:
 
     @property
     def base(self) -> str:
+        """Return the common key prefix for all artifacts in this run."""
         prefix = self.prefix.strip("/")
         root = f"ml_pipeline/mission={self.mission_id}/ds={self.ds}"
         return f"{prefix}/{root}" if prefix else root
 
     @property
     def data_key(self) -> str:
+        """Return the storage key for the dataset manifest."""
         return f"{self.base}/dataset.json"
 
     @property
     def model_key(self) -> str:
+        """Return the storage key for the trained model card."""
         mv = _slug(self.model_version)
         cv = _slug(self.code_version)
         return f"{self.base}/model_{mv}_{cv}.json"
 
     @property
     def validation_key(self) -> str:
+        """Return the storage key for the validation report."""
         mv = _slug(self.model_version)
         cv = _slug(self.code_version)
         return f"{self.base}/validation_{mv}_{cv}.json"
 
     @property
     def inference_key(self) -> str:
+        """Return the storage key for the inference results."""
         mv = _slug(self.model_version)
         cv = _slug(self.code_version)
         return f"{self.base}/inference_{mv}_{cv}.json"

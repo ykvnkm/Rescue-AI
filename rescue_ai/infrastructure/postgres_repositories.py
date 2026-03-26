@@ -395,14 +395,20 @@ class PostgresAlertRepository:
     def update_status(
         self,
         alert_id: str,
-        *,
-        status: str,
-        reviewed_by: str | None = None,
-        reviewed_at_sec: float | None = None,
-        decision_reason: str | None = None,
+        updates: dict[str, object],
     ) -> Alert | None:
+        """Apply a review decision to an alert."""
+        status = str(updates.get("status", ""))
         if status not in self.allowed_target_statuses:
             raise ValueError("Invalid target status")
+
+        reviewed_by_raw = updates.get("reviewed_by")
+        reviewed_by = reviewed_by_raw if isinstance(reviewed_by_raw, str) else None
+        reviewed_at_sec = updates.get("reviewed_at_sec")
+        decision_reason_raw = updates.get("decision_reason")
+        decision_reason = (
+            decision_reason_raw if isinstance(decision_reason_raw, str) else None
+        )
 
         with self._db.connect() as conn:
             with conn.cursor() as cursor:
@@ -421,11 +427,12 @@ class PostgresAlertRepository:
                 if str(existing[1]) != "queued":
                     raise ValueError("Alert already reviewed")
 
-                effective_reviewed_at = (
-                    reviewed_at_sec
-                    if reviewed_at_sec is not None
-                    else float(existing[2])
-                )
+                if reviewed_at_sec is None:
+                    effective_reviewed_at = float(str(existing[2]))
+                elif isinstance(reviewed_at_sec, (int, float, str)):
+                    effective_reviewed_at = float(reviewed_at_sec)
+                else:
+                    raise ValueError("Invalid reviewed_at_sec")
                 cursor.execute(
                     f"""
                     UPDATE alerts

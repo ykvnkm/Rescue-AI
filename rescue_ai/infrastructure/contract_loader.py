@@ -35,6 +35,7 @@ class StreamContract:
 
 
 def load_stream_contract() -> StreamContract:
+    """Load and resolve the stream contract from the default YAML file."""
     contract_path = DEFAULT_CONTRACT_PATH
     payload = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
 
@@ -88,6 +89,7 @@ def load_stream_contract() -> StreamContract:
 
 
 def load_alert_rules_and_metadata() -> tuple[AlertRuleConfig, dict[str, object]]:
+    """Return alert rules and report metadata from the stream contract."""
     contract = load_stream_contract()
 
     report_metadata: dict[str, object] = {

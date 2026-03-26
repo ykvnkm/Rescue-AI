@@ -22,6 +22,7 @@ class FrameSourceService:
     """Lists mission frames and computes stable timeline timestamps."""
 
     def list_frame_files(self, frames_path: Path) -> list[Path]:
+        """Return sorted image files from the given frames directory."""
         return sorted(
             path
             for path in frames_path.iterdir()
@@ -29,6 +30,7 @@ class FrameSourceService:
         )
 
     def compute_ts_sec(self, inputs: TimestampInputs) -> float:
+        """Compute a stable timestamp in seconds for the given frame."""
         dt = 1.0 / inputs.fps if inputs.fps > 0 else 0.5
         if inputs.fps <= 0:
             return inputs.idx * dt
@@ -44,6 +46,7 @@ class FrameSourceService:
         return ts_sec
 
     def extract_frame_number(self, frame_path: Path) -> int | None:
+        """Extract the numeric frame index from a frame filename."""
         stem = frame_path.stem
         parts = stem.split("_")
         if parts and parts[-1].isdigit():

@@ -65,6 +65,7 @@ class DetectionStreamController:
         contract: StreamContract | None = None,
         frame_source: FrameSourceService | None = None,
     ) -> StreamConfig:
+        """Build a StreamConfig from mission options and contract defaults."""
         resolved_contract = contract or load_stream_contract()
         source = frame_source or self._frame_source
 
@@ -96,20 +97,24 @@ class DetectionStreamController:
         )
 
     def start(self, config: StreamConfig) -> StreamState:
+        """Start a detection stream with the given configuration."""
         return self._orchestrator.start_stream(config)
 
     def stop(self, mission_id: str) -> StreamState | None:
+        """Request graceful stop of the stream for a mission."""
         return self._orchestrator.stop_stream(mission_id)
 
     def wait_stopped(
         self, mission_id: str, timeout_sec: float = 3.0
     ) -> StreamState | None:
+        """Block until the stream has stopped or timeout expires."""
         return self._orchestrator.wait_stream_stopped(
             mission_id=mission_id,
             timeout_sec=timeout_sec,
         )
 
     def get_state(self, mission_id: str) -> StreamState | None:
+        """Return current stream state for a mission, or None."""
         return self._orchestrator.get_stream_state(mission_id)
 
 

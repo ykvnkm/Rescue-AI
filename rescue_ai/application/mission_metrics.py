@@ -17,6 +17,7 @@ class MissionReportData(NamedTuple):
 
 
 def split_reviewed_alerts(alerts: list[Alert]) -> tuple[list[Alert], list[Alert]]:
+    """Split alerts into confirmed and rejected lists based on review status."""
     confirmed_alerts = [
         alert for alert in alerts if alert.status == "reviewed_confirmed"
     ]
@@ -28,6 +29,7 @@ def build_report_stats(
     report_data: MissionReportData,
     alert_rules: AlertRuleConfig,
 ) -> dict[str, object]:
+    """Build a dictionary of mission KPI statistics from report data."""
     episodes = build_gt_episodes(
         frames=report_data.frames,
         gt_gap_end_sec=alert_rules.gt_gap_end_sec,
@@ -69,6 +71,7 @@ def build_gt_episodes(
     frames: list[FrameEvent],
     gt_gap_end_sec: float,
 ) -> list[tuple[float, float]]:
+    """Build ground-truth person-presence episodes from frame events."""
     episodes: list[tuple[float, float]] = []
     start_sec: float | None = None
     end_sec: float | None = None
@@ -105,6 +108,7 @@ def count_found_episodes(
     alerts: list[Alert],
     tolerance_sec: float,
 ) -> int:
+    """Count ground-truth episodes matched by at least one alert."""
     episodes_found = 0
     for episode_start, episode_end in episodes:
         window_start = episode_start - tolerance_sec
@@ -119,6 +123,7 @@ def count_false_alerts(
     alerts: list[Alert],
     tolerance_sec: float,
 ) -> int:
+    """Count alerts that do not match any ground-truth episode."""
     false_alerts_total = 0
     for alert in alerts:
         matches_episode = any(

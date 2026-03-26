@@ -14,10 +14,12 @@ class LocalMissionSource:
     """Loads dated mission frames from local directory structure."""
 
     def __init__(self, root_dir: Path, fps: float = 6.0) -> None:
+        """Initialize with root directory and frame rate."""
         self._root_dir = root_dir
         self._fps = fps
 
     def load(self, mission_id: str, ds: str) -> MissionInput:
+        """Load mission frames and annotations from a dated subdirectory."""
         mission_root = self._root_dir / mission_id / ds
         frames_dir = mission_root / "images"
         annotations_dir = mission_root / "annotations"
@@ -65,10 +67,12 @@ class LocalMissionSource:
         )
 
     def describe_source(self) -> str:
+        """Return a human-readable description of this source."""
         return f"local:{self._root_dir}"
 
 
 def _is_corrupted_image(frame_path: Path) -> bool:
+    """Check whether a file has a valid image magic-byte header."""
     header = frame_path.read_bytes()[:16]
     if len(header) < 2:
         return True

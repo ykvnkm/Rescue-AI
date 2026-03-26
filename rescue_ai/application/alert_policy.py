@@ -41,6 +41,7 @@ def evaluate_alert(
     mission_state: MissionAlertState,
     rules: AlertRuleConfig,
 ) -> AlertEvaluation:
+    """Evaluate detections against alert rules and return an alert decision."""
     current_ts = frame_event.ts_sec
     drop_expired_hits(
         mission_state=mission_state,
@@ -115,6 +116,7 @@ def drop_expired_hits(
     current_ts: float,
     window_sec: float,
 ) -> None:
+    """Remove detection hits that fall outside the sliding window."""
     lower_bound = current_ts - window_sec
     mission_state.recent_hits = [
         hit for hit in mission_state.recent_hits if hit.ts_sec >= lower_bound
@@ -126,6 +128,7 @@ def _drop_hits_after_gap(
     current_ts: float,
     rules: AlertRuleConfig,
 ) -> None:
+    """Clear recent hits when a detection gap exceeds the configured threshold."""
     if (
         mission_state.last_positive_ts is not None
         and current_ts - mission_state.last_positive_ts > rules.gap_end_sec

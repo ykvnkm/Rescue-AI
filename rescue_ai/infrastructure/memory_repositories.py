@@ -90,26 +90,32 @@ class InMemoryAlertRepository:
     def update_status(
         self,
         alert_id: str,
-        *,
-        status: str,
-        reviewed_by: str | None = None,
-        reviewed_at_sec: float | None = None,
-        decision_reason: str | None = None,
+        updates: dict[str, object],
     ) -> Alert | None:
+        """Apply a review decision to an alert."""
         alert = self._db.alerts.get(alert_id)
         if alert is None:
             return None
+        status = str(updates.get("status", ""))
         if status not in self.allowed_target_statuses:
             raise ValueError("Invalid target status")
         if alert.status != "queued":
             raise ValueError("Alert already reviewed")
 
         alert.status = status
-        alert.reviewed_by = reviewed_by
-        alert.reviewed_at_sec = (
-            reviewed_at_sec if reviewed_at_sec is not None else alert.ts_sec
+        reviewed_by = updates.get("reviewed_by")
+        alert.reviewed_by = reviewed_by if isinstance(reviewed_by, str) else None
+        reviewed_at = updates.get("reviewed_at_sec")
+        if reviewed_at is None:
+            alert.reviewed_at_sec = alert.ts_sec
+        elif isinstance(reviewed_at, (int, float, str)):
+            alert.reviewed_at_sec = float(reviewed_at)
+        else:
+            raise ValueError("Invalid reviewed_at_sec")
+        decision_reason = updates.get("decision_reason")
+        alert.decision_reason = (
+            decision_reason if isinstance(decision_reason, str) else None
         )
-        alert.decision_reason = decision_reason
         return alert
 
 

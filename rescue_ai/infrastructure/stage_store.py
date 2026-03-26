@@ -43,23 +43,17 @@ class LocalStageStore:
 class S3StageStore:
     """Stores pipeline stage artifacts as JSON objects in S3."""
 
-    def __init__(
-        self,
-        endpoint_url: str | None,
-        region_name: str,
-        access_key: str | None,
-        secret_key: str | None,
-        bucket: str,
-    ) -> None:
+    def __init__(self, settings: object) -> None:
+        """Accept an S3Settings-like object with credentials."""
         if boto3 is None:
             raise RuntimeError("boto3 is required for S3 stage storage")
-        self._bucket = bucket
+        self._bucket = str(getattr(settings, "bucket", "") or "")
         self._client = boto3.client(
             "s3",
-            endpoint_url=endpoint_url,
-            region_name=region_name,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
+            endpoint_url=getattr(settings, "endpoint", None),
+            region_name=getattr(settings, "region", "us-east-1"),
+            aws_access_key_id=getattr(settings, "access_key_id", None),
+            aws_secret_access_key=getattr(settings, "secret_access_key", None),
         )
 
     def exists(self, key: str) -> bool:

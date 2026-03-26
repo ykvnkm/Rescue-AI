@@ -32,16 +32,9 @@ class _PilotStub:
         _ = (frame_event, detections)
         return []
 
-    def review_alert(
-        self,
-        alert_id: str,
-        *,
-        status: str,
-        reviewed_by: str | None = None,
-        reviewed_at_sec: float | None = None,
-        decision_reason: str | None = None,
-    ):
-        _ = (alert_id, status, reviewed_by, reviewed_at_sec, decision_reason)
+    def review_alert(self, alert_id: str, updates: dict[str, object]):
+        """Stub review_alert that accepts a dict."""
+        _ = (alert_id, updates)
         return object()
 
     def complete_mission(self, mission_id: str, completed_frame_id: int | None):

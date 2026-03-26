@@ -56,12 +56,15 @@ class PilotMissionEngine:
         reviewed_at_sec: float,
         reason: str,
     ) -> None:
+        """Forward an auto-review decision to the pilot service."""
         result = self._pilot.review_alert(
             alert_id,
-            status=status,
-            reviewed_by="batch-auto-review",
-            reviewed_at_sec=reviewed_at_sec,
-            decision_reason=reason,
+            {
+                "status": status,
+                "reviewed_by": "batch-auto-review",
+                "reviewed_at_sec": reviewed_at_sec,
+                "decision_reason": reason,
+            },
         )
         if result is None:
             raise ValueError("Alert not found")

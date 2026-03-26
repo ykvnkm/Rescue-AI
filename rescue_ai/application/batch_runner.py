@@ -110,17 +110,21 @@ class BatchRunResult:
 class MissionSourcePort(Protocol):
     """Loads mission input frames and optional annotations for a given date."""
 
-    def load(self, mission_id: str, ds: str) -> MissionInput: ...
+    def load(self, mission_id: str, ds: str) -> MissionInput:
+        """Load mission input frames for the given mission and date."""
 
-    def describe_source(self) -> str: ...
+    def describe_source(self) -> str:
+        """Return a human-readable description of this mission source."""
 
 
 class RunStatusStorePort(Protocol):
     """Stores and retrieves batch run status records."""
 
-    def get(self, run_key: str) -> RunStatusRecord | None: ...
+    def get(self, run_key: str) -> RunStatusRecord | None:
+        """Retrieve the status record for the given run key."""
 
-    def upsert(self, record: RunStatusRecord) -> None: ...
+    def upsert(self, record: RunStatusRecord) -> None:
+        """Insert or update a run status record."""
 
 
 class MissionEnginePort(Protocol):
@@ -132,14 +136,16 @@ class MissionEnginePort(Protocol):
         total_frames: int,
         fps: float,
         report_metadata: dict[str, object],
-    ) -> str: ...
+    ) -> str:
+        """Create a new mission and start processing."""
 
     def ingest_frame(
         self,
         mission_id: str,
         frame_event: FrameEvent,
         detections: list[Detection],
-    ) -> list[Alert]: ...
+    ) -> list[Alert]:
+        """Ingest a single frame with its detections and return any alerts."""
 
     def review_alert(
         self,
@@ -147,11 +153,14 @@ class MissionEnginePort(Protocol):
         status: str,
         reviewed_at_sec: float,
         reason: str,
-    ) -> None: ...
+    ) -> None:
+        """Record a review decision for the given alert."""
 
-    def complete(self, mission_id: str, completed_frame_id: int | None) -> None: ...
+    def complete(self, mission_id: str, completed_frame_id: int | None) -> None:
+        """Mark the mission as complete."""
 
-    def build_report(self, mission_id: str) -> dict[str, object]: ...
+    def build_report(self, mission_id: str) -> dict[str, object]:
+        """Build and return the final mission report."""
 
 
 class MissionEngineFactoryPort(Protocol):
@@ -161,9 +170,11 @@ class MissionEngineFactoryPort(Protocol):
         self,
         alert_rules: AlertRuleConfig,
         report_metadata: dict[str, object],
-    ) -> MissionEnginePort: ...
+    ) -> MissionEnginePort:
+        """Create a new mission engine instance for a batch run."""
 
-    def factory_name(self) -> str: ...
+    def factory_name(self) -> str:
+        """Return a human-readable name for this factory."""
 
 
 # ── Runner dependencies and processing context ──────────────────

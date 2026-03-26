@@ -52,6 +52,7 @@ class _Registry:
         self._stop_flags: dict[str, bool] = {}
 
     def get(self, mission_id: str) -> StreamState | None:
+        """Return a copy of the stream state for the given mission."""
         with self._lock:
             state = self._states.get(mission_id)
             if state is None:
@@ -59,14 +60,17 @@ class _Registry:
             return StreamState(**asdict(state))
 
     def set(self, state: StreamState) -> None:
+        """Store or update the stream state for a mission."""
         with self._lock:
             self._states[state.mission_id] = state
 
     def set_stop(self, mission_id: str, value: bool) -> None:
+        """Set the stop flag for a mission."""
         with self._lock:
             self._stop_flags[mission_id] = value
 
     def should_stop(self, mission_id: str) -> bool:
+        """Return True if a stop has been requested for the mission."""
         with self._lock:
             return bool(self._stop_flags.get(mission_id, False))
 
@@ -86,6 +90,7 @@ class StreamOrchestrator:
         self._registry = _Registry()
 
     def get_stream_state(self, mission_id: str) -> StreamState | None:
+        """Return the current state of a mission stream."""
         return self._registry.get(mission_id)
 
     def set_detector_factory(self, detector_factory: DetectorFactory) -> None:
@@ -93,6 +98,7 @@ class StreamOrchestrator:
         self._detector_factory = detector_factory
 
     def start_stream(self, config: StreamConfig) -> StreamState:
+        """Initialize the detector and launch a background stream thread."""
         existing = self._registry.get(config.mission_id)
         if existing is not None and existing.running:
             raise ValueError("Stream already running for mission")
@@ -121,6 +127,7 @@ class StreamOrchestrator:
         return state
 
     def stop_stream(self, mission_id: str) -> StreamState | None:
+        """Request a running stream to stop gracefully."""
         current = self._registry.get(mission_id)
         if current is None:
             return None
@@ -134,6 +141,7 @@ class StreamOrchestrator:
         mission_id: str,
         timeout_sec: float = 3.0,
     ) -> StreamState | None:
+        """Block until the stream stops or the timeout expires."""
         deadline = time.time() + max(0.1, timeout_sec)
         state = self._registry.get(mission_id)
         while time.time() < deadline:
@@ -228,4 +236,5 @@ class StreamOrchestrator:
 
 
 def frame_name(frame_path: Path) -> str:
+    """Extract the file name from a frame path."""
     return frame_path.name

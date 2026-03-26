@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-np = __import__("pytest").importorskip("numpy")
+from rescue_ai.domain.entities import InferenceConfig
+from rescue_ai.infrastructure.yolo_detector import YoloDetector
 
-from rescue_ai.domain.entities import InferenceConfig  # noqa: E402
-from rescue_ai.infrastructure.yolo_detector import YoloDetector  # noqa: E402
+np = __import__("pytest").importorskip("numpy")
 
 
 def _fake_result(

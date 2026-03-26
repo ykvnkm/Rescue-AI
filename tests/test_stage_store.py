@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -47,11 +48,13 @@ def s3_store() -> tuple[S3StageStore, MagicMock]:
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
         store = S3StageStore(
-            endpoint_url="https://s3.example.com",
-            region_name="us-east-1",
-            access_key="key",
-            secret_key="secret",
-            bucket="test-bucket",
+            SimpleNamespace(
+                endpoint="https://s3.example.com",
+                region="us-east-1",
+                access_key_id="key",
+                secret_access_key="secret",
+                bucket="test-bucket",
+            )
         )
         return store, mock_client
 

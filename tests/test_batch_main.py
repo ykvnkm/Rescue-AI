@@ -60,12 +60,13 @@ def test_build_artifact_store_supports_artifacts_s3_fallback(
     class _FakeS3ArtifactStorage:
         """Fake S3 storage that records init arguments."""
 
-        def __init__(self, settings, fallback_storage) -> None:
+        def __init__(self, settings, fallback_storage=None) -> None:
             captured["endpoint"] = settings.endpoint
             captured["bucket"] = settings.bucket
             captured["access_key_id"] = settings.access_key_id
             captured["secret_access_key"] = settings.secret_access_key
             captured["region"] = settings.region
+            captured["fallback_storage"] = fallback_storage
 
     monkeypatch.setenv("BATCH_RUNTIME_ENV", "staging")
     monkeypatch.delenv("BATCH_ARTIFACT_BACKEND", raising=False)
