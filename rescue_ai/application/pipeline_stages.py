@@ -83,6 +83,39 @@ class PipelinePaths:
         return f"{self.base}/inference_{mv}_{cv}.json"
 
 
+@dataclass
+class ValidationCounts:
+    """Accumulated confusion-matrix counters for validation."""
+
+    tp: int = 0
+    tn: int = 0
+    fp: int = 0
+    fn: int = 0
+    detector_errors: int = 0
+
+    def add(self, *, detected: bool, gt_present: bool) -> None:
+        if detected and gt_present:
+            self.tp += 1
+            return
+        if detected and not gt_present:
+            self.fp += 1
+            return
+        if not detected and gt_present:
+            self.fn += 1
+            return
+        self.tn += 1
+
+    @property
+    def total(self) -> int:
+        return self.tp + self.tn + self.fp + self.fn
+
+    @property
+    def accuracy(self) -> float:
+        if self.total <= 0:
+            raise RuntimeError("validation has no processable samples")
+        return round((self.tp + self.tn) / self.total, 4)
+
+
 # ── Stage 1: data preparation ──────────────────────────────────
 
 
@@ -209,53 +242,20 @@ def run_validate_stage(
     detector_predict=None,
 ) -> dict[str, object]:
     """Run validation on val split using detector predictions."""
-    if not store.exists(paths.data_key):
-        raise RuntimeError(f"dataset is missing: {store.uri(paths.data_key)}")
-    if not store.exists(paths.model_key):
-        raise RuntimeError(f"model artifact is missing: {store.uri(paths.model_key)}")
     if store.exists(paths.validation_key) and not force:
         return _skip("validate", store.uri(paths.validation_key))
+    _require_validation_prerequisites(store, paths)
     if detector_predict is None:
         raise RuntimeError("detector_predict is required for validate stage")
 
     dataset = store.read_json(paths.data_key)
-    rows_total = _as_int(dataset.get("rows_total"), field_name="rows_total")
-    if rows_total <= 0:
-        raise RuntimeError("dataset has zero rows")
-
-    val_manifest_raw = dataset.get("val_manifest")
-    if not isinstance(val_manifest_raw, list) or not val_manifest_raw:
-        raise RuntimeError("val_manifest is missing in dataset artifact")
-
-    tp = tn = fp = fn = detector_errors = 0
-    for item in val_manifest_raw:
-        if not isinstance(item, dict):
-            raise RuntimeError("val_manifest item must be an object")
-        image_uri = str(item.get("image_uri", ""))
-        if not image_uri:
-            raise RuntimeError("val_manifest item has empty image_uri")
-        gt_present = _as_bool(
-            item.get("gt_person_present"), field_name="gt_person_present"
-        )
-        try:
-            detected = bool(detector_predict(image_uri))
-        except (RuntimeError, ValueError, OSError) as error:
-            detector_errors += 1
-            raise RuntimeError(f"detector failed on {image_uri}: {error}") from error
-
-        if detected and gt_present:
-            tp += 1
-        elif detected and not gt_present:
-            fp += 1
-        elif not detected and gt_present:
-            fn += 1
-        else:
-            tn += 1
-
-    total_eval = tp + tn + fp + fn
-    if total_eval <= 0:
-        raise RuntimeError("validation has no processable samples")
-    accuracy = round((tp + tn) / total_eval, 4)
+    _ensure_dataset_has_rows(dataset)
+    val_manifest = _parse_val_manifest(dataset)
+    counts = _evaluate_validation_manifest(
+        val_manifest=val_manifest,
+        detector_predict=detector_predict,
+    )
+    accuracy = counts.accuracy
 
     payload: dict[str, object] = {
         "stage": "validate",
@@ -264,12 +264,12 @@ def run_validate_stage(
         "ds": paths.ds,
         "dataset_uri": store.uri(paths.data_key),
         "model_uri": store.uri(paths.model_key),
-        "samples_total": total_eval,
-        "tp": tp,
-        "tn": tn,
-        "fp": fp,
-        "fn": fn,
-        "detector_errors": detector_errors,
+        "samples_total": counts.total,
+        "tp": counts.tp,
+        "tn": counts.tn,
+        "fp": counts.fp,
+        "fn": counts.fn,
+        "detector_errors": counts.detector_errors,
         "accuracy": accuracy,
         "min_accuracy": min_accuracy,
         "passed": accuracy >= min_accuracy,
@@ -396,6 +396,53 @@ def _as_bool(value: object, *, field_name: str) -> bool:
         if normalized in {"0", "false", "no"}:
             return False
     raise RuntimeError(f"{field_name} must be boolean")
+
+
+def _require_validation_prerequisites(
+    store: StageStorage,
+    paths: PipelinePaths,
+) -> None:
+    if not store.exists(paths.data_key):
+        raise RuntimeError(f"dataset is missing: {store.uri(paths.data_key)}")
+    if not store.exists(paths.model_key):
+        raise RuntimeError(f"model artifact is missing: {store.uri(paths.model_key)}")
+
+
+def _ensure_dataset_has_rows(dataset: dict[str, object]) -> None:
+    rows_total = _as_int(dataset.get("rows_total"), field_name="rows_total")
+    if rows_total <= 0:
+        raise RuntimeError("dataset has zero rows")
+
+
+def _parse_val_manifest(dataset: dict[str, object]) -> list[dict[str, object]]:
+    val_manifest_raw = dataset.get("val_manifest")
+    if not isinstance(val_manifest_raw, list) or not val_manifest_raw:
+        raise RuntimeError("val_manifest is missing in dataset artifact")
+    if not all(isinstance(item, dict) for item in val_manifest_raw):
+        raise RuntimeError("val_manifest item must be an object")
+    return [item for item in val_manifest_raw if isinstance(item, dict)]
+
+
+def _evaluate_validation_manifest(
+    *,
+    val_manifest: list[dict[str, object]],
+    detector_predict,
+) -> ValidationCounts:
+    counts = ValidationCounts()
+    for item in val_manifest:
+        image_uri = str(item.get("image_uri", ""))
+        if not image_uri:
+            raise RuntimeError("val_manifest item has empty image_uri")
+        gt_present = _as_bool(
+            item.get("gt_person_present"), field_name="gt_person_present"
+        )
+        try:
+            detected = bool(detector_predict(image_uri))
+        except (RuntimeError, ValueError, OSError) as error:
+            counts.detector_errors += 1
+            raise RuntimeError(f"detector failed on {image_uri}: {error}") from error
+        counts.add(detected=detected, gt_present=gt_present)
+    return counts
 
 
 def print_result(result: dict[str, object]) -> None:
