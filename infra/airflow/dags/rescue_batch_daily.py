@@ -34,12 +34,7 @@ _COMMON_ENV = {
         "BATCH_STATUS_PATH", "/opt/airflow/data/status/runs.json"
     ),
     "BATCH_POSTGRES_DSN": os.getenv("BATCH_POSTGRES_DSN", ""),
-    "BATCH_S3_ENDPOINT": os.getenv("BATCH_S3_ENDPOINT", ""),
-    "BATCH_S3_BUCKET": os.getenv("BATCH_S3_BUCKET", ""),
     "BATCH_S3_PREFIX": os.getenv("BATCH_S3_PREFIX", "batch"),
-    "BATCH_S3_ACCESS_KEY": os.getenv("BATCH_S3_ACCESS_KEY", ""),
-    "BATCH_S3_SECRET_KEY": os.getenv("BATCH_S3_SECRET_KEY", ""),
-    "BATCH_S3_REGION": os.getenv("BATCH_S3_REGION", "us-east-1"),
     "ARTIFACTS_S3_ENDPOINT": os.getenv("ARTIFACTS_S3_ENDPOINT", ""),
     "ARTIFACTS_S3_BUCKET": os.getenv("ARTIFACTS_S3_BUCKET", ""),
     "ARTIFACTS_S3_PREFIX": os.getenv("ARTIFACTS_S3_PREFIX", ""),

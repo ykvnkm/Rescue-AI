@@ -5,7 +5,7 @@
 ## Что уже сделано
 
 - [x] GitHub-процесс: ветки, PR, история коммитов.
-- [x] Базовая структура под Clean Architecture: `libs/core`, `libs/infra`, `services/api_gateway`, `services/detection_service`.
+- [x] Базовая структура под Clean Architecture: `rescue_ai/domain`, `rescue_ai/application`, `rescue_ai/infrastructure`, `rescue_ai/interfaces`.
 - [x] REST API и UI для пилота:
   - [x] `POST /v1/missions/start-flow` (создание миссии + старт потока),
   - [x] `GET /v1/missions/{mission_id}/stream/status`,
@@ -69,6 +69,6 @@
 
 5) **Batch и MLOps**
 - [x] Airflow DAG + DockerOperator + idempotency + backfill-demo.
-- [x] Выделен `libs/batch` слой (domain/application/infrastructure) и composition root в `services/batch_runner/main.py`.
+- [x] Batch-слой собран внутри `rescue_ai/application` и `rescue_ai/infrastructure`, composition root в `rescue_ai/interfaces/cli/batch.py`.
 - [x] Добавлены batch unit/smoke/architecture тесты и CI-gates.
 - [ ] CI/CD deploy + image publish.

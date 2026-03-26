@@ -13,7 +13,7 @@ from pathlib import Path
 from shutil import copy2
 from urllib.parse import urlparse
 
-from rescue_ai.config import get_settings
+from rescue_ai.config import StorageSettings
 from rescue_ai.domain.entities import ArtifactBlob
 
 try:
@@ -54,28 +54,35 @@ class S3ArtifactBackendSettings:
         return bool(self.access_key_id and self.secret_access_key)
 
 
-def build_artifact_storage():
-    """Build artifact storage adapter from centralized settings."""
-    settings = get_settings().artifacts
+def build_artifact_storage(settings: StorageSettings):
+    """Build artifact storage adapter from explicit artifact settings."""
     local_storage = LocalArtifactStorage(settings.local_root)
 
-    if settings.mode != "s3":
+    if settings.backend != "s3":
         return local_storage
-    if not settings.s3.has_credentials:
+    has_credentials = bool(settings.s3_access_key_id and settings.s3_secret_access_key)
+    is_ready = bool(
+        settings.s3_endpoint
+        and settings.s3_region
+        and settings.s3_access_key_id
+        and settings.s3_secret_access_key
+        and settings.s3_bucket
+    )
+    if not has_credentials:
         return local_storage
-    if not settings.s3.ready:
+    if not is_ready:
         raise RuntimeError(
-            "ARTIFACTS_MODE=s3 requires ARTIFACTS_S3_ENDPOINT, ARTIFACTS_S3_REGION, "
+            "ARTIFACTS_BACKEND=s3 requires ARTIFACTS_S3_ENDPOINT, ARTIFACTS_S3_REGION, "
             "ARTIFACTS_S3_ACCESS_KEY_ID, ARTIFACTS_S3_SECRET_ACCESS_KEY, "
             "ARTIFACTS_S3_BUCKET"
         )
 
     backend_settings = S3ArtifactBackendSettings(
-        endpoint=settings.s3.endpoint,
-        region=settings.s3.region,
-        access_key_id=settings.s3.access_key_id,
-        secret_access_key=settings.s3.secret_access_key,
-        bucket=settings.s3.bucket,
+        endpoint=settings.s3_endpoint,
+        region=settings.s3_region,
+        access_key_id=settings.s3_access_key_id,
+        secret_access_key=settings.s3_secret_access_key,
+        bucket=settings.s3_bucket,
         strict=settings.strict,
     )
     return S3ArtifactStorage(
@@ -176,7 +183,7 @@ class S3ArtifactStorage:
         fallback_storage: LocalArtifactStorage,
     ) -> None:
         if boto3 is None:
-            raise RuntimeError("boto3 is required for ARTIFACTS_MODE=s3")
+            raise RuntimeError("boto3 is required for ARTIFACTS_BACKEND=s3")
 
         self._settings = settings
         self._fallback = fallback_storage

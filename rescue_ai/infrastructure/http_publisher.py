@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 from urllib import request
 
-from rescue_ai.config import get_settings
-
 
 class HttpFramePublisher:
     """HTTP adapter that publishes frame events to mission API."""
+
+    def __init__(self, timeout_sec: float = 1.0) -> None:
+        self._timeout_sec = timeout_sec
 
     def publish(
         self, mission_id: str, api_base: str, payload: dict[str, object]
@@ -22,8 +23,7 @@ class HttpFramePublisher:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        timeout_sec = get_settings().detection.http_timeout_sec
-        with request.urlopen(req, timeout=timeout_sec):
+        with request.urlopen(req, timeout=self._timeout_sec):
             return
 
     def endpoint(self, mission_id: str, api_base: str) -> str:

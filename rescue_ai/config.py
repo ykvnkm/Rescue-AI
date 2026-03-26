@@ -1,258 +1,111 @@
-"""Centralized application settings loaded from environment variables.
-
-Every env-var read in the project goes through ``get_settings()``.
-Services import the typed settings groups they need instead of
-scattering ``os.getenv`` calls across the codebase.
-"""
+"""Centralized runtime settings for Rescue-AI."""
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-# ── Environment variable helpers ─────────────────────────────────
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def _env(name: str, default: str = "") -> str:
-    """Read a single env var, stripping whitespace."""
-    value = os.getenv(name, "").strip()
-    return value or default
+class BaseEnvSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
-def _env_optional(*names: str) -> str | None:
-    """Return first non-empty value from several env var names."""
-    for name in names:
-        value = os.getenv(name, "").strip()
-        if value:
-            return value
-    return None
+class AppSettings(BaseEnvSettings):
+    env: str = Field(default="dev", alias="APP_ENV")
+    log_level: str = Field(default="INFO", alias="APP_LOG_LEVEL")
+    service_version: str = Field(default="dev", alias="SERVICE_VERSION")
 
 
-def _env_bool(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name, "").strip().lower()
-    if not raw:
-        return default
-    return raw in {"1", "true", "yes", "on"}
+class ApiSettings(BaseEnvSettings):
+    host: str = Field(default="0.0.0.0", alias="APP_HOST")
+    port: int = Field(default=8000, alias="APP_PORT")
+    repository_backend: str = Field(default="memory", alias="APP_REPOSITORY_BACKEND")
+    postgres_ready_timeout_sec: float = Field(
+        default=30.0,
+        alias="APP_POSTGRES_READY_TIMEOUT_SEC",
+    )
 
 
-def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return float(raw)
+class DatabaseSettings(BaseEnvSettings):
+    dsn: str = Field(default="", alias="DB_DSN")
+    batch_dsn: str = Field(default="", alias="BATCH_POSTGRES_DSN")
 
 
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return int(raw)
+class StorageSettings(BaseEnvSettings):
+    backend: str = Field(default="s3", alias="ARTIFACTS_BACKEND")
+    local_root: Path = Field(
+        default=Path("runtime/artifacts"),
+        alias="ARTIFACTS_LOCAL_ROOT",
+    )
+    strict: bool = Field(default=True, alias="ARTIFACTS_S3_STRICT")
+    s3_endpoint: str = Field(default="", alias="ARTIFACTS_S3_ENDPOINT")
+    s3_region: str = Field(default="us-east-1", alias="ARTIFACTS_S3_REGION")
+    s3_access_key_id: str = Field(default="", alias="ARTIFACTS_S3_ACCESS_KEY_ID")
+    s3_secret_access_key: str = Field(
+        default="", alias="ARTIFACTS_S3_SECRET_ACCESS_KEY"
+    )
+    s3_bucket: str = Field(default="", alias="ARTIFACTS_S3_BUCKET")
+    s3_prefix: str = Field(default="batch", alias="ARTIFACTS_S3_PREFIX")
 
 
-# ── Settings dataclasses ─────────────────────────────────────────
+class BatchSettings(BaseEnvSettings):
+    runtime_env: str = Field(default="local", alias="BATCH_RUNTIME_ENV")
+    status_backend: str = Field(default="", alias="BATCH_STATUS_BACKEND")
+    artifact_backend: str = Field(default="", alias="BATCH_ARTIFACT_BACKEND")
+    model_version: str = Field(
+        default="yolov8n_baseline_multiscale",
+        alias="BATCH_MODEL_VERSION",
+    )
+    code_version: str = Field(default="dev", alias="BATCH_CODE_VERSION")
+    source_fps: float = Field(default=6.0, alias="BATCH_SOURCE_FPS")
+    status_path: Path = Field(
+        default=Path("/opt/airflow/data/status/runs.json"),
+        alias="BATCH_STATUS_PATH",
+    )
+    artifact_root: Path = Field(
+        default=Path("/opt/airflow/data/artifacts"),
+        alias="BATCH_ARTIFACT_ROOT",
+    )
+    mission_root: Path = Field(
+        default=Path("/opt/airflow/data/missions"),
+        alias="BATCH_MISSION_ROOT",
+    )
+    s3_prefix: str = Field(default="batch", alias="BATCH_S3_PREFIX")
 
 
-@dataclass(frozen=True)
-class AppSettings:
-    """Online API service settings."""
-
-    host: str
-    port: int
-    repository_backend: str
-    postgres_dsn: str | None
-    postgres_ready_timeout_sec: float
-    service_version: str
+class DetectionSettings(BaseEnvSettings):
+    http_timeout_sec: float = Field(default=1.0, alias="DETECTION_HTTP_TIMEOUT_SEC")
 
 
-@dataclass(frozen=True)
-class S3Settings:
-    """S3 connection parameters reused by artifact storage and ML pipeline."""
-
-    endpoint: str | None = None
-    region: str = "us-east-1"
-    access_key_id: str | None = None
-    secret_access_key: str | None = None
-    bucket: str | None = None
-    prefix: str = "batch"
-
-    @property
-    def ready(self) -> bool:
-        """Return True when all required S3 fields are populated."""
-        return bool(
-            self.endpoint
-            and self.region
-            and self.access_key_id
-            and self.secret_access_key
-            and self.bucket
-        )
-
-    @property
-    def has_credentials(self) -> bool:
-        """Return True when both access-key and secret-key are set."""
-        return bool(self.access_key_id and self.secret_access_key)
+class SecretsSettings(BaseEnvSettings):
+    online_api_token: str = Field(default="", alias="ONLINE_API_TOKEN")
 
 
-@dataclass(frozen=True)
-class ArtifactSettings:
-    """Online artifact storage settings."""
-
-    mode: str = "s3"
-    local_root: Path = Path("runtime/artifacts")
-    s3: S3Settings = S3Settings()
-    strict: bool = True
-
-
-@dataclass(frozen=True)
-class BatchPathSettings:
-    """Filesystem paths used by the batch pipeline."""
-
-    status_path: Path = Path("/opt/airflow/data/status/runs.json")
-    artifact_root: Path = Path("/opt/airflow/data/artifacts")
-    mission_root: Path = Path("/opt/airflow/data/missions")
-
-
-@dataclass(frozen=True)
-class BatchBackendSettings:
-    """Backend selection and connection details for batch processing."""
-
-    status: str = "json"
-    artifact: str = "local"
-    postgres_dsn: str | None = None
-
-
-@dataclass(frozen=True)
-class BatchSettings:
-    """Batch processing settings."""
-
-    model_version: str = "yolov8n_baseline_multiscale"
-    code_version: str = "dev"
-    runtime_env: str = "local"
-    backends: BatchBackendSettings = BatchBackendSettings()
-    paths: BatchPathSettings = BatchPathSettings()
-    source_fps: float = 6.0
-    s3: S3Settings = S3Settings()
-
-
-@dataclass(frozen=True)
-class DetectionSettings:
-    """ML detector and inference settings."""
-
-    http_timeout_sec: float = 1.0
-
-
-@dataclass(frozen=True)
-class Settings:
-    """Root settings container aggregating all configuration groups."""
-
+class Settings(BaseSettings):
     app: AppSettings
-    artifacts: ArtifactSettings
+    api: ApiSettings
+    database: DatabaseSettings
+    storage: StorageSettings
     batch: BatchSettings
     detection: DetectionSettings
-
-
-# ── Settings construction ────────────────────────────────────────
-
-
-def _resolve_artifact_mode() -> str:
-    raw = _env_optional("ARTIFACTS_MODE")
-    if raw is None:
-        return "s3"
-    normalized = raw.lower()
-    return normalized if normalized in {"local", "s3"} else "local"
-
-
-def _resolve_batch_status_backend(runtime_env: str) -> str:
-    explicit = _env_optional("BATCH_STATUS_BACKEND")
-    if explicit:
-        return explicit.lower()
-    if runtime_env in {"shared", "stage", "staging", "prod", "production"}:
-        return "postgres"
-    return "json"
-
-
-def _resolve_batch_artifact_backend(runtime_env: str) -> str:
-    explicit = _env_optional("BATCH_ARTIFACT_BACKEND")
-    if explicit:
-        return explicit.lower()
-    if runtime_env in {"shared", "stage", "staging", "prod", "production"}:
-        return "s3"
-    return "local"
-
-
-def _build_batch_s3() -> S3Settings:
-    return S3Settings(
-        endpoint=_env_optional("BATCH_S3_ENDPOINT", "ARTIFACTS_S3_ENDPOINT"),
-        region=_env_optional("BATCH_S3_REGION", "ARTIFACTS_S3_REGION") or "us-east-1",
-        access_key_id=_env_optional(
-            "BATCH_S3_ACCESS_KEY", "ARTIFACTS_S3_ACCESS_KEY_ID"
-        ),
-        secret_access_key=_env_optional(
-            "BATCH_S3_SECRET_KEY", "ARTIFACTS_S3_SECRET_ACCESS_KEY"
-        ),
-        bucket=_env_optional("BATCH_S3_BUCKET", "ARTIFACTS_S3_BUCKET"),
-        prefix=_env_optional("BATCH_S3_PREFIX", "ARTIFACTS_S3_PREFIX") or "batch",
-    )
-
-
-def _build_artifact_s3() -> S3Settings:
-    return S3Settings(
-        endpoint=_env_optional("ARTIFACTS_S3_ENDPOINT"),
-        region=_env_optional("ARTIFACTS_S3_REGION") or "us-east-1",
-        access_key_id=_env_optional("ARTIFACTS_S3_ACCESS_KEY_ID"),
-        secret_access_key=_env_optional("ARTIFACTS_S3_SECRET_ACCESS_KEY"),
-        bucket=_env_optional("ARTIFACTS_S3_BUCKET"),
-        prefix=_env_optional("ARTIFACTS_S3_PREFIX") or "batch",
-    )
+    secrets: SecretsSettings
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Build and cache all application settings from environment variables."""
-    runtime_env = _env("BATCH_RUNTIME_ENV", "local").lower()
-
     return Settings(
-        app=AppSettings(
-            host=_env("APP_HOST", "0.0.0.0"),
-            port=_env_int("APP_PORT", 8000),
-            repository_backend=_env("APP_REPOSITORY_BACKEND", "memory").lower(),
-            postgres_dsn=_env_optional("APP_POSTGRES_DSN"),
-            postgres_ready_timeout_sec=_env_float(
-                "APP_POSTGRES_READY_TIMEOUT_SEC", 30.0
-            ),
-            service_version=_env("SERVICE_VERSION", "dev"),
-        ),
-        artifacts=ArtifactSettings(
-            mode=_resolve_artifact_mode(),
-            local_root=Path(_env("ARTIFACTS_LOCAL_ROOT", "runtime/artifacts")),
-            s3=_build_artifact_s3(),
-            strict=_env_bool("ARTIFACTS_S3_STRICT", default=True),
-        ),
-        batch=BatchSettings(
-            model_version=_env("BATCH_MODEL_VERSION", "yolov8n_baseline_multiscale"),
-            code_version=_env("BATCH_CODE_VERSION", "dev"),
-            runtime_env=runtime_env,
-            backends=BatchBackendSettings(
-                status=_resolve_batch_status_backend(runtime_env),
-                artifact=_resolve_batch_artifact_backend(runtime_env),
-                postgres_dsn=_env_optional("BATCH_POSTGRES_DSN"),
-            ),
-            paths=BatchPathSettings(
-                status_path=Path(
-                    _env("BATCH_STATUS_PATH", "/opt/airflow/data/status/runs.json")
-                ),
-                artifact_root=Path(
-                    _env("BATCH_ARTIFACT_ROOT", "/opt/airflow/data/artifacts")
-                ),
-                mission_root=Path(
-                    _env("BATCH_MISSION_ROOT", "/opt/airflow/data/missions")
-                ),
-            ),
-            source_fps=_env_float("BATCH_SOURCE_FPS", 6.0),
-            s3=_build_batch_s3(),
-        ),
-        detection=DetectionSettings(
-            http_timeout_sec=_env_float("DETECTION_HTTP_TIMEOUT_SEC", 1.0),
-        ),
+        app=AppSettings(),
+        api=ApiSettings(),
+        database=DatabaseSettings(),
+        storage=StorageSettings(),
+        batch=BatchSettings(),
+        detection=DetectionSettings(),
+        secrets=SecretsSettings(),
     )

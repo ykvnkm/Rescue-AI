@@ -26,15 +26,16 @@ def test_default_backends(monkeypatch, tmp_path: Path) -> None:
     assert artifact_store.__class__.__name__ == "LocalArtifactStorage"
 
 
-def test_default_backends_for_staging(monkeypatch) -> None:
+def test_default_backends_for_staging(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("BATCH_RUNTIME_ENV", "staging")
 
     monkeypatch.delenv("BATCH_STATUS_BACKEND", raising=False)
     monkeypatch.delenv("BATCH_ARTIFACT_BACKEND", raising=False)
-    monkeypatch.delenv("BATCH_POSTGRES_DSN", raising=False)
-
-    monkeypatch.delenv("BATCH_S3_BUCKET", raising=False)
-    monkeypatch.delenv("ARTIFACTS_S3_BUCKET", raising=False)
+    monkeypatch.setenv("BATCH_POSTGRES_DSN", "")
+    monkeypatch.setenv("ARTIFACTS_S3_BUCKET", "")
+    monkeypatch.setenv("ARTIFACTS_S3_ACCESS_KEY_ID", "")
+    monkeypatch.setenv("ARTIFACTS_S3_SECRET_ACCESS_KEY", "")
+    monkeypatch.setenv("BATCH_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
     get_settings.cache_clear()
 
     with pytest.raises(ValueError):
@@ -70,11 +71,6 @@ def test_build_artifact_store_supports_artifacts_s3_fallback(
 
     monkeypatch.setenv("BATCH_RUNTIME_ENV", "staging")
     monkeypatch.delenv("BATCH_ARTIFACT_BACKEND", raising=False)
-    monkeypatch.delenv("BATCH_S3_BUCKET", raising=False)
-    monkeypatch.delenv("BATCH_S3_ENDPOINT", raising=False)
-    monkeypatch.delenv("BATCH_S3_ACCESS_KEY", raising=False)
-    monkeypatch.delenv("BATCH_S3_SECRET_KEY", raising=False)
-    monkeypatch.delenv("BATCH_S3_REGION", raising=False)
     monkeypatch.setenv("ARTIFACTS_S3_BUCKET", "bucket-a")
     monkeypatch.setenv("ARTIFACTS_S3_ENDPOINT", "https://storage.yandexcloud.net")
     monkeypatch.setenv("ARTIFACTS_S3_ACCESS_KEY_ID", "key-a")

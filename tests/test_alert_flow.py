@@ -26,12 +26,15 @@ class _FakeDetector:
     def warmup(self) -> None:
         return None
 
-    def predict(self, _frame_path: Path) -> list[object]:
+    def detect(self, _frame_path: str) -> list[object]:
         return []
+
+    def runtime_name(self) -> str:
+        return "fake-detector"
 
 
 def setup_function() -> None:
-    os.environ["ARTIFACTS_MODE"] = "local"
+    os.environ["ARTIFACTS_BACKEND"] = "local"
     get_container.cache_clear()
     reset_state()
     get_stream_controller()._orchestrator.set_detector_factory(cast(Any, _FakeDetector))

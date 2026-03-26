@@ -32,21 +32,21 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 - В `platform.env.example` нет дефолтных секретов. Перед запуском заполните все `*_PASSWORD`, S3 ключи и логины UI.
 - `infra/postgres/init/001-init-platform.sh` создает стартовые БД/пользователей (`airflow`, `POSTGRES_APP_USER`) из переменных окружения.
 - Дашборд Grafana загружается автоматически из `infra/grafana/dashboards/platform-overview.json`.
-- Основной DAG batch-контура: `infra/airflow/dags/idempotent_docker_backfill_demo.py`.
+- Основной DAG batch-контура: `infra/airflow/dags/rescue_batch_daily.py`.
 
 ## DAG: Rescue Batch (DockerOperator + Idempotency + Backfill)
 
 Подробный пошаговый runbook: `infra/AIRFLOW_ML_PIPELINE_RUNBOOK.md`.
 
-`rescue_ml_pipeline_daily`:
+`rescue_batch_daily`:
 
 - Запускается ежедневно (`@daily`) с `catchup=True`.
-- Оркестрирует 3 шага в отдельных `DockerOperator`: `prepare_data -> train_model -> validate_model`.
+- Оркестрирует 4 шага в отдельных `DockerOperator`: `data -> train -> validate -> inference`.
 - Передача между тасками идет через S3: каждый шаг пишет артефакт в S3, следующий читает по детерминированному ключу.
 - Идемпотентность по каждому шагу: при повторном запуске на ту же `ds` шаг возвращает `idempotent_skip`, если артефакт уже существует.
 - Для демонстрации backfill оставлен `catchup=True` и CLI-команда `airflow dags backfill`.
 
-Канонический контракт stage-runner (`services/batch_runner/s3_ml_pipeline.py`):
+Канонический контракт stage-runner (`rescue_ai/interfaces/cli/batch.py`):
 
 - Вход: `stage`, `mission_id`, `ds`, `model_version`, `code_version`, `force`, `min_accuracy`.
 - Выход: `status`, `output_uri` (JSON в stdout).
@@ -75,12 +75,12 @@ docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.en
 docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env up -d
 ```
 
-5. Откройте Airflow UI (`http://localhost:8080`), включите DAG `rescue_ml_pipeline_daily`, зайдите в Graph/Grid.
+5. Откройте Airflow UI (`http://localhost:8080`), включите DAG `rescue_batch_daily`, зайдите в Graph/Grid.
 
 6. Запустите backfill за диапазон:
 ```bash
 docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env exec airflow-webserver \
-  airflow dags backfill rescue_ml_pipeline_daily -s 2026-03-10 -e 2026-03-12
+  airflow dags backfill rescue_batch_daily -s 2026-03-10 -e 2026-03-12
 ```
 
 7. Проверьте артефакты в S3 (по префиксу):
@@ -103,12 +103,12 @@ docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.en
 - `partial` + `reason=mixed_input_and_detector_errors`: одновременно битые входы и ошибки детектора.
 - Для shared/stage использовать `BATCH_RUNTIME_ENV=staging`, тогда по умолчанию включаются `PostgresStatusStore` и `S3ArtifactStore`.
 - Не задавайте `BATCH_ARTIFACT_BACKEND` и `BATCH_STATUS_BACKEND`, если хотите использовать runtime-defaults по `BATCH_RUNTIME_ENV`.
-- Для S3 используйте единый набор переменных `ARTIFACTS_S3_*`; `BATCH_S3_*` поддерживается как совместимый override.
+- Для S3 используйте единый набор переменных `ARTIFACTS_S3_*`; для namespace ключей batch используйте `BATCH_S3_PREFIX`.
 - Полный runbook: `docs/runbooks/batch_operations.md`.
 
 ## E2E Backfill сценарий
 
 - Nightly workflow: `.github/workflows/batch-e2e.yml`.
-- Сценарий поднимает платформу, seed'ит миссию, выполняет `airflow dags backfill rescue_ml_pipeline_daily` и проверяет status/artifacts.
+- Сценарий поднимает платформу, seed'ит миссию, выполняет `airflow dags backfill rescue_batch_daily` и проверяет status/artifacts.
 - Плейбук real-data demo: `docs/runbooks/batch_demo_playbook.md`.
 - Архитектурная схема: `docs/architecture/batch_contour.md`.

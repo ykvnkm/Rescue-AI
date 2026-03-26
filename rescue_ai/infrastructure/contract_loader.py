@@ -8,7 +8,6 @@ from pathlib import Path
 
 import yaml
 
-from rescue_ai.config import get_settings
 from rescue_ai.domain.entities import AlertRuleConfig, InferenceConfig
 
 DEFAULT_CONTRACT_PATH = Path("configs/nsu_frames_yolov8n_alert_contract.yaml")
@@ -34,7 +33,7 @@ class StreamContract:
     service_version: str
 
 
-def load_stream_contract() -> StreamContract:
+def load_stream_contract(service_version: str = "dev") -> StreamContract:
     """Load and resolve the stream contract from the default YAML file."""
     contract_path = DEFAULT_CONTRACT_PATH
     payload = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
@@ -49,8 +48,6 @@ def load_stream_contract() -> StreamContract:
 
     config_name = str(payload.get("name", "unknown_contract"))
     config_hash = hashlib.sha256(contract_path.read_bytes()).hexdigest()
-    service_version = get_settings().app.service_version
-
     thresholds = eval_cfg.get("thresholds", [0.2])
     confidence_threshold = float(thresholds[0] if thresholds else 0.2)
 
@@ -88,9 +85,11 @@ def load_stream_contract() -> StreamContract:
     )
 
 
-def load_alert_rules_and_metadata() -> tuple[AlertRuleConfig, dict[str, object]]:
+def load_alert_rules_and_metadata(
+    service_version: str = "dev",
+) -> tuple[AlertRuleConfig, dict[str, object]]:
     """Return alert rules and report metadata from the stream contract."""
-    contract = load_stream_contract()
+    contract = load_stream_contract(service_version=service_version)
 
     report_metadata: dict[str, object] = {
         "config_name": contract.config_name,

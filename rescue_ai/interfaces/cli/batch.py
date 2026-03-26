@@ -50,6 +50,32 @@ from rescue_ai.infrastructure.yolo_detector import YoloDetector
 STAGES = ("data", "train", "validate", "inference")
 
 
+def _is_remote_env(runtime_env: str) -> bool:
+    return runtime_env.strip().lower() in {
+        "shared",
+        "stage",
+        "staging",
+        "prod",
+        "production",
+    }
+
+
+def _batch_status_backend() -> str:
+    settings = get_settings()
+    configured = settings.batch.status_backend.strip().lower()
+    if configured:
+        return configured
+    return "postgres" if _is_remote_env(settings.batch.runtime_env) else "json"
+
+
+def _batch_artifact_backend() -> str:
+    settings = get_settings()
+    configured = settings.batch.artifact_backend.strip().lower()
+    if configured:
+        return configured
+    return "s3" if _is_remote_env(settings.batch.runtime_env) else "local"
+
+
 def parse_args() -> argparse.Namespace:
     """Parse unified pipeline CLI arguments."""
     settings = get_settings()
@@ -74,46 +100,54 @@ def parse_args() -> argparse.Namespace:
 def build_stage_store():
     """Build stage artifact store (local or S3) from settings."""
     settings = get_settings()
-    if settings.batch.backends.artifact == "s3" and settings.batch.s3.ready:
-        return S3StageStore(settings.batch.s3)
-    return LocalStageStore(root=settings.batch.paths.artifact_root / "stages")
+    if _batch_artifact_backend() == "s3" and settings.storage.s3_bucket:
+        s3_settings = S3ArtifactBackendSettings(
+            endpoint=settings.storage.s3_endpoint,
+            region=settings.storage.s3_region,
+            access_key_id=settings.storage.s3_access_key_id,
+            secret_access_key=settings.storage.s3_secret_access_key,
+            bucket=settings.storage.s3_bucket,
+        )
+        return S3StageStore(s3_settings)
+    return LocalStageStore(root=settings.batch.artifact_root / "stages")
 
 
 def build_status_store():
     """Build run status store based on environment configuration."""
     settings = get_settings()
-    if settings.batch.backends.status == "postgres":
-        dsn = settings.batch.backends.postgres_dsn
+    if _batch_status_backend() == "postgres":
+        dsn = settings.database.batch_dsn.strip()
         if not dsn:
             raise ValueError("BATCH_POSTGRES_DSN is required for postgres backend")
         return PostgresStatusStore(dsn=dsn)
-    return JsonStatusStore(path=settings.batch.paths.status_path)
+    return JsonStatusStore(path=settings.batch.status_path)
 
 
 def build_artifact_store():
     """Build artifact store based on environment configuration."""
     settings = get_settings()
-    if settings.batch.backends.artifact == "s3":
-        bucket = settings.batch.s3.bucket
+    if _batch_artifact_backend() == "s3":
+        bucket = settings.storage.s3_bucket
         if not bucket:
-            raise ValueError("BATCH_S3_BUCKET is required for s3 backend")
+            raise ValueError("ARTIFACTS_S3_BUCKET is required for s3 backend")
         s3_settings = S3ArtifactBackendSettings(
-            endpoint=settings.batch.s3.endpoint,
-            region=settings.batch.s3.region,
-            access_key_id=settings.batch.s3.access_key_id,
-            secret_access_key=settings.batch.s3.secret_access_key,
+            endpoint=settings.storage.s3_endpoint,
+            region=settings.storage.s3_region,
+            access_key_id=settings.storage.s3_access_key_id,
+            secret_access_key=settings.storage.s3_secret_access_key,
             bucket=bucket,
+            strict=settings.storage.strict,
         )
-        fallback = LocalArtifactStorage(root=settings.batch.paths.artifact_root)
+        fallback = LocalArtifactStorage(root=settings.batch.artifact_root)
         return S3ArtifactStorage(settings=s3_settings, fallback_storage=fallback)
-    return LocalArtifactStorage(root=settings.batch.paths.artifact_root)
+    return LocalArtifactStorage(root=settings.batch.artifact_root)
 
 
 def build_source() -> LocalMissionSource:
     """Build local mission source for batch processing."""
     settings = get_settings()
     return LocalMissionSource(
-        root_dir=settings.batch.paths.mission_root,
+        root_dir=settings.batch.mission_root,
         fps=settings.batch.source_fps,
     )
 
@@ -141,7 +175,7 @@ def main() -> None:
 
     store = build_stage_store()
     paths = PipelinePaths(
-        prefix=settings.batch.s3.prefix,
+        prefix=settings.batch.s3_prefix,
         mission_id=args.mission_id,
         ds=args.ds,
         model_version=args.model_version,
@@ -162,7 +196,9 @@ def main() -> None:
     elif args.stage == "inference":
 
         def _runner_factory():
-            contract = load_stream_contract()
+            contract = load_stream_contract(
+                service_version=settings.app.service_version
+            )
             detector = YoloDetector(
                 config=contract.inference, model_version=args.model_version
             )

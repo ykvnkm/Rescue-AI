@@ -1,8 +1,9 @@
 PYTHONPATH := $(shell pwd)
 UV := PYTHONPATH=$(PYTHONPATH) uv run
+PLATFORM_COMPOSE := docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env
 
 .PHONY: help install format lint test test-arch test-batch ci \
-	up up-postgres down db-migrate batch-build batch-up batch-down batch-logs batch-backfill
+	up up-postgres down batch-build batch-up batch-down batch-logs batch-backfill
 
 help:
 	@echo "Available commands:"
@@ -46,9 +47,6 @@ up-postgres:
 
 down:
 	docker compose down
-
-db-migrate:
-	$(UV) alembic upgrade head
 
 batch-build:
 	$(PLATFORM_COMPOSE) --profile batch-build build batch-runner-image

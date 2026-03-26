@@ -26,8 +26,7 @@ def test_prepare_postgres_skips_when_memory(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_prepare_postgres_raises_when_no_dsn(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_REPOSITORY_BACKEND", "postgres")
-    monkeypatch.delenv("APP_POSTGRES_DSN", raising=False)
-    monkeypatch.delenv("APP_POSTGRES_HOST", raising=False)
+    monkeypatch.delenv("DB_DSN", raising=False)
 
     from rescue_ai.interfaces.cli.online import _prepare_postgres_backend
 

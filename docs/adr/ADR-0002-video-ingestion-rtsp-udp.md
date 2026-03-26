@@ -33,8 +33,8 @@
 - логировать ошибки декодирования и частоту кадров для интерпретации метрик.
 
 ## Ссылки
-- [Stream runner (онлайн RTSP/офлайн реплей)](../../services/detection_service/application/stream_runner.py)
+- [Stream runner (онлайн RTSP/офлайн реплей)](../../rescue_ai/application/stream_orchestrator.py)
 - [Контракт входа миссии (frames_dir, fps, annotations и т.п.)](../contracts/mission_input.md)
-- [HTTP роуты API gateway (запуск миссии / UI)](../../services/api_gateway/presentation/http/routes.py)
+- [HTTP роуты API gateway (запуск миссии / UI)](../../rescue_ai/interfaces/api/routes.py)
 - [Docker Compose для локального запуска](../../docker-compose.yml)
 - [README (как поднять текущую версию)](../../README.md)

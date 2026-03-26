@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import importlib
-import os
 import time
 from collections.abc import Mapping
-from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 _FATAL_SQLSTATES = {
     "28P01",  # invalid_password
@@ -77,54 +76,25 @@ CREATE INDEX IF NOT EXISTS ix_episodes_mission_found
 
 
 def resolve_postgres_dsn(
-    environ: Mapping[str, str] | None = None,
+    environ: Mapping[str, str],
 ) -> str | None:
-    """Resolve a Postgres DSN from APP_POSTGRES_* environment variables."""
-    values = os.environ if environ is None else environ
-
-    raw_dsn = _clean(values.get("APP_POSTGRES_DSN"))
-    if raw_dsn is not None:
-        _validate_postgres_dsn(raw_dsn)
-        return raw_dsn
-
-    host = _clean(values.get("APP_POSTGRES_HOST"))
-    port = _clean(values.get("APP_POSTGRES_PORT"))
-    database = _clean(values.get("APP_POSTGRES_DB"))
-    user = _clean(values.get("APP_POSTGRES_USER"))
-    password = _clean(values.get("APP_POSTGRES_PASSWORD"))
-
-    has_component_values = any(
-        value is not None for value in (host, port, database, user, password)
-    )
-    if not has_component_values:
+    """Resolve a Postgres DSN from DB_DSN."""
+    dsn = (environ.get("DB_DSN") or "").strip()
+    if not dsn:
         return None
 
-    missing = [
-        name
-        for name, value in (
-            ("APP_POSTGRES_HOST", host),
-            ("APP_POSTGRES_PORT", port),
-            ("APP_POSTGRES_DB", database),
-            ("APP_POSTGRES_USER", user),
-            ("APP_POSTGRES_PASSWORD", password),
-        )
-        if value is None
-    ]
-    if missing:
-        missing_list = ", ".join(missing)
-        raise ValueError(
-            "Incomplete Postgres settings. "
-            "Set APP_POSTGRES_DSN or all of: "
-            "APP_POSTGRES_HOST, APP_POSTGRES_PORT, APP_POSTGRES_DB, "
-            "APP_POSTGRES_USER, APP_POSTGRES_PASSWORD. "
-            f"Missing: {missing_list}"
-        )
-
-    return (
-        "postgresql://"
-        f"{quote(user or '', safe='')}:{quote(password or '', safe='')}"
-        f"@{host}:{port}/{quote(database or '', safe='')}"
-    )
+    parsed = urlparse(dsn)
+    if parsed.scheme not in {"postgresql", "postgres"}:
+        raise ValueError("Postgres DSN must start with postgresql:// or postgres://")
+    if not parsed.hostname:
+        raise ValueError("Postgres DSN must include host")
+    if not parsed.username:
+        raise ValueError("Postgres DSN must include user")
+    if parsed.password in (None, ""):
+        raise ValueError("Postgres DSN must include non-empty password")
+    if not parsed.path or parsed.path == "/":
+        raise ValueError("Postgres DSN must include database name")
+    return dsn
 
 
 def dsn_with_search_path(dsn: str, schema: str) -> str:
@@ -185,29 +155,3 @@ def ensure_schema(dsn: str) -> None:
         with conn.cursor() as cursor:
             cursor.execute(_SCHEMA_SQL)
         conn.commit()
-
-
-def _validate_postgres_dsn(dsn: str) -> None:
-    """Raise ValueError if the DSN is missing required components."""
-    parsed = urlparse(dsn)
-
-    if parsed.scheme not in {"postgresql", "postgres"}:
-        raise ValueError(
-            "APP_POSTGRES_DSN must start with postgresql:// or postgres://"
-        )
-    if not parsed.hostname:
-        raise ValueError("APP_POSTGRES_DSN must include host")
-    if not parsed.username:
-        raise ValueError("APP_POSTGRES_DSN must include user")
-    if parsed.password in (None, ""):
-        raise ValueError("APP_POSTGRES_DSN must include non-empty password")
-    if not parsed.path or parsed.path == "/":
-        raise ValueError("APP_POSTGRES_DSN must include database name")
-
-
-def _clean(value: str | None) -> str | None:
-    """Strip whitespace, returning None for blank values."""
-    if value is None:
-        return None
-    stripped = value.strip()
-    return stripped or None

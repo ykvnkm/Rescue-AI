@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-from rescue_ai.config import S3Settings, get_settings
+from rescue_ai.config import get_settings
 from rescue_ai.infrastructure.s3_artifact_store import (
     LocalArtifactStorage,
     S3ArtifactBackendSettings,
@@ -17,31 +17,31 @@ from rescue_ai.infrastructure.s3_artifact_store import (
 def test_build_artifact_storage_falls_back_to_local_when_s3_has_no_credentials(
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("ARTIFACTS_MODE", "s3")
+    monkeypatch.setenv("ARTIFACTS_BACKEND", "s3")
     monkeypatch.setenv("ARTIFACTS_S3_ENDPOINT", "https://storage.yandexcloud.net")
     monkeypatch.setenv("ARTIFACTS_S3_REGION", "ru-central1")
-    monkeypatch.delenv("ARTIFACTS_S3_ACCESS_KEY_ID", raising=False)
-    monkeypatch.delenv("ARTIFACTS_S3_SECRET_ACCESS_KEY", raising=False)
-    monkeypatch.delenv("ARTIFACTS_S3_BUCKET", raising=False)
+    monkeypatch.setenv("ARTIFACTS_S3_ACCESS_KEY_ID", "")
+    monkeypatch.setenv("ARTIFACTS_S3_SECRET_ACCESS_KEY", "")
+    monkeypatch.setenv("ARTIFACTS_S3_BUCKET", "")
     get_settings.cache_clear()
 
-    storage = build_artifact_storage()
+    storage = build_artifact_storage(get_settings().storage)
     assert isinstance(storage, LocalArtifactStorage)
 
 
 def test_build_artifact_storage_raises_when_credentials_present_but_s3_invalid(
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("ARTIFACTS_MODE", "s3")
+    monkeypatch.setenv("ARTIFACTS_BACKEND", "s3")
     monkeypatch.setenv("ARTIFACTS_S3_ENDPOINT", "https://storage.yandexcloud.net")
     monkeypatch.setenv("ARTIFACTS_S3_REGION", "ru-central1")
     monkeypatch.setenv("ARTIFACTS_S3_ACCESS_KEY_ID", "key")
     monkeypatch.setenv("ARTIFACTS_S3_SECRET_ACCESS_KEY", "secret")
-    monkeypatch.delenv("ARTIFACTS_S3_BUCKET", raising=False)
+    monkeypatch.setenv("ARTIFACTS_S3_BUCKET", "")
     get_settings.cache_clear()
 
     with pytest.raises(RuntimeError):
-        build_artifact_storage()
+        build_artifact_storage(get_settings().storage)
 
 
 def test_local_artifact_storage_persists_report_and_frame() -> None:
@@ -91,21 +91,5 @@ def test_s3_artifact_backend_settings_flags() -> None:
     assert full.ready is True
 
     empty = S3ArtifactBackendSettings()
-    assert empty.has_credentials is False
-    assert empty.ready is False
-
-
-def test_s3_settings_flags() -> None:
-    full = S3Settings(
-        endpoint="https://storage.yandexcloud.net",
-        region="ru-central1",
-        access_key_id="key",
-        secret_access_key="secret",
-        bucket="bucket",
-    )
-    assert full.has_credentials is True
-    assert full.ready is True
-
-    empty = S3Settings()
     assert empty.has_credentials is False
     assert empty.ready is False

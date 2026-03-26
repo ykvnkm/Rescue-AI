@@ -38,9 +38,9 @@
 ## Ссылки
 - [README: как запускать MVP (Docker / локально, healthcheck)](../../README.md)
 - [Docker Compose для запуска наземного сервиса](../../docker-compose.yml)
-- [API gateway: точка входа FastAPI](../../services/api_gateway/app.py)
-- [API gateway: HTTP-роуты и UI-страницы](../../services/api_gateway/presentation/http/routes.py)
-- [Detection service: обработка стрима (онлайн) / реплей (офлайн)](../../services/detection_service/application/stream_runner.py)
+- [API gateway: точка входа FastAPI](../../rescue_ai/interfaces/api/app.py)
+- [API gateway: HTTP-роуты и UI-страницы](../../rescue_ai/interfaces/api/routes.py)
+- [Detection service: обработка стрима (онлайн) / реплей (офлайн)](../../rescue_ai/application/stream_orchestrator.py)
 - [Пример env-файла](../../.env.example)
 - [Схема архитектуры (PNG)](../architecture_schema.png)
 - [C4-диаграммы (папка)](../architecture/c4)

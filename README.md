@@ -81,13 +81,18 @@ MISSION_DIR=/abs/path/to/mission
 3. Настройте хранилище артефактов:
 
 ```env
-# По умолчанию — S3. Если ключи не заданы, пишет локально.
+# Online-сервис: backend local|s3.
+ARTIFACTS_BACKEND=s3
 ARTIFACTS_S3_ENDPOINT=https://storage.yandexcloud.net
 ARTIFACTS_S3_REGION=ru-central1
 ARTIFACTS_S3_ACCESS_KEY_ID=...
 ARTIFACTS_S3_SECRET_ACCESS_KEY=...
 ARTIFACTS_S3_BUCKET=...
 ```
+
+Правила резолва backend'ов:
+- Online (`/v1/...`): использует только `ARTIFACTS_*`. Если `ARTIFACTS_BACKEND=s3`, но credentials не заданы, включается локальный fallback (`ARTIFACTS_LOCAL_ROOT`).
+- Batch (`rescue_ai.interfaces.cli.batch`): backend задается `BATCH_ARTIFACT_BACKEND` (`local|s3`), при этом S3-конфиг всегда берется из `ARTIFACTS_S3_*`, а `BATCH_S3_PREFIX` задает namespace ключей.
 
 4. Поднимите сервис:
 

@@ -29,7 +29,7 @@
 - Экспорт требует отдельного пайплайна валидации (сравнить метрики до/после экспорта).
 
 ## Ссылки
-- [Контракт рантайма: откуда берётся model_url и параметры инференса](../../services/detection_service/infrastructure/runtime_contract.py)
-- [YOLO runtime/adapter (точка смены формата/рантайма при необходимости)](../../services/detection_service/infrastructure/yolo_detector.py)
+- [Контракт рантайма: откуда берётся model_url и параметры инференса](../../rescue_ai/infrastructure/contract_loader.py)
+- [YOLO runtime/adapter (точка смены формата/рантайма при необходимости)](../../rescue_ai/infrastructure/yolo_detector.py)
 - [Зависимости проекта (extras, inference stack)](../../pyproject.toml)
 - [Dockerfile (упаковка сервиса)](../../Dockerfile)

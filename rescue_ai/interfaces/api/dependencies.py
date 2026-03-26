@@ -15,7 +15,7 @@ from rescue_ai.application.stream_orchestrator import (
     StreamOrchestrator,
     StreamState,
 )
-from rescue_ai.config import get_settings
+from rescue_ai.config import Settings, get_settings
 from rescue_ai.domain.entities import AlertRuleConfig
 from rescue_ai.domain.ports import (
     AlertRepository,
@@ -50,11 +50,12 @@ class StreamOptions(TypedDict):
 class DetectionStreamController:
     """Owns the stream orchestrator and exposes stream lifecycle methods."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, http_timeout_sec: float, service_version: str) -> None:
         self._frame_source = FrameSourceService()
+        self._service_version = service_version
         self._orchestrator = StreamOrchestrator(
             detector_factory=YoloDetector,
-            frame_publisher=HttpFramePublisher(),
+            frame_publisher=HttpFramePublisher(timeout_sec=http_timeout_sec),
             frame_source=self._frame_source,
         )
 
@@ -66,7 +67,9 @@ class DetectionStreamController:
         frame_source: FrameSourceService | None = None,
     ) -> StreamConfig:
         """Build a StreamConfig from mission options and contract defaults."""
-        resolved_contract = contract or load_stream_contract()
+        resolved_contract = contract or load_stream_contract(
+            service_version=self._service_version
+        )
         source = frame_source or self._frame_source
 
         frames_path = Path(options["frames_dir"])
@@ -129,11 +132,14 @@ class AppContainer:
 
 @lru_cache(maxsize=1)
 def get_container() -> AppContainer:
-    alert_rules, report_metadata = load_alert_rules_and_metadata()
-    mission_repository, alert_repository, frame_repository, reset_hook = (
-        _build_repositories(alert_rules=alert_rules)
+    settings = get_settings()
+    alert_rules, report_metadata = load_alert_rules_and_metadata(
+        service_version=settings.app.service_version
     )
-    artifact_storage = build_artifact_storage()
+    mission_repository, alert_repository, frame_repository, reset_hook = (
+        _build_repositories(alert_rules=alert_rules, settings=settings)
+    )
+    artifact_storage = build_artifact_storage(settings.storage)
 
     pilot_service = PilotService(
         dependencies=PilotService.Dependencies(
@@ -148,7 +154,10 @@ def get_container() -> AppContainer:
 
     return AppContainer(
         pilot_service=pilot_service,
-        stream_controller=DetectionStreamController(),
+        stream_controller=DetectionStreamController(
+            http_timeout_sec=settings.detection.http_timeout_sec,
+            service_version=settings.app.service_version,
+        ),
         reset_hook=reset_hook,
     )
 
@@ -171,14 +180,14 @@ def reset_state() -> None:
 def _build_repositories(
     *,
     alert_rules: AlertRuleConfig,
+    settings: Settings,
 ) -> tuple[
     MissionRepository,
     AlertRepository,
     FrameEventRepository,
     Callable[[], None],
 ]:
-    settings = get_settings()
-    backend = settings.app.repository_backend
+    backend = settings.api.repository_backend
 
     if backend == "memory":
         memory_db = InMemoryDatabase()
@@ -190,7 +199,6 @@ def _build_repositories(
         )
 
     if backend == "postgres":
-        from rescue_ai.infrastructure.postgres_connection import resolve_postgres_dsn
         from rescue_ai.infrastructure.postgres_repositories import (
             EpisodeProjectionSettings,
             PostgresAlertRepository,
@@ -199,12 +207,9 @@ def _build_repositories(
             PostgresMissionRepository,
         )
 
-        dsn = resolve_postgres_dsn()
+        dsn = settings.database.dsn.strip()
         if not dsn:
-            raise ValueError(
-                "Postgres backend requires APP_POSTGRES_DSN or "
-                "APP_POSTGRES_HOST/PORT/DB/USER/PASSWORD"
-            )
+            raise ValueError("Postgres backend requires DB_DSN")
 
         postgres_db = PostgresDatabase(dsn=dsn)
         episode_settings = EpisodeProjectionSettings(
