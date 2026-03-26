@@ -2,7 +2,7 @@ PYTHONPATH := $(shell pwd)
 UV := PYTHONPATH=$(PYTHONPATH) uv run
 PLATFORM_COMPOSE := docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env
 
-.PHONY: help install format lint test test-arch test-batch ci \
+.PHONY: help install format lint test test-batch ci \
 	up up-postgres down batch-build batch-up batch-down batch-logs batch-backfill
 
 help:
@@ -10,9 +10,8 @@ help:
 	@echo "  make install         - install dev dependencies via uv"
 	@echo "  make format          - format code (black + isort)"
 	@echo "  make lint            - check code and batch DAG syntax"
-	@echo "  make test            - run all tests except architecture"
-	@echo "  make test-arch       - run architecture boundary tests"
-	@echo "  make ci              - full local CI (lint + test + arch)"
+	@echo "  make test            - run all tests (unit + architecture)"
+	@echo "  make ci              - full local CI (lint + test)"
 	@echo "  make up              - start main service (docker compose)"
 	@echo "  make down            - stop main service"
 
@@ -32,12 +31,9 @@ lint:
 	python -m py_compile infra/airflow/dags/rescue_batch_daily.py
 
 test:
-	$(UV) pytest tests --ignore=tests/architecture --cov=rescue_ai --cov-fail-under=70
+	$(UV) pytest tests --cov=rescue_ai --cov-fail-under=70
 
-test-arch:
-	$(UV) pytest tests/architecture --no-cov
-
-ci: lint test test-arch
+ci: lint test
 
 up:
 	docker compose up --build

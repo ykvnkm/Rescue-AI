@@ -30,7 +30,8 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 ## Важно
 
 - В `platform.env.example` нет дефолтных секретов. Перед запуском заполните все `*_PASSWORD`, S3 ключи и логины UI.
-- `infra/postgres/init/001-init-platform.sh` создает стартовые БД/пользователей (`airflow`, `POSTGRES_APP_USER`) из переменных окружения.
+- `infra/postgres/init/001-platform-bootstrap.sql` создает стартовые БД/пользователей (`airflow`, `POSTGRES_APP_USER`) из переменных окружения.
+- `infra/postgres/init/010-app-schema.sql` содержит прикладную схему Postgres (online + batch status таблицы) и применяется при инициализации контейнера.
 - Дашборд Grafana загружается автоматически из `infra/grafana/dashboards/platform-overview.json`.
 - Основной DAG batch-контура: `infra/airflow/dags/rescue_batch_daily.py`.
 

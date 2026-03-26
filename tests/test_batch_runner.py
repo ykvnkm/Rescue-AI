@@ -20,7 +20,7 @@ from rescue_ai.application.batch_runner import (
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent
 from rescue_ai.domain.ports import ReportMetadataPayload
 from rescue_ai.domain.value_objects import AlertRuleConfig
-from rescue_ai.infrastructure.s3_artifact_store import LocalArtifactStorage
+from rescue_ai.infrastructure.artifact_storage import LocalArtifactStorage
 from rescue_ai.infrastructure.status_store import JsonStatusStore
 
 

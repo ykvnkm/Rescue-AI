@@ -3,19 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Literal, Protocol, TypedDict
 
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
-
-
-@dataclass(frozen=True)
-class ArtifactBlob:
-    """Binary artifact payload returned by artifact storage adapters."""
-
-    content: bytes
-    media_type: str
-    filename: str
+from rescue_ai.domain.value_objects import ArtifactBlob
 
 
 class AlertReviewPayload(TypedDict):

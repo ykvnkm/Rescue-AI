@@ -1,12 +1,12 @@
 """FastAPI route handlers for mission and stream endpoints."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
+from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent
 from rescue_ai.domain.ports import AlertReviewPayload
 from rescue_ai.interfaces.api.dependencies import (
@@ -298,20 +298,14 @@ def get_alert_frame(alert_id: str) -> Response:
 @router.post("/v1/alerts/{alert_id}/confirm")
 def confirm_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
     service = get_pilot_service()
-    review_payload = cast(
-        AlertReviewPayload,
-        {
-            "status": "reviewed_confirmed",
-            "reviewed_by": payload.reviewed_by,
-            "reviewed_at_sec": payload.reviewed_at_sec,
-            "decision_reason": payload.decision_reason,
-        },
-    )
+    review: AlertReviewPayload = {
+        "status": "reviewed_confirmed",
+        "reviewed_by": payload.reviewed_by,
+        "reviewed_at_sec": payload.reviewed_at_sec,
+        "decision_reason": payload.decision_reason,
+    }
     try:
-        alert = service.review_alert(
-            alert_id,
-            review_payload,
-        )
+        alert = service.review_alert(alert_id, review)
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     if alert is None:
@@ -322,20 +316,14 @@ def confirm_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
 @router.post("/v1/alerts/{alert_id}/reject")
 def reject_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
     service = get_pilot_service()
-    review_payload = cast(
-        AlertReviewPayload,
-        {
-            "status": "reviewed_rejected",
-            "reviewed_by": payload.reviewed_by,
-            "reviewed_at_sec": payload.reviewed_at_sec,
-            "decision_reason": payload.decision_reason,
-        },
-    )
+    review: AlertReviewPayload = {
+        "status": "reviewed_rejected",
+        "reviewed_by": payload.reviewed_by,
+        "reviewed_at_sec": payload.reviewed_at_sec,
+        "decision_reason": payload.decision_reason,
+    }
     try:
-        alert = service.review_alert(
-            alert_id,
-            review_payload,
-        )
+        alert = service.review_alert(alert_id, review)
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     if alert is None:
@@ -371,7 +359,7 @@ def get_mission_episode_debug_endpoint(
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-def _alert_to_dict(alert: Alert, service: Any) -> dict[str, object]:
+def _alert_to_dict(alert: Alert, service: PilotService) -> dict[str, object]:
     mission = service.get_mission(alert.mission_id)
     wall_time = _build_alert_wall_time(
         created_at=mission.created_at if mission is not None else None,

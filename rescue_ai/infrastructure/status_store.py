@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 from pathlib import Path
 
 from rescue_ai.application.batch_dtos import RunStatusRecord
+from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
 
 
 class JsonStatusStore:
@@ -56,18 +56,11 @@ class JsonStatusStore:
 class PostgresStatusStore:
     """Status store backed by Postgres table `batch_mission_runs`."""
 
-    def __init__(self, dsn: str) -> None:
-        try:
-            psycopg = importlib.import_module("psycopg")
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("psycopg is required for postgres status store") from exc
-
-        self._psycopg = psycopg
-        self._dsn = dsn
-        self._ensure_schema()
+    def __init__(self, db: PostgresDatabase) -> None:
+        self._db = db
 
     def get(self, run_key: str) -> RunStatusRecord | None:
-        with self._psycopg.connect(self._dsn) as conn:
+        with self._db.connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
@@ -89,7 +82,7 @@ class PostgresStatusStore:
                 )
 
     def upsert(self, record: RunStatusRecord) -> None:
-        with self._psycopg.connect(self._dsn) as conn:
+        with self._db.connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
@@ -112,23 +105,6 @@ class PostgresStatusStore:
                         record.report_uri,
                         record.debug_uri,
                     ),
-                )
-            conn.commit()
-
-    def _ensure_schema(self) -> None:
-        with self._psycopg.connect(self._dsn) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS batch_mission_runs (
-                      run_key TEXT PRIMARY KEY,
-                      status TEXT NOT NULL,
-                      reason TEXT NULL,
-                      report_uri TEXT NULL,
-                      debug_uri TEXT NULL,
-                      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                    )
-                    """
                 )
             conn.commit()
 

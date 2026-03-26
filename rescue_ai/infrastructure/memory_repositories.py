@@ -4,7 +4,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from rescue_ai.domain.entities import Alert, FrameEvent, Mission
-from rescue_ai.domain.ports import AlertReviewPayload, ArtifactBlob
+from rescue_ai.domain.ports import AlertReviewPayload
+from rescue_ai.domain.value_objects import ArtifactBlob
 
 
 @dataclass
@@ -98,26 +99,19 @@ class InMemoryAlertRepository:
         alert = self._db.alerts.get(alert_id)
         if alert is None:
             return None
-        status = str(updates.get("status", ""))
+        status = updates["status"]
         if status not in self.allowed_target_statuses:
             raise ValueError("Invalid target status")
         if alert.status != "queued":
             raise ValueError("Alert already reviewed")
 
         alert.status = status
-        reviewed_by = updates.get("reviewed_by")
-        alert.reviewed_by = reviewed_by if isinstance(reviewed_by, str) else None
+        alert.reviewed_by = updates.get("reviewed_by")
         reviewed_at = updates.get("reviewed_at_sec")
-        if reviewed_at is None:
-            alert.reviewed_at_sec = alert.ts_sec
-        elif isinstance(reviewed_at, (int, float, str)):
-            alert.reviewed_at_sec = float(reviewed_at)
-        else:
-            raise ValueError("Invalid reviewed_at_sec")
-        decision_reason = updates.get("decision_reason")
-        alert.decision_reason = (
-            decision_reason if isinstance(decision_reason, str) else None
+        alert.reviewed_at_sec = (
+            float(reviewed_at) if reviewed_at is not None else alert.ts_sec
         )
+        alert.decision_reason = updates.get("decision_reason")
         return alert
 
 

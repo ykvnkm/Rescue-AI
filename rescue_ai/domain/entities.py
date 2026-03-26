@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -39,7 +38,7 @@ class Detection:
     score: float
     label: str = "person"
     model_name: str = "yolo8n"
-    explanation: Optional[str] = None
+    explanation: str | None = None
 
 
 @dataclass
@@ -55,6 +54,6 @@ class Alert:
     primary_detection: Detection
     detections: list[Detection] = field(default_factory=list)
     status: str = "queued"
-    reviewed_by: Optional[str] = None
-    reviewed_at_sec: Optional[float] = None
-    decision_reason: Optional[str] = None
+    reviewed_by: str | None = None
+    reviewed_at_sec: float | None = None
+    decision_reason: str | None = None

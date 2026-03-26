@@ -35,6 +35,11 @@ from rescue_ai.application.pipeline_stages import (
 from rescue_ai.config import get_settings
 from rescue_ai.domain.ports import ReportMetadataPayload
 from rescue_ai.domain.value_objects import AlertRuleConfig
+from rescue_ai.infrastructure.artifact_storage import (
+    LocalArtifactStorage,
+    S3ArtifactBackendSettings,
+    S3ArtifactStorage,
+)
 from rescue_ai.infrastructure.contract_loader import load_stream_contract
 from rescue_ai.infrastructure.local_mission_source import LocalMissionSource
 from rescue_ai.infrastructure.memory_repositories import (
@@ -45,11 +50,6 @@ from rescue_ai.infrastructure.memory_repositories import (
     InMemoryMissionRepository,
 )
 from rescue_ai.infrastructure.pilot_engine import PilotMissionEngine
-from rescue_ai.infrastructure.s3_artifact_store import (
-    LocalArtifactStorage,
-    S3ArtifactBackendSettings,
-    S3ArtifactStorage,
-)
 from rescue_ai.infrastructure.stage_store import LocalStageStore, S3StageStore
 from rescue_ai.infrastructure.status_store import JsonStatusStore, PostgresStatusStore
 from rescue_ai.infrastructure.yolo_detector import YoloDetector
@@ -154,7 +154,9 @@ def build_status_store():
         dsn = settings.database.batch_dsn.strip()
         if not dsn:
             raise ValueError("BATCH_POSTGRES_DSN is required for postgres backend")
-        return PostgresStatusStore(dsn=dsn)
+        from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
+
+        return PostgresStatusStore(db=PostgresDatabase(dsn=dsn))
     return JsonStatusStore(path=settings.batch.status_path)
 
 

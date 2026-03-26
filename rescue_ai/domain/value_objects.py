@@ -4,6 +4,15 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class ArtifactBlob:
+    """Binary artifact payload returned by artifact storage adapters."""
+
+    content: bytes
+    media_type: str
+    filename: str
+
+
+@dataclass(frozen=True)
 class AlertRuleConfig:
     """Alert sliding-window thresholds loaded from contract YAML."""
 
