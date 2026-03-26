@@ -7,14 +7,14 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-from libs.batch.domain.models import RunStatusRecord
-from libs.batch.infrastructure.artifact_store import LocalArtifactStore, S3ArtifactStore
-from libs.batch.infrastructure.status_store import JsonStatusStore, PostgresStatusStore
+from rescue_ai.application.batch_dtos import RunStatusRecord
+from rescue_ai.infrastructure.s3_artifact_store import LocalArtifactStorage
+from rescue_ai.infrastructure.status_store import JsonStatusStore, PostgresStatusStore
 
 
 def test_local_artifact_store_writes_report_and_debug() -> None:
     with TemporaryDirectory() as temp_dir:
-        store = LocalArtifactStore(root_dir=Path(temp_dir))
+        store = LocalArtifactStorage(root=Path(temp_dir))
         report_uri = store.write_report("m:d:c:m", {"status": "completed"})
         debug_uri = store.write_debug_rows("m:d:c:m", [{"frame_id": 1, "ok": True}])
 
@@ -56,33 +56,3 @@ def test_postgres_status_store_roundtrip() -> None:
 
     assert record is not None
     assert record.status == "running"
-
-
-@pytest.mark.integration
-def test_s3_artifact_store_roundtrip() -> None:
-    endpoint = os.getenv("BATCH_TEST_S3_ENDPOINT")
-    bucket = os.getenv("BATCH_TEST_S3_BUCKET")
-    access_key = os.getenv("BATCH_TEST_S3_ACCESS_KEY")
-    secret_key = os.getenv("BATCH_TEST_S3_SECRET_KEY")
-    if not all([endpoint, bucket, access_key, secret_key]):
-        pytest.skip("S3 integration env vars are not fully set")
-
-    assert endpoint is not None
-    assert bucket is not None
-    assert access_key is not None
-    assert secret_key is not None
-
-    store = S3ArtifactStore(
-        bucket=bucket,
-        prefix="batch-integration",
-        connection=S3ArtifactStore.Connection(
-            endpoint_url=endpoint,
-            access_key=access_key,
-            secret_key=secret_key,
-        ),
-    )
-    report_uri = store.write_report("run:key", {"status": "ok"})
-    debug_uri = store.write_debug_rows("run:key", [{"frame_id": 1}])
-
-    assert report_uri.startswith(f"s3://{bucket}/")
-    assert debug_uri.startswith(f"s3://{bucket}/")

@@ -8,13 +8,12 @@ from typing import Any, cast
 
 from fastapi.testclient import TestClient
 
-from services.api_gateway.app import app
-from services.api_gateway.dependencies import (
-    get_container,
+from rescue_ai.interfaces.api.app import app
+from rescue_ai.interfaces.api.dependencies import (
     get_pilot_service,
+    get_stream_controller,
     reset_state,
 )
-from services.detection_service.infrastructure import stream_runtime_api
 
 client = TestClient(app)
 
@@ -26,15 +25,19 @@ class _FakeDetector:
     def warmup(self) -> None:
         return None
 
-    def predict(self, _frame_path: Path) -> list[object]:
+    def detect(self, _frame_path: str) -> list[object]:
         return []
+
+    def runtime_name(self) -> str:
+        return "fake-detector"
 
 
 def setup_function() -> None:
-    os.environ["ARTIFACTS_MODE"] = "local"
-    get_container.cache_clear()
+    os.environ["ARTIFACTS_BACKEND"] = "local"
     reset_state()
-    stream_runtime_api.set_detector_factory(cast(Any, _FakeDetector))
+    cast(Any, get_stream_controller())._orchestrator.set_detector_factory(
+        cast(Any, _FakeDetector)
+    )
 
 
 def _build_mission_source_layout(root: Path) -> Path:
@@ -666,7 +669,9 @@ def test_start_flow_returns_503_when_detector_preflight_fails() -> None:
         def predict(self, _frame_path: Path) -> list[object]:
             return []
 
-    stream_runtime_api.set_detector_factory(cast(Any, _FailingDetector))
+    cast(Any, get_stream_controller())._orchestrator.set_detector_factory(
+        cast(Any, _FailingDetector)
+    )
 
     with TemporaryDirectory() as temp_dir:
         images_dir = _build_mission_source_layout(Path(temp_dir))

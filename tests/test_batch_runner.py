@@ -3,29 +3,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
+from typing import Literal, cast
 
-from libs.batch.application.mission_batch_runner import (
-    MissionBatchRunner,
-    MissionBatchRunnerDeps,
-)
-from libs.batch.application.ports import MissionEngineFactoryPort, MissionEnginePort
-from libs.batch.domain.models import (
+from rescue_ai.application.batch_dtos import (
     BatchRunRequest,
     FrameRecord,
+    MissionEngineFactoryPort,
+    MissionEnginePort,
     MissionInput,
     RunStatusRecord,
 )
-from libs.batch.infrastructure.artifact_store import LocalArtifactStore
-from libs.batch.infrastructure.status_store import JsonStatusStore
-from libs.core.application.models import AlertRuleConfig, DetectionInput
-from libs.core.domain.entities import (
-    Alert,
-    AlertEvidence,
-    AlertLifecycle,
-    DetectionData,
-    FrameEvent,
+from rescue_ai.application.batch_runner import (
+    MissionBatchRunner,
+    MissionBatchRunnerDeps,
 )
+from rescue_ai.domain.entities import Alert, Detection, FrameEvent
+from rescue_ai.domain.ports import ReportMetadataPayload
+from rescue_ai.domain.value_objects import AlertRuleConfig
+from rescue_ai.infrastructure.s3_artifact_store import LocalArtifactStorage
+from rescue_ai.infrastructure.status_store import JsonStatusStore
 
 
 class FakeSource:
@@ -45,16 +41,19 @@ class FakeSource:
 class FakeDetector:
     """Detector test double that always returns one person detection."""
 
-    def detect(self, image_uri: str) -> list[DetectionInput]:
+    def detect(self, image_uri: str) -> list[Detection]:
         _ = image_uri
         return [
-            DetectionInput(
+            Detection(
                 bbox=(0.0, 0.0, 1.0, 1.0),
                 score=0.95,
                 label="person",
                 model_name="yolo-model",
             )
         ]
+
+    def warmup(self) -> None:
+        return
 
     def runtime_name(self) -> str:
         return "fake-detector"
@@ -63,9 +62,12 @@ class FakeDetector:
 class ErrorDetector:
     """Detector test double that fails for every frame."""
 
-    def detect(self, image_uri: str) -> list[DetectionInput]:
+    def detect(self, image_uri: str) -> list[Detection]:
         _ = image_uri
         raise RuntimeError("detector boom")
+
+    def warmup(self) -> None:
+        return
 
     def runtime_name(self) -> str:
         return "error-detector"
@@ -83,7 +85,7 @@ class FakeEngine(MissionEnginePort):
         source_name: str,
         total_frames: int,
         fps: float,
-        report_metadata: dict[str, object],
+        report_metadata: ReportMetadataPayload,
     ) -> str:
         _ = (source_name, total_frames, fps, report_metadata)
         return "internal-mission-1"
@@ -92,7 +94,7 @@ class FakeEngine(MissionEnginePort):
         self,
         mission_id: str,
         frame_event: FrameEvent,
-        detections: list[DetectionInput],
+        detections: list[Detection],
     ) -> list[Alert]:
         if not detections:
             return []
@@ -104,23 +106,20 @@ class FakeEngine(MissionEnginePort):
                 frame_id=frame_event.frame_id,
                 ts_sec=frame_event.ts_sec,
                 image_uri=frame_event.image_uri,
-                evidence=AlertEvidence(
-                    people_detected=1,
-                    primary_detection=DetectionData(
-                        bbox=(0.0, 0.0, 1.0, 1.0),
-                        score=0.95,
-                        label="person",
-                        model_name="yolo-model",
-                    ),
+                people_detected=1,
+                primary_detection=Detection(
+                    bbox=(0.0, 0.0, 1.0, 1.0),
+                    score=0.95,
+                    label="person",
+                    model_name="yolo-model",
                 ),
-                lifecycle=AlertLifecycle(status="queued"),
             )
         ]
 
     def review_alert(
         self,
         alert_id: str,
-        status: str,
+        status: Literal["reviewed_confirmed", "reviewed_rejected"],
         reviewed_at_sec: float,
         reason: str,
     ) -> None:
@@ -153,7 +152,7 @@ class FakeEngineFactory(MissionEngineFactoryPort):
     def create(
         self,
         alert_rules: AlertRuleConfig,
-        report_metadata: dict[str, object],
+        report_metadata: ReportMetadataPayload,
     ) -> MissionEnginePort:
         _ = (alert_rules, report_metadata)
         return self.engine
@@ -174,7 +173,7 @@ def _runner(
         MissionBatchRunnerDeps(
             source=FakeSource(mission_input),
             detector=detector,
-            artifacts=LocalArtifactStore(root_dir=Path(temp_dir) / "artifacts"),
+            artifacts=LocalArtifactStorage(root=Path(temp_dir) / "artifacts"),
             statuses=statuses,
             engine_factory=FakeEngineFactory(engine),
         )
@@ -188,7 +187,15 @@ def _request(force: bool = False) -> BatchRunRequest:
         config_hash="cfg",
         model_version="model-v1",
         code_version="code-v1",
-        alert_rules=AlertRuleConfig(),
+        alert_rules=AlertRuleConfig(
+            score_threshold=0.2,
+            window_sec=1.0,
+            quorum_k=1,
+            cooldown_sec=1.5,
+            gap_end_sec=1.2,
+            gt_gap_end_sec=1.0,
+            match_tolerance_sec=1.2,
+        ),
         force=force,
     )
 

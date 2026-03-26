@@ -1,15 +1,44 @@
 from __future__ import annotations
 
-from libs.core.application.models import DetectionInput
-from libs.core.domain.entities import FrameEvent
-from tests.support.pilot_service import (
-    InMemoryArtifactStorageDouble,
-    build_pilot_service,
+from rescue_ai.application.pilot_service import PilotService
+from rescue_ai.domain.entities import Detection, FrameEvent
+from rescue_ai.domain.value_objects import AlertRuleConfig
+from rescue_ai.infrastructure.memory_repositories import (
+    InMemoryAlertRepository,
+    InMemoryArtifactStorage,
+    InMemoryDatabase,
+    InMemoryFrameEventRepository,
+    InMemoryMissionRepository,
 )
 
 
+def _build_pilot_service(
+    artifact_storage: InMemoryArtifactStorage | None = None,
+) -> tuple[PilotService, InMemoryDatabase]:
+    db = InMemoryDatabase()
+    alert_rules = AlertRuleConfig(
+        score_threshold=0.2,
+        window_sec=1.0,
+        quorum_k=1,
+        cooldown_sec=1.5,
+        gap_end_sec=1.2,
+        gt_gap_end_sec=1.0,
+        match_tolerance_sec=1.2,
+    )
+    service = PilotService(
+        dependencies=PilotService.Dependencies(
+            mission_repository=InMemoryMissionRepository(db),
+            alert_repository=InMemoryAlertRepository(db),
+            frame_event_repository=InMemoryFrameEventRepository(db),
+            artifact_storage=artifact_storage or InMemoryArtifactStorage(),
+        ),
+        alert_rules=alert_rules,
+    )
+    return service, db
+
+
 def test_update_mission_persists_total_frames() -> None:
-    service, _ = build_pilot_service()
+    service, _ = _build_pilot_service()
     mission = service.create_mission(source_name="pilot", total_frames=0, fps=2.0)
 
     updated = service.update_mission(mission.mission_id, total_frames=12)
@@ -22,8 +51,8 @@ def test_update_mission_persists_total_frames() -> None:
 
 
 def test_ingest_frame_event_persists_stored_image_uri_for_frame_and_alert() -> None:
-    artifacts = InMemoryArtifactStorageDouble()
-    service, db = build_pilot_service(artifact_storage=artifacts)
+    artifacts = InMemoryArtifactStorage()
+    service, db = _build_pilot_service(artifact_storage=artifacts)
     mission = service.create_mission(source_name="pilot", total_frames=1, fps=2.0)
     started = service.start_mission(mission.mission_id)
     assert started is not None
@@ -38,7 +67,7 @@ def test_ingest_frame_event_persists_stored_image_uri_for_frame_and_alert() -> N
             gt_episode_id="ep-1",
         ),
         detections=[
-            DetectionInput(
+            Detection(
                 bbox=(10.0, 20.0, 30.0, 40.0),
                 score=0.99,
                 label="person",
@@ -48,16 +77,16 @@ def test_ingest_frame_event_persists_stored_image_uri_for_frame_and_alert() -> N
         ],
     )
 
+    expected_uri = f"memory://missions/{mission.mission_id}/frames/1.jpg"
     assert len(alerts) == 1
-    assert alerts[0].image_uri == artifacts.stored_frame_uri
-    assert (
-        db.mission_frames[mission.mission_id][0].image_uri == artifacts.stored_frame_uri
-    )
-    assert db.alerts[alerts[0].alert_id].image_uri == artifacts.stored_frame_uri
+    assert alerts[0].image_uri == expected_uri
+    assert db.mission_frames[mission.mission_id][0].image_uri == expected_uri
+    assert db.alerts[alerts[0].alert_id].image_uri == expected_uri
+    assert artifacts.stored_frames[(mission.mission_id, 1)] == expected_uri
 
 
 def test_review_alert_cannot_be_applied_twice() -> None:
-    service, _ = build_pilot_service()
+    service, _ = _build_pilot_service()
     mission = service.create_mission(source_name="pilot", total_frames=1, fps=2.0)
     service.start_mission(mission.mission_id)
 
@@ -71,7 +100,7 @@ def test_review_alert_cannot_be_applied_twice() -> None:
             gt_episode_id="ep-1",
         ),
         detections=[
-            DetectionInput(
+            Detection(
                 bbox=(10.0, 20.0, 30.0, 40.0),
                 score=0.99,
                 label="person",
@@ -92,7 +121,7 @@ def test_review_alert_cannot_be_applied_twice() -> None:
     )
 
     assert reviewed is not None
-    assert reviewed.lifecycle.reviewed_at_sec == alert.ts_sec
+    assert reviewed.reviewed_at_sec == alert.ts_sec
 
     try:
         service.review_alert(

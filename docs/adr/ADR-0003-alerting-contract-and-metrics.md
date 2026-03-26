@@ -41,7 +41,7 @@
 
 ## Ссылки
 - [Единый YAML-контракт инференса + алертов + целевых метрик](../../configs/nsu_frames_yolov8n_alert_contract.yaml)
-- [Загрузчик контракта и параметры рантайма](../../services/detection_service/infrastructure/runtime_contract.py)
-- [Реализация логики пилота (алерты, метрики миссии)](../../libs/core/application/pilot_service.py)
+- [Загрузчик контракта и параметры рантайма](../../rescue_ai/infrastructure/contract_loader.py)
+- [Реализация логики пилота (алерты, метрики миссии)](../../rescue_ai/application/pilot_service.py)
 - [Жизненный цикл алерта (описание контракта)](../contracts/alert_lifecycle.md)
 - [Схема отчёта миссии (report schema)](../contracts/report_schema.md)

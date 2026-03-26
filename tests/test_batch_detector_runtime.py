@@ -1,52 +1,61 @@
+"""Tests for YoloDetector.detect() with mocked inference."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
 from types import SimpleNamespace
 
-from libs.batch.infrastructure.detector_runtime import YoloDetectionRuntime
+from rescue_ai.application.inference_config import InferenceConfig
+from rescue_ai.infrastructure.yolo_detector import YoloDetector
+
+np = __import__("pytest").importorskip("numpy")
 
 
-@dataclass
-class _RawDetection:
-    bbox: tuple[float, float, float, float]
-    score: float
-    label: str
-
-
-def test_yolo_detection_runtime_detect(monkeypatch) -> None:
-    contract = SimpleNamespace(
-        report_provenance=SimpleNamespace(config_hash="cfg-1"),
-        alert_rules=SimpleNamespace(),
-        inference=SimpleNamespace(),
+def _fake_result(
+    bboxes: list[list[float]],
+    scores: list[float],
+    cls_ids: list[int],
+    names: dict[int, str],
+) -> SimpleNamespace:
+    """Build a fake ultralytics result with .boxes and .names."""
+    return SimpleNamespace(
+        boxes=SimpleNamespace(
+            cls=SimpleNamespace(
+                cpu=lambda: SimpleNamespace(numpy=lambda: np.array(cls_ids, dtype=int))
+            ),
+            conf=SimpleNamespace(
+                cpu=lambda: SimpleNamespace(numpy=lambda: np.array(scores))
+            ),
+            xyxy=SimpleNamespace(
+                cpu=lambda: SimpleNamespace(numpy=lambda: np.array(bboxes))
+            ),
+        ),
+        names=names,
     )
 
-    class _FakeYoloDetector:
-        """Minimal YOLO detector double that returns one detection."""
 
-        def __init__(self, _: object) -> None:
-            return
-
-        def predict(self, frame_path) -> list[_RawDetection]:
-            _ = frame_path
-            return [
-                _RawDetection(bbox=(1.0, 2.0, 3.0, 4.0), score=0.91, label="person")
-            ]
-
-        def backend_name(self) -> str:
-            return "fake-yolo"
-
-    monkeypatch.setattr(
-        "libs.batch.infrastructure.detector_runtime.load_stream_contract",
-        lambda: contract,
+def test_yolo_detector_detect(monkeypatch) -> None:
+    config = InferenceConfig(
+        model_url="http://example.com/model.pt",
+        device="cpu",
+        imgsz=960,
+        nms_iou=0.75,
+        max_det=1000,
+        confidence_threshold=0.2,
     )
-    monkeypatch.setattr(
-        "libs.batch.infrastructure.detector_runtime.YoloDetector",
-        _FakeYoloDetector,
+    detector = YoloDetector(config=config, model_version="yolo-v2")
+
+    result = _fake_result(
+        bboxes=[[1.0, 2.0, 3.0, 4.0]],
+        scores=[0.91],
+        cls_ids=[0],
+        names={0: "person"},
     )
-    runtime = YoloDetectionRuntime(model_version="yolo-v2")
-    detections = runtime.detect("/tmp/frame.jpg")
+    monkeypatch.setattr(detector, "_predict_raw", lambda _path: [result])
+
+    detections = detector.detect("/tmp/frame.jpg")
 
     assert len(detections) == 1
     assert detections[0].label == "person"
     assert detections[0].model_name == "yolo-v2"
     assert detections[0].score > 0.5
+    assert detections[0].bbox == (1.0, 2.0, 3.0, 4.0)

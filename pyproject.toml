@@ -5,10 +5,9 @@ requires-python = ">=3.12"
 dependencies = [
   "boto3==1.42.65",
   "fastapi==0.115.8",
-  "python-dotenv==1.0.1",
+  "pydantic-settings==2.7.1",
   "uvicorn[standard]==0.30.6",
   "PyYAML==6.0.2",
-  "alembic==1.14.1",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +25,9 @@ dev = [
 inference = [
   "ultralytics==8.3.57",
 ]
+postgres = [
+  "psycopg[binary]==3.2.3",
+]
 batch = [
   "boto3==1.42.65",
   "psycopg[binary]==3.2.3",
@@ -41,17 +43,29 @@ line_length = 88
 
 [tool.mypy]
 python_version = "3.12"
-files = ["services", "libs", "tests"]
+files = ["rescue_ai", "tests"]
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_unused_configs = true
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests requiring a running Postgres database",
+]
+
 [tool.pylint.main]
 py-version = "3.12"
 
-[tool.pylint.messages_control]
+[tool.pylint."messages_control"]
 disable = [
-  "missing-module-docstring",
-  "missing-function-docstring",
+    "C0114",  # missing-module-docstring
+    "C0115",  # missing-class-docstring
+    "C0116",  # missing-function-docstring
+    "R0801",  # duplicate-code
+    "R0902",  # too-many-instance-attributes
+    "R0903",  # too-few-public-methods
+    "W0212",  # protected-access (needed in tests)
+    "W0621",  # redefined-outer-name (pytest fixtures)
+    "C0415",  # import-outside-toplevel (lazy imports)
 ]

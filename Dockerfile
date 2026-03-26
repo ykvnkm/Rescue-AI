@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -13,17 +14,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --extra inference --extra batch
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --extra inference --extra batch
 ENV PATH="/app/.venv/bin:$PATH"
 
-COPY db_migrations ./db_migrations
-COPY alembic.ini ./alembic.ini
-COPY config.py ./config.py
 COPY configs ./configs
-COPY libs ./libs
-COPY services ./services
+COPY rescue_ai ./rescue_ai
+COPY scripts ./scripts
 RUN mkdir -p /app/runtime
 
 EXPOSE 8000
 
-CMD ["python", "-m", "services.api_gateway.run"]
+CMD ["uv", "run", "python", "-m", "rescue_ai.interfaces.cli.online"]

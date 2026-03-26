@@ -85,7 +85,7 @@
 - документировать результаты в виде отчёта экспериментов и связать с параметрами алертинга.
 
 ## Ссылки
-- [Адаптер детектора YOLO (инфраструктурный слой)](../../services/detection_service/infrastructure/yolo_detector.py)
+- [Адаптер детектора YOLO (инфраструктурный слой)](../../rescue_ai/infrastructure/yolo_detector.py)
 - [Контракт: выбранная модель (model_url), imgsz, nms, thresholds, цели eval](../../configs/nsu_frames_yolov8n_alert_contract.yaml)
-- [DEFAULT_MODEL_URL и загрузка конфигурации рантайма](../../services/detection_service/infrastructure/runtime_contract.py)
+- [DEFAULT_MODEL_URL и загрузка конфигурации рантайма](../../rescue_ai/infrastructure/contract_loader.py)
 

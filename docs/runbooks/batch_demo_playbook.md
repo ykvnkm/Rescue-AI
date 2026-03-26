@@ -50,10 +50,10 @@ uv run python scripts/batch/check_report_quality.py \
 
 ```bash
 docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
-  uv run python -m services.batch_runner.main --mission-id pilot_eval_mission --ds 2026-03-01
+  uv run python -m rescue_ai.interfaces.cli.batch --stage inference --mission-id pilot_eval_mission --ds 2026-03-01
 
 docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
-  uv run python -m services.batch_runner.main --mission-id pilot_eval_mission --ds 2026-03-01
+  uv run python -m rescue_ai.interfaces.cli.batch --stage inference --mission-id pilot_eval_mission --ds 2026-03-01
 ```
 
 Ожидание: второй запуск без `--force` возвращает `idempotent_skip`.

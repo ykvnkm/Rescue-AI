@@ -1,30 +1,35 @@
+"""Smoke tests for batch CLI imports and DAG configuration."""
+
 from __future__ import annotations
 
 import importlib
-import sys
 from pathlib import Path
 
 
-def test_batch_runner_module_imports() -> None:
-    module = importlib.import_module("services.batch_runner.main")
+def test_batch_module_imports() -> None:
+    module = importlib.import_module("rescue_ai.interfaces.cli.batch")
     assert hasattr(module, "main")
 
 
 def test_batch_dag_import_and_task_command() -> None:
-    dag_path = Path("infra/airflow/dags/idempotent_docker_backfill_demo.py")
+    dag_path = Path("infra/airflow/dags/rescue_batch_daily.py")
     payload = dag_path.read_text(encoding="utf-8")
-    assert 'DAG_ID = "rescue_ml_pipeline_daily"' in payload
+    assert 'DAG_ID = "rescue_batch_daily"' in payload
     assert "DockerOperator(" in payload
-    assert "services.batch_runner.main" in payload
+    assert "rescue_ai.interfaces.cli.batch" in payload
 
 
 def test_batch_cli_parse_args_smoke(monkeypatch) -> None:
-    module = importlib.import_module("services.batch_runner.main")
+    module = importlib.import_module("rescue_ai.interfaces.cli.batch")
+    import sys
+
     monkeypatch.setattr(
         sys,
         "argv",
         [
-            "batch-main",
+            "batch",
+            "--stage",
+            "data",
             "--mission-id",
             "mission-1",
             "--ds",
@@ -36,4 +41,5 @@ def test_batch_cli_parse_args_smoke(monkeypatch) -> None:
 
     assert args.mission_id == "mission-1"
     assert args.ds == "2026-03-01"
+    assert args.stage == "data"
     assert args.force is True

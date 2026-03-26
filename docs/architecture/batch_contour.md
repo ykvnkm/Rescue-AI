@@ -2,17 +2,17 @@
 
 ```mermaid
 flowchart LR
-  A[Airflow DAG rescue_batch_daily\nDockerOperator] --> B[services.batch_runner.main]
-  B --> C[MissionBatchRunner use-case\nlibs/batch/application]
+  A[Airflow DAG rescue_batch_daily\nDockerOperator] --> B[rescue_ai.interfaces.cli.batch]
+  B --> C[MissionBatchRunner use-case\nrescue_ai.application.batch_runner]
   C --> D[MissionSourcePort]
   C --> E[DetectionRuntimePort]
   C --> F[MissionEnginePort]
   C --> G[ArtifactStorePort]
   C --> H[RunStatusStorePort]
 
-  D --> D1[LocalMissionSource / S3 source]
+  D --> D1[LocalMissionSource]
   E --> E1[YoloDetectionRuntime]
-  F --> F1[PilotMissionEngine]
+  F --> F1[PilotEngine]
   G --> G1[S3ArtifactStore / LocalArtifactStore]
   H --> H1[PostgresStatusStore / JsonStatusStore]
 

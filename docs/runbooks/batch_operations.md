@@ -29,7 +29,7 @@
 Пример:
 
 ```bash
-uv run python -m services.batch_runner.main --mission-id demo_mission --ds 2026-03-01 --force
+uv run python -m rescue_ai.interfaces.cli.batch --stage inference --mission-id demo_mission --ds 2026-03-01 --force
 ```
 
 ## Backfill

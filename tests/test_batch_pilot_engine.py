@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import cast
 
-from libs.batch.infrastructure.pilot_engine import PilotMissionEngine
-from libs.core.application.models import DetectionInput
-from libs.core.application.pilot_service import PilotService
-from libs.core.domain.entities import FrameEvent
+from rescue_ai.application.pilot_service import PilotServicePort
+from rescue_ai.domain.entities import Detection, FrameEvent
+from rescue_ai.domain.ports import AlertReviewPayload, ReportMetadataPayload
+from rescue_ai.infrastructure.pilot_engine import PilotMissionEngine
 
 
 @dataclass
@@ -16,9 +16,9 @@ class _Mission:
 
 class _PilotStub:
     def __init__(self) -> None:
-        self.metadata: dict[str, object] = {}
+        self.metadata: ReportMetadataPayload = {}
 
-    def set_report_metadata(self, payload: dict[str, object]) -> None:
+    def set_report_metadata(self, payload: ReportMetadataPayload) -> None:
         self.metadata = payload
 
     def create_mission(self, source_name: str, total_frames: int, fps: float):
@@ -29,14 +29,13 @@ class _PilotStub:
         _ = mission_id
         return _Mission("m1")
 
-    def ingest_frame_event(
-        self, frame_event: FrameEvent, detections: list[DetectionInput]
-    ):
+    def ingest_frame_event(self, frame_event: FrameEvent, detections: list[Detection]):
         _ = (frame_event, detections)
         return []
 
-    def review_alert(self, alert_id: str, decision: dict[str, object]):
-        _ = (alert_id, decision)
+    def review_alert(self, alert_id: str, updates: AlertReviewPayload):
+        """Stub review_alert that accepts typed review payload."""
+        _ = (alert_id, updates)
         return object()
 
     def complete_mission(self, mission_id: str, completed_frame_id: int | None):
@@ -50,13 +49,13 @@ class _PilotStub:
 
 def test_pilot_mission_engine_happy_path() -> None:
     pilot = _PilotStub()
-    engine = PilotMissionEngine(pilot=cast(PilotService, pilot))
+    engine = PilotMissionEngine(pilot=cast(PilotServicePort, pilot))
 
     mission_id = engine.create_and_start_mission(
         source_name="source",
         total_frames=1,
         fps=1.0,
-        report_metadata={"a": 1},
+        report_metadata={"config_hash": "cfg"},
     )
     engine.ingest_frame(
         mission_id=mission_id,
@@ -75,4 +74,4 @@ def test_pilot_mission_engine_happy_path() -> None:
 
     assert mission_id == "m1"
     assert report["status"] == "completed"
-    assert pilot.metadata == {"a": 1}
+    assert pilot.metadata == {"config_hash": "cfg"}

@@ -1,5 +1,6 @@
 """Tests for runtime contract, annotation loading and detector helpers."""
 
+import hashlib
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,16 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.detection_service.application.stream_runner import (
-    _build_frame_payload,
-    _serialize_detections,
-    build_annotation_index,
-)
-from services.detection_service.domain.models import InferenceConfig
-from services.detection_service.infrastructure.yolo_detector import (
-    YoloDetector,
-    _resolve_person_ids,
-)
+from rescue_ai.application.inference_config import InferenceConfig
+from rescue_ai.application.payloads import build_frame_payload, serialize_detections
+from rescue_ai.infrastructure.annotation_index import build_annotation_index
+from rescue_ai.infrastructure.yolo_detector import YoloDetector, _resolve_person_ids
 
 
 def test_build_annotation_index_from_coco_json() -> None:
@@ -55,12 +50,12 @@ def test_serialize_detections_and_payload() -> None:
         SimpleNamespace(bbox=(5.0, 6.0, 7.0, 8.0), score=0.8),
     ]
 
-    serialized = _serialize_detections(
+    serialized = serialize_detections(
         detections=detections,
         min_detections_per_frame=2,
     )
 
-    payload = _build_frame_payload(
+    payload = build_frame_payload(
         frame_id=1,
         ts_sec=0.5,
         frame_path=Path("/tmp/frame_0001.jpg"),
@@ -96,10 +91,86 @@ def test_yolo_detector_warmup_requires_ultralytics(
 
     detector = YoloDetector(config)
 
+    def _raise_import_error():
+        raise ImportError("missing ultralytics")
+
     monkeypatch.setattr(
-        "services.detection_service.infrastructure.yolo_detector.YOLO",
-        None,
+        "rescue_ai.infrastructure.yolo_detector._load_yolo_class",
+        _raise_import_error,
     )
 
     with pytest.raises(RuntimeError):
+        detector.warmup()
+
+
+def test_yolo_detector_validates_checksum(monkeypatch: pytest.MonkeyPatch) -> None:
+    with TemporaryDirectory() as temp_dir:
+        cache_dir = Path(temp_dir) / "models"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        model_file = cache_dir / "model.pt"
+        model_file.write_bytes(b"fake-model")
+
+        monkeypatch.setattr(
+            "rescue_ai.infrastructure.yolo_detector.MODEL_CACHE_DIR", cache_dir
+        )
+
+        config = InferenceConfig(
+            model_url="https://example.com/model.pt",
+            device="cpu",
+            imgsz=640,
+            nms_iou=0.7,
+            max_det=100,
+            confidence_threshold=0.25,
+            model_sha256="0" * 64,
+        )
+        detector = YoloDetector(config)
+
+        class _FakeYolo:
+            def __init__(self, model_path: str) -> None:
+                _ = model_path
+
+        monkeypatch.setattr(
+            "rescue_ai.infrastructure.yolo_detector._load_yolo_class",
+            lambda: _FakeYolo,
+        )
+
+        with pytest.raises(RuntimeError, match="Model checksum mismatch"):
+            detector.warmup()
+
+
+def test_yolo_detector_accepts_matching_checksum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        cache_dir = Path(temp_dir) / "models"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        model_file = cache_dir / "model.pt"
+        payload = b"fake-model"
+        model_file.write_bytes(payload)
+        expected_hash = hashlib.sha256(payload).hexdigest()
+
+        monkeypatch.setattr(
+            "rescue_ai.infrastructure.yolo_detector.MODEL_CACHE_DIR", cache_dir
+        )
+
+        config = InferenceConfig(
+            model_url="https://example.com/model.pt",
+            device="cpu",
+            imgsz=640,
+            nms_iou=0.7,
+            max_det=100,
+            confidence_threshold=0.25,
+            model_sha256=expected_hash,
+        )
+        detector = YoloDetector(config)
+
+        class _FakeYolo:
+            def __init__(self, model_path: str) -> None:
+                self.model_path = model_path
+
+        monkeypatch.setattr(
+            "rescue_ai.infrastructure.yolo_detector._load_yolo_class",
+            lambda: _FakeYolo,
+        )
+
         detector.warmup()
