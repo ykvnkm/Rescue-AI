@@ -97,9 +97,11 @@ def _verify_model_integrity(model_path: Path, expected_sha256: str | None) -> No
         raise RuntimeError("Invalid model_sha256 format in runtime config")
     actual = hashlib.sha256(model_path.read_bytes()).hexdigest()
     if actual != normalized:
-        raise RuntimeError(
-            f"Model checksum mismatch for {model_path.name}: expected {normalized}, got {actual}"
+        message = (
+            f"Model checksum mismatch for {model_path.name}: "
+            f"expected {normalized}, got {actual}"
         )
+        raise RuntimeError(message)
 
 
 def _extract_detections(

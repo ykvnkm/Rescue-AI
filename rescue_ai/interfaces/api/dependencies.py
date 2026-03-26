@@ -7,6 +7,7 @@ initialized as a fallback for local tests.
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
@@ -18,11 +19,15 @@ class StreamControllerPort(Protocol):
     """Minimal stream controller contract consumed by API routes."""
 
     def build_config(self, mission_id: str, options: Any) -> StreamConfig: ...
+
     def start(self, config: StreamConfig) -> StreamState: ...
+
     def stop(self, mission_id: str) -> StreamState | None: ...
+
     def wait_stopped(
         self, mission_id: str, timeout_sec: float = 3.0
     ) -> StreamState | None: ...
+
     def get_state(self, mission_id: str) -> StreamState | None: ...
 
 
@@ -35,32 +40,36 @@ class ApiRuntime:
     reset_hook: Callable[[], None]
 
 
-_runtime: ApiRuntime | None = None
+@dataclass
+class _RuntimeState:
+    runtime: ApiRuntime | None = None
+
+
+_STATE = _RuntimeState()
 
 
 def set_runtime(runtime: ApiRuntime) -> None:
     """Install runtime dependencies for API requests."""
-    global _runtime
-    _runtime = runtime
+    _STATE.runtime = runtime
 
 
 def _ensure_runtime() -> ApiRuntime:
-    global _runtime
-    if _runtime is None:
-        from rescue_ai.interfaces.cli.online import build_api_runtime
-
+    if _STATE.runtime is None:
+        build_api_runtime = getattr(
+            importlib.import_module("rescue_ai.interfaces.cli.online"),
+            "build_api_runtime",
+        )
         pilot_service, stream_controller, reset_hook = build_api_runtime()
-        _runtime = ApiRuntime(
+        _STATE.runtime = ApiRuntime(
             pilot_service=pilot_service,
             stream_controller=stream_controller,
             reset_hook=reset_hook,
         )
-    return _runtime
+    return _STATE.runtime
 
 
 def _clear_runtime() -> None:
-    global _runtime
-    _runtime = None
+    _STATE.runtime = None
 
 
 def get_container() -> ApiRuntime:
@@ -81,12 +90,11 @@ def get_stream_controller() -> StreamControllerPort:
 
 def reset_state() -> None:
     """Reset mutable runtime state used by tests and local sessions."""
-    global _runtime
-    if _runtime is None:
+    if _STATE.runtime is None:
         return
-    _runtime.reset_hook()
-    _runtime.pilot_service.reset_runtime_state()
-    _runtime = None
+    _STATE.runtime.reset_hook()
+    _STATE.runtime.pilot_service.reset_runtime_state()
+    _STATE.runtime = None
 
 
 __all__ = [

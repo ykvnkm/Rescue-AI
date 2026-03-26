@@ -55,7 +55,7 @@ def test_pilot_mission_engine_happy_path() -> None:
         source_name="source",
         total_frames=1,
         fps=1.0,
-        report_metadata={"a": 1},
+        report_metadata={"config_hash": "cfg"},
     )
     engine.ingest_frame(
         mission_id=mission_id,
@@ -74,4 +74,4 @@ def test_pilot_mission_engine_happy_path() -> None:
 
     assert mission_id == "m1"
     assert report["status"] == "completed"
-    assert pilot.metadata == {"a": 1}
+    assert pilot.metadata == {"config_hash": "cfg"}

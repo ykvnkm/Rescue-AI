@@ -225,23 +225,58 @@ def test_update_already_reviewed_raises(pg_db: PostgresDatabase) -> None:
     missions.create(_mission())
     frames.add(_frame())
     alerts.add(_alert())
-    alerts.update_status("a-1", {"status": "reviewed_confirmed"})
+    alerts.update_status(
+        "a-1",
+        {
+            "status": "reviewed_confirmed",
+            "reviewed_by": None,
+            "reviewed_at_sec": None,
+            "decision_reason": None,
+        },
+    )
 
     with pytest.raises(ValueError, match="already reviewed"):
-        alerts.update_status("a-1", {"status": "reviewed_rejected"})
+        alerts.update_status(
+            "a-1",
+            {
+                "status": "reviewed_rejected",
+                "reviewed_by": None,
+                "reviewed_at_sec": None,
+                "decision_reason": None,
+            },
+        )
 
 
 @pytest.mark.integration
 def test_update_invalid_status_raises(pg_db: PostgresDatabase) -> None:
     alerts = PostgresAlertRepository(pg_db)
     with pytest.raises(ValueError, match="Invalid target status"):
-        alerts.update_status("a-1", {"status": "bogus"})
+        alerts.update_status(
+            "a-1",
+            {
+                "status": "bogus",  # type: ignore[typeddict-item]
+                "reviewed_by": None,
+                "reviewed_at_sec": None,
+                "decision_reason": None,
+            },
+        )
 
 
 @pytest.mark.integration
 def test_update_returns_none_for_missing(pg_db: PostgresDatabase) -> None:
     alerts = PostgresAlertRepository(pg_db)
-    assert alerts.update_status("nope", {"status": "reviewed_confirmed"}) is None
+    assert (
+        alerts.update_status(
+            "nope",
+            {
+                "status": "reviewed_confirmed",
+                "reviewed_by": None,
+                "reviewed_at_sec": None,
+                "decision_reason": None,
+            },
+        )
+        is None
+    )
 
 
 # ── PostgresDatabase ────────────────────────────────────────────────────

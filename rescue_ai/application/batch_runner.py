@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Literal
 
 from rescue_ai.application.batch_dtos import (
     BatchArtifactPort,
@@ -233,7 +234,7 @@ class MissionBatchRunner:
 
         if context.gt_available:
             for alert in alerts:
-                review_status = (
+                review_status: Literal["reviewed_confirmed", "reviewed_rejected"] = (
                     "reviewed_confirmed"
                     if frame.gt_person_present
                     else "reviewed_rejected"

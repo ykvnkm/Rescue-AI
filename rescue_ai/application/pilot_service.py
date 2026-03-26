@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import uuid4
 
 from rescue_ai.domain.alert_policy import MissionAlertState, evaluate_alert
@@ -77,7 +77,7 @@ class PilotService:
 
     def set_report_metadata(self, metadata: ReportMetadataPayload) -> None:
         """Set reproducibility metadata attached to mission reports."""
-        self._report_metadata = dict(metadata)
+        self._report_metadata = cast(ReportMetadataPayload, dict(metadata))
 
     def create_mission(
         self,

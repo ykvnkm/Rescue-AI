@@ -21,6 +21,66 @@ DEFAULT_MODEL_URL = (
 )
 
 
+def _require_mapping(payload: object) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid alert contract payload")
+    return payload
+
+
+def _resolve_confidence_threshold(payload: dict[str, object]) -> float:
+    eval_cfg = payload.get("eval", {})
+    thresholds = (
+        eval_cfg.get("thresholds", [0.2]) if isinstance(eval_cfg, dict) else [0.2]
+    )
+    return float(thresholds[0] if thresholds else 0.2)
+
+
+def _build_alert_rules(
+    payload: dict[str, object],
+    confidence_threshold: float,
+) -> AlertRuleConfig:
+    alert = payload.get("alert", {})
+    if not isinstance(alert, dict):
+        alert = {}
+    return AlertRuleConfig(
+        score_threshold=confidence_threshold,
+        window_sec=float(alert.get("window_sec", 1.0)),
+        quorum_k=int(alert.get("quorum_k", 1)),
+        cooldown_sec=float(alert.get("cooldown_sec", 1.5)),
+        gap_end_sec=float(alert.get("gap_end_sec", 1.2)),
+        gt_gap_end_sec=float(alert.get("gt_gap_end_sec", 1.0)),
+        match_tolerance_sec=float(alert.get("match_tolerance_sec", 1.2)),
+    )
+
+
+def _resolve_min_detections_per_frame(payload: dict[str, object]) -> int:
+    alert = payload.get("alert", {})
+    if not isinstance(alert, dict):
+        return 1
+    return int(alert.get("min_detections_per_frame", 1))
+
+
+def _build_inference_config(
+    payload: dict[str, object],
+    confidence_threshold: float,
+) -> InferenceConfig:
+    infer = payload.get("infer", {})
+    if not isinstance(infer, dict):
+        infer = {}
+    model_sha256_raw = payload.get("model_sha256")
+    return InferenceConfig(
+        model_url=str(payload.get("model_url", DEFAULT_MODEL_URL)),
+        device=str(payload.get("device", "cpu")),
+        imgsz=int(infer.get("imgsz", 960)),
+        nms_iou=float(infer.get("nms_iou", 0.75)),
+        max_det=int(infer.get("max_det", 1000)),
+        confidence_threshold=confidence_threshold,
+        model_sha256=(
+            str(model_sha256_raw).strip().lower() if model_sha256_raw else None
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class StreamContract:
     """Resolved runtime contract (infrastructure-level, not a domain entity)."""
@@ -38,52 +98,23 @@ class StreamContract:
 def load_stream_contract(service_version: str = "dev") -> StreamContract:
     """Load and resolve the stream contract from the default YAML file."""
     contract_path = DEFAULT_CONTRACT_PATH
-    payload = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
-
-    if not isinstance(payload, dict):
-        raise ValueError("Invalid alert contract payload")
-
-    alert = payload.get("alert", {})
-    infer = payload.get("infer", {})
-    eval_cfg = payload.get("eval", {})
-    dataset = payload.get("dataset", {})
-
-    config_name = str(payload.get("name", "unknown_contract"))
+    payload = _require_mapping(
+        yaml.safe_load(contract_path.read_text(encoding="utf-8"))
+    )
     config_hash = hashlib.sha256(contract_path.read_bytes()).hexdigest()
-    thresholds = eval_cfg.get("thresholds", [0.2])
-    confidence_threshold = float(thresholds[0] if thresholds else 0.2)
-
-    model_url = str(payload.get("model_url", DEFAULT_MODEL_URL))
-    model_sha256_raw = payload.get("model_sha256")
-    model_sha256 = str(model_sha256_raw).strip().lower() if model_sha256_raw else None
-    device = str(payload.get("device", "cpu"))
-
-    rules = AlertRuleConfig(
-        score_threshold=confidence_threshold,
-        window_sec=float(alert.get("window_sec", 1.0)),
-        quorum_k=int(alert.get("quorum_k", 1)),
-        cooldown_sec=float(alert.get("cooldown_sec", 1.5)),
-        gap_end_sec=float(alert.get("gap_end_sec", 1.2)),
-        gt_gap_end_sec=float(alert.get("gt_gap_end_sec", 1.0)),
-        match_tolerance_sec=float(alert.get("match_tolerance_sec", 1.2)),
-    )
-
-    inference = InferenceConfig(
-        model_url=model_url,
-        device=device,
-        imgsz=int(infer.get("imgsz", 960)),
-        nms_iou=float(infer.get("nms_iou", 0.75)),
-        max_det=int(infer.get("max_det", 1000)),
-        confidence_threshold=confidence_threshold,
-        model_sha256=model_sha256,
-    )
+    confidence_threshold = _resolve_confidence_threshold(payload)
+    rules = _build_alert_rules(payload, confidence_threshold)
+    inference = _build_inference_config(payload, confidence_threshold)
+    dataset = payload.get("dataset", {})
+    if not isinstance(dataset, dict):
+        dataset = {}
 
     return StreamContract(
         dataset_fps=float(dataset.get("fps", 6.0)),
         alert_rules=rules,
         inference=inference,
-        min_detections_per_frame=int(alert.get("min_detections_per_frame", 1)),
-        config_name=config_name,
+        min_detections_per_frame=_resolve_min_detections_per_frame(payload),
+        config_name=str(payload.get("name", "unknown_contract")),
         config_hash=config_hash,
         config_path=contract_path.as_posix(),
         service_version=service_version,
