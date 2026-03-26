@@ -6,14 +6,20 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 from urllib.error import HTTPError, URLError
 
-from rescue_ai.application.annotation_index import AnnotationIndex
 from rescue_ai.application.frame_source import FrameSourceService, TimestampInputs
 from rescue_ai.application.payloads import build_frame_payload, serialize_detections
-from rescue_ai.domain.entities import InferenceConfig
 from rescue_ai.domain.ports import DetectorPort, FramePublisherPort
+from rescue_ai.domain.value_objects import InferenceConfig
+
+
+class AnnotationIndexPort(Protocol):
+    """Minimal annotation index API required by stream orchestration."""
+
+    def get_gt_boxes(self, frame_path: Path) -> list[tuple[float, float, float, float]]:
+        """Return GT boxes for the frame if available."""
 
 
 @dataclass
@@ -24,7 +30,7 @@ class StreamConfig:
     frame_files: list[Path]
     fps: float
     api_base: str
-    annotations: AnnotationIndex
+    annotations: AnnotationIndexPort
     inference: InferenceConfig
     min_detections_per_frame: int
 

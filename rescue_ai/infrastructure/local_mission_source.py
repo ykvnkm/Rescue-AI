@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rescue_ai.application.annotation_index import build_annotation_index
 from rescue_ai.application.batch_runner import FrameRecord, MissionInput
+from rescue_ai.infrastructure.annotation_index import build_annotation_index
 
 _ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 

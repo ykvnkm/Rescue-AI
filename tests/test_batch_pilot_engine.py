@@ -3,9 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import cast
 
-from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.domain.entities import Detection, FrameEvent
-from rescue_ai.infrastructure.pilot_engine import PilotMissionEngine
+from rescue_ai.infrastructure.pilot_engine import PilotMissionEngine, PilotServicePort
 
 
 @dataclass
@@ -48,7 +47,7 @@ class _PilotStub:
 
 def test_pilot_mission_engine_happy_path() -> None:
     pilot = _PilotStub()
-    engine = PilotMissionEngine(pilot=cast(PilotService, pilot))
+    engine = PilotMissionEngine(pilot=cast(PilotServicePort, pilot))
 
     mission_id = engine.create_and_start_mission(
         source_name="source",

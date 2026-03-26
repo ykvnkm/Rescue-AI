@@ -6,7 +6,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlretrieve
 
-from rescue_ai.domain.entities import Detection, InferenceConfig
+from rescue_ai.domain.entities import Detection
+from rescue_ai.domain.value_objects import InferenceConfig
 
 try:
     from ultralytics import YOLO

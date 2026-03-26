@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass, field
 
-from rescue_ai.domain.entities import Alert, ArtifactBlob, FrameEvent, Mission
+from rescue_ai.domain.entities import Alert, FrameEvent, Mission
+from rescue_ai.domain.ports import ArtifactBlob
 
 
 @dataclass

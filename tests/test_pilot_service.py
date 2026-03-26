@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from rescue_ai.application.pilot_service import PilotService
-from rescue_ai.domain.entities import AlertRuleConfig, Detection, FrameEvent
+from rescue_ai.domain.entities import Detection, FrameEvent
+from rescue_ai.domain.value_objects import AlertRuleConfig
 from rescue_ai.infrastructure.memory_repositories import (
     InMemoryAlertRepository,
     InMemoryArtifactStorage,

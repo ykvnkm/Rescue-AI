@@ -7,13 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
-from rescue_ai.domain.entities import Alert, AlertRuleConfig, Detection, FrameEvent
+from rescue_ai.domain.entities import Alert, Detection, FrameEvent
 from rescue_ai.domain.ports import ArtifactStorage, DetectorPort
+from rescue_ai.domain.value_objects import AlertRuleConfig
 
 PARTIAL_ERROR_RATE_THRESHOLD = 0.2
-
-
-# ── Batch-specific data types ───────────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -66,6 +64,17 @@ class BatchRunRequest:
         return f"{self.mission_id}:{self.ds}:{self.config_hash}:{self.model_version}"
 
 
+@dataclass(frozen=True)
+class BatchRunResult:
+    """Output summary for a completed batch runner execution."""
+
+    run_key: str
+    status: str
+    report_uri: str | None
+    debug_uri: str | None
+    report: dict[str, object] = field(default_factory=dict)
+
+
 @dataclass
 class DataQuality:
     """Frame-level quality counters used for final run status."""
@@ -91,17 +100,6 @@ class DataQuality:
             "error_rate": round(error_rate, 4),
             "input_empty": self.total_frames == 0,
         }
-
-
-@dataclass(frozen=True)
-class BatchRunResult:
-    """Output summary for a completed batch runner execution."""
-
-    run_key: str
-    status: str
-    report_uri: str | None
-    debug_uri: str | None
-    report: dict[str, object] = field(default_factory=dict)
 
 
 # ── Batch-specific port protocols ───────────────────────────────

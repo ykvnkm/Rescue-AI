@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from rescue_ai.domain.entities import Alert, AlertRuleConfig, FrameEvent
+from rescue_ai.domain.entities import Alert, FrameEvent
+from rescue_ai.domain.value_objects import AlertRuleConfig
 
 
 class MissionReportData(NamedTuple):

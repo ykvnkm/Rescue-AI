@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from rescue_ai.domain.entities import AlertRuleConfig, Detection, FrameEvent
+from rescue_ai.domain.entities import Detection, FrameEvent
+from rescue_ai.domain.value_objects import AlertRuleConfig
 
 
 @dataclass

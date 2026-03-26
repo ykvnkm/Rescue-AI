@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from rescue_ai.domain.entities import (
     Alert,
-    ArtifactBlob,
     Detection,
     FrameEvent,
     Mission,
 )
+
+
+@dataclass(frozen=True)
+class ArtifactBlob:
+    """Binary artifact payload returned by artifact storage adapters."""
+
+    content: bytes
+    media_type: str
+    filename: str
 
 
 class MissionRepository(Protocol):

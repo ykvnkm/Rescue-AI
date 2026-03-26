@@ -7,7 +7,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Callable, TypedDict
 
-from rescue_ai.application.annotation_index import build_annotation_index
 from rescue_ai.application.frame_source import FrameSourceService
 from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.application.stream_orchestrator import (
@@ -16,12 +15,13 @@ from rescue_ai.application.stream_orchestrator import (
     StreamState,
 )
 from rescue_ai.config import Settings, get_settings
-from rescue_ai.domain.entities import AlertRuleConfig
 from rescue_ai.domain.ports import (
     AlertRepository,
     FrameEventRepository,
     MissionRepository,
 )
+from rescue_ai.domain.value_objects import AlertRuleConfig
+from rescue_ai.infrastructure.annotation_index import build_annotation_index
 from rescue_ai.infrastructure.contract_loader import (
     StreamContract,
     load_alert_rules_and_metadata,

@@ -14,7 +14,7 @@ from shutil import copy2
 from urllib.parse import urlparse
 
 from rescue_ai.config import StorageSettings
-from rescue_ai.domain.entities import ArtifactBlob
+from rescue_ai.domain.ports import ArtifactBlob
 
 try:
     import boto3

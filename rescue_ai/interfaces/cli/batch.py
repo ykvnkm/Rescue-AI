@@ -23,6 +23,7 @@ from rescue_ai.application.batch_runner import (
     MissionBatchRunner,
     MissionBatchRunnerDeps,
 )
+from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.application.pipeline_stages import (
     PipelinePaths,
     print_result,
@@ -32,9 +33,17 @@ from rescue_ai.application.pipeline_stages import (
     run_validate_stage,
 )
 from rescue_ai.config import get_settings
+from rescue_ai.domain.value_objects import AlertRuleConfig
 from rescue_ai.infrastructure.contract_loader import load_stream_contract
 from rescue_ai.infrastructure.local_mission_source import LocalMissionSource
-from rescue_ai.infrastructure.pilot_engine import PilotMissionEngineFactory
+from rescue_ai.infrastructure.memory_repositories import (
+    InMemoryAlertRepository,
+    InMemoryArtifactStorage,
+    InMemoryDatabase,
+    InMemoryFrameEventRepository,
+    InMemoryMissionRepository,
+)
+from rescue_ai.infrastructure.pilot_engine import PilotMissionEngine
 from rescue_ai.infrastructure.s3_artifact_store import (
     LocalArtifactStorage,
     S3ArtifactBackendSettings,
@@ -48,6 +57,31 @@ from rescue_ai.infrastructure.yolo_detector import YoloDetector
 
 
 STAGES = ("data", "train", "validate", "inference")
+
+
+class PilotMissionEngineFactory:
+    """Creates isolated in-memory pilot engine instances per run."""
+
+    def create(
+        self,
+        alert_rules: AlertRuleConfig,
+        report_metadata: dict[str, object],
+    ) -> PilotMissionEngine:
+        db = InMemoryDatabase()
+        pilot = PilotService(
+            dependencies=PilotService.Dependencies(
+                mission_repository=InMemoryMissionRepository(db),
+                alert_repository=InMemoryAlertRepository(db),
+                frame_event_repository=InMemoryFrameEventRepository(db),
+                artifact_storage=InMemoryArtifactStorage(),
+            ),
+            alert_rules=alert_rules,
+        )
+        pilot.set_report_metadata(report_metadata)
+        return PilotMissionEngine(pilot=pilot)
+
+    def factory_name(self) -> str:
+        return "pilot-in-memory"
 
 
 def _is_remote_env(runtime_env: str) -> bool:

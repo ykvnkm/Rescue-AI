@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from rescue_ai.domain.entities import InferenceConfig
+from rescue_ai.domain.value_objects import InferenceConfig
 from rescue_ai.infrastructure.yolo_detector import YoloDetector
 
 np = __import__("pytest").importorskip("numpy")

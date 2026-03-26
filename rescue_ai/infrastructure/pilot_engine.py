@@ -1,22 +1,36 @@
-"""Pilot mission engine adapter over PilotService."""
+"""Pilot mission engine adapter over pilot application service contract."""
 
 from __future__ import annotations
 
-from rescue_ai.application.pilot_service import PilotService
-from rescue_ai.domain.entities import Alert, AlertRuleConfig, Detection, FrameEvent
-from rescue_ai.infrastructure.memory_repositories import (
-    InMemoryAlertRepository,
-    InMemoryArtifactStorage,
-    InMemoryDatabase,
-    InMemoryFrameEventRepository,
-    InMemoryMissionRepository,
-)
+from typing import Protocol
+
+from rescue_ai.domain.entities import Alert, Detection, FrameEvent
+
+
+class PilotServicePort(Protocol):
+    """Minimal pilot service contract used by batch engine adapter."""
+
+    def set_report_metadata(self, payload: dict[str, object]) -> None: ...
+    def create_mission(self, source_name: str, total_frames: int, fps: float): ...
+    def start_mission(self, mission_id: str): ...
+    def ingest_frame_event(
+        self,
+        frame_event: FrameEvent,
+        detections: list[Detection],
+    ) -> list[Alert]: ...
+    def review_alert(self, alert_id: str, updates: dict[str, object]): ...
+    def complete_mission(
+        self,
+        mission_id: str,
+        completed_frame_id: int | None,
+    ): ...
+    def get_mission_report(self, mission_id: str) -> dict[str, object]: ...
 
 
 class PilotMissionEngine:
     """Mission-engine adapter over core `PilotService`."""
 
-    def __init__(self, pilot: PilotService) -> None:
+    def __init__(self, pilot: PilotServicePort) -> None:
         self._pilot = pilot
 
     def create_and_start_mission(
@@ -79,28 +93,3 @@ class PilotMissionEngine:
 
     def build_report(self, mission_id: str) -> dict[str, object]:
         return self._pilot.get_mission_report(mission_id)
-
-
-class PilotMissionEngineFactory:
-    """Creates isolated in-memory pilot engine instances per run."""
-
-    def create(
-        self,
-        alert_rules: AlertRuleConfig,
-        report_metadata: dict[str, object],
-    ) -> PilotMissionEngine:
-        db = InMemoryDatabase()
-        pilot = PilotService(
-            dependencies=PilotService.Dependencies(
-                mission_repository=InMemoryMissionRepository(db),
-                alert_repository=InMemoryAlertRepository(db),
-                frame_event_repository=InMemoryFrameEventRepository(db),
-                artifact_storage=InMemoryArtifactStorage(),
-            ),
-            alert_rules=alert_rules,
-        )
-        pilot.set_report_metadata(report_metadata)
-        return PilotMissionEngine(pilot=pilot)
-
-    def factory_name(self) -> str:
-        return "pilot-in-memory"

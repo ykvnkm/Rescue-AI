@@ -1,4 +1,4 @@
-"""Core domain entities: Mission, FrameEvent, Detection, Alert, config VOs."""
+"""Core domain entities."""
 
 from __future__ import annotations
 
@@ -58,37 +58,3 @@ class Alert:
     reviewed_by: Optional[str] = None
     reviewed_at_sec: Optional[float] = None
     decision_reason: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class AlertRuleConfig:
-    """Alert sliding-window thresholds loaded from contract YAML."""
-
-    score_threshold: float
-    window_sec: float
-    quorum_k: int
-    cooldown_sec: float
-    gap_end_sec: float
-    gt_gap_end_sec: float
-    match_tolerance_sec: float
-
-
-@dataclass(frozen=True)
-class InferenceConfig:
-    """YOLO inference settings loaded from runtime configuration."""
-
-    model_url: str
-    device: str
-    imgsz: int
-    nms_iou: float
-    max_det: int
-    confidence_threshold: float
-
-
-@dataclass(frozen=True)
-class ArtifactBlob:
-    """Binary artifact payload returned by artifact storage adapters."""
-
-    content: bytes
-    media_type: str
-    filename: str
