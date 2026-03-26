@@ -1,4 +1,4 @@
-"""Online API server entry point with optional Postgres bootstrap."""
+"""Online API server entry point with optional Postgres readiness checks."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from rescue_ai.domain.ports import (
 )
 from rescue_ai.domain.value_objects import AlertRuleConfig
 from rescue_ai.infrastructure.annotation_index import build_annotation_index
+from rescue_ai.infrastructure.artifact_storage import build_artifact_storage
 from rescue_ai.infrastructure.contract_loader import (
     StreamContract,
     load_alert_rules_and_metadata,
@@ -34,11 +35,7 @@ from rescue_ai.infrastructure.memory_repositories import (
     InMemoryFrameEventRepository,
     InMemoryMissionRepository,
 )
-from rescue_ai.infrastructure.postgres_connection import (
-    ensure_schema,
-    wait_for_postgres,
-)
-from rescue_ai.infrastructure.s3_artifact_store import build_artifact_storage
+from rescue_ai.infrastructure.postgres_connection import wait_for_postgres
 from rescue_ai.infrastructure.yolo_detector import YoloDetector
 from rescue_ai.interfaces.api.dependencies import ApiRuntime, set_runtime
 
@@ -158,7 +155,7 @@ def build_api_runtime() -> (
 
 
 def main() -> None:
-    """Start the API server, bootstrapping Postgres and runtime dependencies."""
+    """Start the API server and initialize runtime dependencies."""
     settings = get_settings()
     _prepare_postgres_backend()
     pilot_service, stream_controller, reset_hook = build_api_runtime()
@@ -177,7 +174,7 @@ def main() -> None:
 
 
 def _prepare_postgres_backend() -> None:
-    """Wait for Postgres readiness and create tables if needed."""
+    """Wait for Postgres readiness when postgres backend is enabled."""
     settings = get_settings()
     if settings.api.repository_backend != "postgres":
         return
@@ -187,7 +184,6 @@ def _prepare_postgres_backend() -> None:
         raise RuntimeError("Postgres backend requires DB_DSN")
 
     wait_for_postgres(dsn, timeout_sec=settings.api.postgres_ready_timeout_sec)
-    ensure_schema(dsn)
 
 
 def _build_repositories(
@@ -212,10 +208,10 @@ def _build_repositories(
         )
 
     if backend == "postgres":
+        from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
         from rescue_ai.infrastructure.postgres_repositories import (
             EpisodeProjectionSettings,
             PostgresAlertRepository,
-            PostgresDatabase,
             PostgresFrameEventRepository,
             PostgresMissionRepository,
         )

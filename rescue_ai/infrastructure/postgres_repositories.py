@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,6 +10,7 @@ from typing import Any, Sequence
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
 from rescue_ai.domain.mission_metrics import build_gt_episodes
 from rescue_ai.domain.ports import AlertReviewPayload
+from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
 
 MISSION_COLUMNS = """
 mission_id,
@@ -57,35 +57,6 @@ class EpisodeProjectionSettings:
 
     gt_gap_end_sec: float
     match_tolerance_sec: float
-
-
-class PostgresDatabase:
-    """Thin wrapper around a psycopg DSN used by repository adapters."""
-
-    def __init__(self, dsn: str) -> None:
-        try:
-            psycopg = importlib.import_module("psycopg")
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError(
-                "psycopg is required for APP_REPOSITORY_BACKEND=postgres"
-            ) from exc
-
-        self._psycopg = psycopg
-        self._dsn = dsn
-
-    def connect(self) -> Any:
-        """Open a new connection to the database."""
-        return self._psycopg.connect(self._dsn)
-
-    def truncate_all(self) -> None:
-        with self.connect() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    TRUNCATE TABLE episodes, alerts, frame_events, missions CASCADE
-                    """
-                )
-            conn.commit()
 
 
 class _EpisodeProjectionStore:
@@ -399,17 +370,13 @@ class PostgresAlertRepository:
         updates: AlertReviewPayload,
     ) -> Alert | None:
         """Apply a review decision to an alert."""
-        status = str(updates.get("status", ""))
+        status = updates["status"]
         if status not in self.allowed_target_statuses:
             raise ValueError("Invalid target status")
 
-        reviewed_by_raw = updates.get("reviewed_by")
-        reviewed_by = reviewed_by_raw if isinstance(reviewed_by_raw, str) else None
+        reviewed_by = updates.get("reviewed_by")
         reviewed_at_sec = updates.get("reviewed_at_sec")
-        decision_reason_raw = updates.get("decision_reason")
-        decision_reason = (
-            decision_reason_raw if isinstance(decision_reason_raw, str) else None
-        )
+        decision_reason = updates.get("decision_reason")
 
         with self._db.connect() as conn:
             with conn.cursor() as cursor:
@@ -428,12 +395,11 @@ class PostgresAlertRepository:
                 if str(existing[1]) != "queued":
                     raise ValueError("Alert already reviewed")
 
-                if reviewed_at_sec is None:
-                    effective_reviewed_at = float(str(existing[2]))
-                elif isinstance(reviewed_at_sec, (int, float, str)):
-                    effective_reviewed_at = float(reviewed_at_sec)
-                else:
-                    raise ValueError("Invalid reviewed_at_sec")
+                effective_reviewed_at = (
+                    float(reviewed_at_sec)
+                    if reviewed_at_sec is not None
+                    else float(str(existing[2]))
+                )
                 cursor.execute(
                     f"""
                     UPDATE alerts

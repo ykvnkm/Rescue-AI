@@ -17,13 +17,12 @@ from rescue_ai.domain.mission_metrics import (
 from rescue_ai.domain.ports import (
     AlertRepository,
     AlertReviewPayload,
-    ArtifactBlob,
     ArtifactStorage,
     FrameEventRepository,
     MissionRepository,
     ReportMetadataPayload,
 )
-from rescue_ai.domain.value_objects import AlertRuleConfig
+from rescue_ai.domain.value_objects import AlertRuleConfig, ArtifactBlob
 
 
 class PilotServicePort(Protocol):

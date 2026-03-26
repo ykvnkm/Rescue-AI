@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import pytest
 
 from rescue_ai.config import get_settings
-from rescue_ai.infrastructure.s3_artifact_store import (
+from rescue_ai.infrastructure.artifact_storage import (
     LocalArtifactStorage,
     S3ArtifactBackendSettings,
     _parse_s3_uri,

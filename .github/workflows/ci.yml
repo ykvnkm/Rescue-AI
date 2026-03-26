@@ -15,11 +15,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v3
         with:
-          uv-version: "0.10.4"
+          version: "0.10.4"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -76,7 +83,7 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v3
         with:
-          uv-version: "0.10.4"
+          version: "0.10.4"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -84,70 +91,27 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra batch --extra inference --extra postgres
+        run: uv sync --extra dev --extra batch --extra postgres
 
       - name: Run all tests
         env:
           PYTHONPATH: ${{ github.workspace }}
           TEST_POSTGRES_DSN: postgresql://test:test@localhost:5432/rescue_test
-        run: uv run pytest tests --ignore=tests/architecture --cov=rescue_ai --cov-fail-under=70
-
-  architecture-boundaries:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          uv-version: "0.10.4"
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: uv sync --extra dev --extra batch
-
-      - name: Verify architecture boundaries
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest tests/architecture --no-cov
-
-  secrets:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: uv run pytest tests --cov=rescue_ai --cov-fail-under=70
 
   quality-gate:
     runs-on: ubuntu-latest
     needs:
       - lint
       - test
-      - architecture-boundaries
-      - secrets
     if: ${{ always() }}
 
     steps:
       - name: Validate upstream jobs
         run: |
           if [ "${{ needs.lint.result }}" != "success" ] || \
-             [ "${{ needs.test.result }}" != "success" ] || \
-             [ "${{ needs.architecture-boundaries.result }}" != "success" ] || \
-             [ "${{ needs.secrets.result }}" != "success" ]; then
-            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}, architecture-boundaries=${{ needs.architecture-boundaries.result }}, secrets=${{ needs.secrets.result }}"
+             [ "${{ needs.test.result }}" != "success" ]; then
+            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}"
             exit 1
           fi
 

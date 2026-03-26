@@ -1,10 +1,10 @@
-"""Postgres DSN resolution, readiness checks, and schema bootstrap."""
+"""Postgres connection infrastructure: readiness checks and database wrapper."""
 
 from __future__ import annotations
 
 import importlib
 import time
-from collections.abc import Mapping
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 _FATAL_SQLSTATES = {
@@ -12,89 +12,6 @@ _FATAL_SQLSTATES = {
     "28000",  # invalid_authorization_specification
     "3D000",  # invalid_catalog_name (database does not exist)
 }
-
-_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS missions (
-    mission_id  TEXT PRIMARY KEY,
-    source_name TEXT NOT NULL,
-    status      TEXT NOT NULL,
-    created_at  TIMESTAMPTZ NOT NULL,
-    total_frames INTEGER NOT NULL,
-    fps         DOUBLE PRECISION NOT NULL,
-    completed_frame_id INTEGER
-);
-CREATE INDEX IF NOT EXISTS ix_missions_status ON missions (status);
-
-CREATE TABLE IF NOT EXISTS frame_events (
-    mission_id       TEXT NOT NULL REFERENCES missions (mission_id) ON DELETE CASCADE,
-    frame_id         INTEGER NOT NULL,
-    ts_sec           DOUBLE PRECISION NOT NULL,
-    image_uri        TEXT NOT NULL,
-    gt_person_present BOOLEAN NOT NULL,
-    gt_episode_id    TEXT,
-    PRIMARY KEY (mission_id, frame_id)
-);
-CREATE INDEX IF NOT EXISTS ix_frame_events_mission_ts
-    ON frame_events (mission_id, ts_sec);
-
-CREATE TABLE IF NOT EXISTS alerts (
-    alert_id           TEXT PRIMARY KEY,
-    mission_id         TEXT NOT NULL REFERENCES missions (mission_id) ON DELETE CASCADE,
-    frame_id           INTEGER NOT NULL,
-    ts_sec             DOUBLE PRECISION NOT NULL,
-    image_uri          TEXT NOT NULL,
-    people_detected    INTEGER NOT NULL,
-    primary_bbox       JSONB NOT NULL,
-    primary_score      DOUBLE PRECISION NOT NULL,
-    primary_label      TEXT NOT NULL,
-    primary_model_name TEXT NOT NULL,
-    primary_explanation TEXT,
-    detections         JSONB NOT NULL,
-    status             TEXT NOT NULL,
-    reviewed_by        TEXT,
-    reviewed_at_sec    DOUBLE PRECISION,
-    decision_reason    TEXT,
-    FOREIGN KEY (mission_id, frame_id)
-        REFERENCES frame_events (mission_id, frame_id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS ix_alerts_mission_ts
-    ON alerts (mission_id, ts_sec);
-CREATE INDEX IF NOT EXISTS ix_alerts_mission_status
-    ON alerts (mission_id, status);
-
-CREATE TABLE IF NOT EXISTS episodes (
-    mission_id     TEXT NOT NULL REFERENCES missions (mission_id) ON DELETE CASCADE,
-    episode_index  INTEGER NOT NULL,
-    start_sec      DOUBLE PRECISION NOT NULL,
-    end_sec        DOUBLE PRECISION NOT NULL,
-    found_by_alert BOOLEAN NOT NULL DEFAULT FALSE,
-    PRIMARY KEY (mission_id, episode_index)
-);
-CREATE INDEX IF NOT EXISTS ix_episodes_mission_found
-    ON episodes (mission_id, found_by_alert);
-"""
-
-
-def resolve_postgres_dsn(
-    environ: Mapping[str, str],
-) -> str | None:
-    """Resolve a Postgres DSN from DB_DSN."""
-    dsn = (environ.get("DB_DSN") or "").strip()
-    if not dsn:
-        return None
-
-    parsed = urlparse(dsn)
-    if parsed.scheme not in {"postgresql", "postgres"}:
-        raise ValueError("Postgres DSN must start with postgresql:// or postgres://")
-    if not parsed.hostname:
-        raise ValueError("Postgres DSN must include host")
-    if not parsed.username:
-        raise ValueError("Postgres DSN must include user")
-    if parsed.password in (None, ""):
-        raise ValueError("Postgres DSN must include non-empty password")
-    if not parsed.path or parsed.path == "/":
-        raise ValueError("Postgres DSN must include database name")
-    return dsn
 
 
 def dsn_with_search_path(dsn: str, schema: str) -> str:
@@ -148,10 +65,30 @@ def wait_for_postgres(
     ) from last_error
 
 
-def ensure_schema(dsn: str) -> None:
-    """Create all tables and indexes if they do not already exist."""
-    psycopg = importlib.import_module("psycopg")
-    with psycopg.connect(dsn) as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(_SCHEMA_SQL)
-        conn.commit()
+class PostgresDatabase:
+    """Thin wrapper around a psycopg DSN used by repository adapters."""
+
+    def __init__(self, dsn: str) -> None:
+        try:
+            psycopg = importlib.import_module("psycopg")
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError(
+                "psycopg is required for APP_REPOSITORY_BACKEND=postgres"
+            ) from exc
+
+        self._psycopg = psycopg
+        self._dsn = dsn
+
+    def connect(self) -> Any:
+        """Open a new connection to the database."""
+        return self._psycopg.connect(self._dsn)
+
+    def truncate_all(self) -> None:
+        with self.connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    TRUNCATE TABLE episodes, alerts, frame_events, missions CASCADE
+                    """
+                )
+            conn.commit()

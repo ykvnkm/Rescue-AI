@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 import pytest
 
 from rescue_ai.application.batch_dtos import RunStatusRecord
-from rescue_ai.infrastructure.s3_artifact_store import LocalArtifactStorage
+from rescue_ai.infrastructure.artifact_storage import LocalArtifactStorage
 from rescue_ai.infrastructure.status_store import JsonStatusStore, PostgresStatusStore
 
 
@@ -50,7 +50,18 @@ def test_postgres_status_store_roundtrip() -> None:
     if not dsn:
         pytest.skip("BATCH_TEST_POSTGRES_DSN is not set")
 
-    store = PostgresStatusStore(dsn=dsn)
+    psycopg = pytest.importorskip("psycopg")
+
+    root = Path(__file__).resolve().parents[1]
+    schema_path = root / "infra" / "postgres" / "init" / "010-app-schema.sql"
+    with psycopg.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(schema_path.read_text(encoding="utf-8"))
+        conn.commit()
+
+    from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
+
+    store = PostgresStatusStore(db=PostgresDatabase(dsn=dsn))
     store.upsert(RunStatusRecord(run_key="test-key", status="running", reason="init"))
     record = store.get("test-key")
 
