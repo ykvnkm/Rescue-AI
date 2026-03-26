@@ -9,7 +9,6 @@ import pytest
 
 from rescue_ai.infrastructure.stage_store import LocalStageStore, S3StageStore
 
-
 # ── LocalStageStore ─────────────────────────────────────────────────────
 
 

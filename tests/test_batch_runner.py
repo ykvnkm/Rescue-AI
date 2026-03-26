@@ -15,12 +15,7 @@ from rescue_ai.application.batch_runner import (
     MissionInput,
     RunStatusRecord,
 )
-from rescue_ai.domain.entities import (
-    Alert,
-    AlertRuleConfig,
-    Detection,
-    FrameEvent,
-)
+from rescue_ai.domain.entities import Alert, AlertRuleConfig, Detection, FrameEvent
 from rescue_ai.infrastructure.s3_artifact_store import LocalArtifactStorage
 from rescue_ai.infrastructure.status_store import JsonStatusStore
 

@@ -54,31 +54,6 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          uv-version: "0.10.4"
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: uv sync --extra dev --extra batch --extra inference
-
-      - name: Run unit and smoke tests
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest tests --ignore=tests/architecture -m "not integration" --cov=rescue_ai --cov-fail-under=70
-
-  integration:
-    runs-on: ubuntu-latest
-
     services:
       postgres:
         image: postgres:16
@@ -109,13 +84,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra batch --extra postgres
+        run: uv sync --extra dev --extra batch --extra inference --extra postgres
 
-      - name: Run integration tests
+      - name: Run all tests
         env:
           PYTHONPATH: ${{ github.workspace }}
           TEST_POSTGRES_DSN: postgresql://test:test@localhost:5432/rescue_test
-        run: uv run pytest tests -m integration --cov=rescue_ai -v
+        run: uv run pytest tests --ignore=tests/architecture --cov=rescue_ai --cov-fail-under=70
 
   architecture-boundaries:
     runs-on: ubuntu-latest
@@ -161,7 +136,6 @@ jobs:
     needs:
       - lint
       - test
-      - integration
       - architecture-boundaries
       - secrets
     if: ${{ always() }}
@@ -171,10 +145,9 @@ jobs:
         run: |
           if [ "${{ needs.lint.result }}" != "success" ] || \
              [ "${{ needs.test.result }}" != "success" ] || \
-             [ "${{ needs.integration.result }}" != "success" ] || \
              [ "${{ needs.architecture-boundaries.result }}" != "success" ] || \
              [ "${{ needs.secrets.result }}" != "success" ]; then
-            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}, integration=${{ needs.integration.result }}, architecture-boundaries=${{ needs.architecture-boundaries.result }}, secrets=${{ needs.secrets.result }}"
+            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}, architecture-boundaries=${{ needs.architecture-boundaries.result }}, secrets=${{ needs.secrets.result }}"
             exit 1
           fi
 
