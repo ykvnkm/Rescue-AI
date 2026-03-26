@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from rescue_ai.application.batch_runner import FrameRecord, MissionInput
 from rescue_ai.application.pipeline_stages import (
     PipelinePaths,
     run_data_stage,
@@ -59,83 +60,172 @@ class TestPipelinePaths:
 
 
 class TestDataStage:
+    @staticmethod
+    def _mission_loader() -> MissionInput:
+        frames = [
+            FrameRecord(
+                frame_id=1,
+                ts_sec=0.0,
+                frame_path=Path("/tmp/f1.jpg"),
+                image_uri="/tmp/f1.jpg",
+                gt_person_present=True,
+                is_corrupted=False,
+            ),
+            FrameRecord(
+                frame_id=2,
+                ts_sec=0.1,
+                frame_path=Path("/tmp/f2.jpg"),
+                image_uri="/tmp/f2.jpg",
+                gt_person_present=False,
+                is_corrupted=False,
+            ),
+            FrameRecord(
+                frame_id=3,
+                ts_sec=0.2,
+                frame_path=Path("/tmp/f3.jpg"),
+                image_uri="/tmp/f3.jpg",
+                gt_person_present=True,
+                is_corrupted=True,
+            ),
+        ]
+        return MissionInput(
+            source_uri="local:///mission-1/2026-03-01",
+            frames=frames,
+            gt_available=True,
+        )
+
     def test_creates_dataset(self, store, paths) -> None:
-        result = run_data_stage(store, paths)
+        result = run_data_stage(store, paths, mission_loader=self._mission_loader)
         assert result["status"] == "completed"
         assert store.exists(paths.data_key)
         payload = store.read_json(paths.data_key)
         assert payload["stage"] == "data"
         assert payload["rows_total"] > 0
         assert payload["train_count"] + payload["val_count"] == payload["rows_total"]
+        assert payload["rows_corrupted"] == 1
+        assert len(payload["val_manifest"]) > 0
 
     def test_idempotent_skip(self, store, paths) -> None:
-        run_data_stage(store, paths)
-        result = run_data_stage(store, paths)
+        run_data_stage(store, paths, mission_loader=self._mission_loader)
+        result = run_data_stage(store, paths, mission_loader=self._mission_loader)
         assert result["status"] == "idempotent_skip"
 
     def test_force_overwrites(self, store, paths) -> None:
-        run_data_stage(store, paths)
-        result = run_data_stage(store, paths, force=True)
+        run_data_stage(store, paths, mission_loader=self._mission_loader)
+        result = run_data_stage(
+            store,
+            paths,
+            force=True,
+            mission_loader=self._mission_loader,
+        )
         assert result["status"] == "completed"
+
+    def test_requires_mission_loader(self, store, paths) -> None:
+        with pytest.raises(RuntimeError, match="mission_loader is required"):
+            run_data_stage(store, paths)
 
 
 # ── Train stage ─────────────────────────────────────────────────
 
 
 class TestTrainStage:
+    @staticmethod
+    def _model_probe() -> dict[str, object]:
+        return {
+            "runtime": "fake",
+            "model_url": "https://example.test/model.pt",
+            "model_ready": True,
+        }
+
     def test_creates_model_card(self, store, paths) -> None:
-        run_data_stage(store, paths)
-        result = run_train_stage(store, paths)
+        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
+        result = run_train_stage(store, paths, model_probe=self._model_probe)
         assert result["status"] == "completed"
         assert store.exists(paths.model_key)
         payload = store.read_json(paths.model_key)
         assert payload["stage"] == "train"
         assert "checkpoint_hash" in payload
+        assert payload["model_runtime"] == "fake"
 
     def test_requires_dataset(self, store, paths) -> None:
         with pytest.raises(RuntimeError, match="dataset is missing"):
-            run_train_stage(store, paths)
+            run_train_stage(store, paths, model_probe=self._model_probe)
 
     def test_idempotent_skip(self, store, paths) -> None:
-        run_data_stage(store, paths)
-        run_train_stage(store, paths)
-        result = run_train_stage(store, paths)
+        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
+        run_train_stage(store, paths, model_probe=self._model_probe)
+        result = run_train_stage(store, paths, model_probe=self._model_probe)
         assert result["status"] == "idempotent_skip"
+
+    def test_requires_model_probe(self, store, paths) -> None:
+        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
+        with pytest.raises(RuntimeError, match="model_probe is required"):
+            run_train_stage(store, paths)
 
 
 # ── Validate stage ──────────────────────────────────────────────
 
 
 class TestValidateStage:
+    @staticmethod
+    def _predict_all_correct(image_uri: str) -> bool:
+        return image_uri.endswith("f1.jpg")
+
     def test_passes_quality_gate(self, store, paths) -> None:
-        run_data_stage(store, paths)
-        run_train_stage(store, paths)
-        result = run_validate_stage(store, paths, min_accuracy=0.01)
+        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
+        run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
+        result = run_validate_stage(
+            store,
+            paths,
+            min_accuracy=0.01,
+            detector_predict=self._predict_all_correct,
+        )
         assert result["status"] == "completed"
         payload = store.read_json(paths.validation_key)
         assert payload["passed"] is True
 
     def test_fails_quality_gate(self, store, paths) -> None:
-        run_data_stage(store, paths)
-        run_train_stage(store, paths)
+        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
+        run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
         with pytest.raises(RuntimeError, match="validation failed"):
-            run_validate_stage(store, paths, min_accuracy=1.0)
+            run_validate_stage(
+                store,
+                paths,
+                min_accuracy=1.0,
+                detector_predict=lambda _: True,
+            )
 
     def test_requires_dataset(self, store, paths) -> None:
         with pytest.raises(RuntimeError, match="dataset is missing"):
-            run_validate_stage(store, paths)
+            run_validate_stage(store, paths, detector_predict=lambda _: True)
 
     def test_requires_model(self, store, paths) -> None:
-        run_data_stage(store, paths)
+        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
         with pytest.raises(RuntimeError, match="model artifact is missing"):
-            run_validate_stage(store, paths)
+            run_validate_stage(store, paths, detector_predict=lambda _: True)
 
     def test_idempotent_skip(self, store, paths) -> None:
-        run_data_stage(store, paths)
-        run_train_stage(store, paths)
-        run_validate_stage(store, paths, min_accuracy=0.01)
-        result = run_validate_stage(store, paths, min_accuracy=0.01)
+        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
+        run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
+        run_validate_stage(
+            store,
+            paths,
+            min_accuracy=0.01,
+            detector_predict=self._predict_all_correct,
+        )
+        result = run_validate_stage(
+            store,
+            paths,
+            min_accuracy=0.01,
+            detector_predict=self._predict_all_correct,
+        )
         assert result["status"] == "idempotent_skip"
+
+    def test_requires_detector_predict(self, store, paths) -> None:
+        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
+        run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
+        with pytest.raises(RuntimeError, match="detector_predict is required"):
+            run_validate_stage(store, paths)
 
 
 # ── Inference stage ─────────────────────────────────────────────
@@ -144,17 +234,22 @@ class TestValidateStage:
 class TestInferenceStage:
     def _seed_through_validation(self, store, paths) -> None:
         """Run data → train → validate so inference can proceed."""
-        run_data_stage(store, paths)
-        run_train_stage(store, paths)
-        run_validate_stage(store, paths, min_accuracy=0.01)
+        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
+        run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
+        run_validate_stage(
+            store,
+            paths,
+            min_accuracy=0.01,
+            detector_predict=TestValidateStage._predict_all_correct,
+        )
 
     def test_requires_validation(self, store, paths) -> None:
         with pytest.raises(RuntimeError, match="validation artifact is missing"):
             run_inference_stage(store, paths)
 
     def test_blocks_on_failed_validation(self, store, paths) -> None:
-        run_data_stage(store, paths)
-        run_train_stage(store, paths)
+        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
+        run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
         # Write a "failed" validation artifact manually
         store.write_json(
             paths.validation_key,
