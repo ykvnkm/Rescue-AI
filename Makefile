@@ -1,8 +1,8 @@
 PYTHONPATH := $(shell pwd)
 UV := PYTHONPATH=$(PYTHONPATH) uv run
 
-.PHONY: help install format lint test test-arch ci \
-	up down
+.PHONY: help install format lint test test-arch test-batch ci \
+	up up-postgres down db-migrate batch-build batch-up batch-down batch-logs batch-backfill
 
 help:
 	@echo "Available commands:"
@@ -41,5 +41,26 @@ ci: lint test test-arch
 up:
 	docker compose up --build
 
+up-postgres:
+	docker compose --profile postgres up --build
+
 down:
 	docker compose down
+
+db-migrate:
+	$(UV) alembic upgrade head
+
+batch-build:
+	$(PLATFORM_COMPOSE) --profile batch-build build batch-runner-image
+
+batch-up:
+	$(PLATFORM_COMPOSE) up -d
+
+batch-down:
+	$(PLATFORM_COMPOSE) down
+
+batch-logs:
+	$(PLATFORM_COMPOSE) logs -f airflow-webserver
+
+batch-backfill:
+	$(PLATFORM_COMPOSE) exec airflow-webserver airflow dags backfill rescue_batch_daily -s 2026-03-10 -e 2026-03-12

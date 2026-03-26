@@ -36,18 +36,20 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 
 ## DAG: Rescue Batch (DockerOperator + Idempotency + Backfill)
 
-`rescue_batch_daily`:
+Подробный пошаговый runbook: `infra/AIRFLOW_ML_PIPELINE_RUNBOOK.md`.
+
+`rescue_ml_pipeline_daily`:
 
 - Запускается ежедневно (`@daily`) с `catchup=True`.
-- Оркестрирует запуск runner-контейнера.
-- Бизнес-логика вынесена в `libs/batch/application/mission_batch_runner.py`.
-- Idempotency key: `(mission_id, ds, config_hash, model_version)`.
-- Статусы процесса: `running/completed/failed/partial`.
+- Оркестрирует 3 шага в отдельных `DockerOperator`: `prepare_data -> train_model -> validate_model`.
+- Передача между тасками идет через S3: каждый шаг пишет артефакт в S3, следующий читает по детерминированному ключу.
+- Идемпотентность по каждому шагу: при повторном запуске на ту же `ds` шаг возвращает `idempotent_skip`, если артефакт уже существует.
+- Для демонстрации backfill оставлен `catchup=True` и CLI-команда `airflow dags backfill`.
 
-Канонический контракт запуска batch-runner:
+Канонический контракт stage-runner (`services/batch_runner/s3_ml_pipeline.py`):
 
-- Вход: `mission_id`, `ds`, `model_version`, `code_version`, `force`.
-- Выход: `status`, `report_uri`, `debug_uri`, `run_key`.
+- Вход: `stage`, `mission_id`, `ds`, `model_version`, `code_version`, `force`, `min_accuracy`.
+- Выход: `status`, `output_uri` (JSON в stdout).
 
 ## Пошаговый запуск Airflow и что смотреть
 
@@ -73,21 +75,24 @@ docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.en
 docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env up -d
 ```
 
-5. Откройте Airflow UI (`http://localhost:8080`), включите DAG `rescue_batch_daily`, зайдите в Graph/Grid.
+5. Откройте Airflow UI (`http://localhost:8080`), включите DAG `rescue_ml_pipeline_daily`, зайдите в Graph/Grid.
 
 6. Запустите backfill за диапазон:
 ```bash
 docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env exec airflow-webserver \
-  airflow dags backfill rescue_batch_daily -s 2026-03-10 -e 2026-03-12
+  airflow dags backfill rescue_ml_pipeline_daily -s 2026-03-10 -e 2026-03-12
 ```
 
-7. Проверьте артефакты и статусы:
+7. Проверьте артефакты в S3 (по префиксу):
+`<ARTIFACTS_S3_PREFIX>/ml_pipeline/mission=<BATCH_MISSION_ID>/ds=<YYYY-MM-DD>/`.
+
+8. При повторном запуске той же даты проверьте в логах тасков `status=idempotent_skip`.
+
+9. Локально можно проверить volume-логи/статусы:
 ```bash
 docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env exec airflow-webserver \
   ls -la /opt/airflow/data/status /opt/airflow/data/artifacts
 ```
-
-8. Проверьте идемпотентность: повторите запуск на ту же дату без `--force` и убедитесь, что статус `idempotent_skip`.
 
 ## Runbook (failed/partial)
 
@@ -103,6 +108,7 @@ docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.en
 
 ## E2E Backfill сценарий
 
-- Сценарий поднимает платформу, seed'ит миссию, выполняет `airflow dags backfill rescue_batch_daily` и проверяет status/artifacts.
+- Nightly workflow: `.github/workflows/batch-e2e.yml`.
+- Сценарий поднимает платформу, seed'ит миссию, выполняет `airflow dags backfill rescue_ml_pipeline_daily` и проверяет status/artifacts.
 - Плейбук real-data demo: `docs/runbooks/batch_demo_playbook.md`.
 - Архитектурная схема: `docs/architecture/batch_contour.md`.

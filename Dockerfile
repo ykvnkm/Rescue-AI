@@ -14,7 +14,11 @@ RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --extra inference --extra batch
+ENV PATH="/app/.venv/bin:$PATH"
 
+COPY db_migrations ./db_migrations
+COPY alembic.ini ./alembic.ini
+COPY config.py ./config.py
 COPY configs ./configs
 COPY rescue_ai ./rescue_ai
 COPY scripts ./scripts

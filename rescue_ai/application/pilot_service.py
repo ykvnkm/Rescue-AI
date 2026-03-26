@@ -135,7 +135,7 @@ class PilotService:
         self._frames.add(frame_event)
 
         for alert in alerts:
-            alert.image_uri = stored_image_uri
+            self._alerts.add(alert)
         return alerts
 
     def list_alerts(
@@ -331,7 +331,6 @@ class PilotService:
             primary_detection=best_detection,
             detections=list(detections),
         )
-        self._alerts.add(alert)
         return alert
 
 

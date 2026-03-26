@@ -1,9 +1,10 @@
 """Pilot alert flow API tests."""
 
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
 
 from fastapi.testclient import TestClient
 
@@ -13,8 +14,22 @@ from rescue_ai.interfaces.api.dependencies import get_pilot_service, reset_state
 client = TestClient(app)
 
 
+class _FakeDetector:
+    def __init__(self, config: object) -> None:
+        self._config = config
+
+    def warmup(self) -> None:
+        return None
+
+    def predict(self, _frame_path: Path) -> list[object]:
+        return []
+
+
 def setup_function() -> None:
+    os.environ["ARTIFACTS_MODE"] = "local"
+    get_container.cache_clear()
     reset_state()
+    stream_runtime_api.set_detector_factory(cast(Any, _FakeDetector))
 
 
 def _build_mission_source_layout(root: Path) -> Path:
@@ -631,3 +646,35 @@ def test_start_flow_creates_and_starts_mission() -> None:
     assert payload["mission_id"]
     assert payload["status"] == "running"
     assert payload["total_frames"] == 1
+
+
+def test_start_flow_returns_503_when_detector_preflight_fails() -> None:
+    class _FailingDetector:
+        def __init__(self, config: object) -> None:
+            self._config = config
+
+        def warmup(self) -> None:
+            raise RuntimeError(
+                "model cache is empty and remote download is unavailable"
+            )
+
+        def predict(self, _frame_path: Path) -> list[object]:
+            return []
+
+    stream_runtime_api.set_detector_factory(cast(Any, _FailingDetector))
+
+    with TemporaryDirectory() as temp_dir:
+        images_dir = _build_mission_source_layout(Path(temp_dir))
+        response = client.post(
+            "/v1/missions/start-flow",
+            json={
+                "source_name": "pilot-set",
+                "fps": 2.0,
+                "frames_dir": str(images_dir),
+                "annotations_path": None,
+                "api_base": "http://127.0.0.1:1",
+            },
+        )
+
+    assert response.status_code == 503
+    assert "Mission preflight failed" in response.json()["detail"]

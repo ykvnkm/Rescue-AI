@@ -21,7 +21,7 @@ x-airflow-common: &airflow-common
     _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-docker==3.11.0"
   volumes:
     - ./airflow/dags:/opt/airflow/dags
-    - ./airflow/logs:/opt/airflow/logs
+    - airflow_logs:/opt/airflow/logs
     - ./airflow/plugins:/opt/airflow/plugins
     - /var/run/docker.sock:/var/run/docker.sock
     - airflow_shared_data:/opt/airflow/data
@@ -39,7 +39,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DEFAULT_DB}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
@@ -63,7 +63,7 @@ services:
     command: >
       bash -c "
       airflow db migrate &&
-      airflow users create --username ${AIRFLOW_ADMIN_USER} --firstname Platform --lastname Admin --role Admin --email ${AIRFLOW_ADMIN_EMAIL} --password ${AIRFLOW_ADMIN_PASSWORD}
+      airflow users create --username ${AIRFLOW_ADMIN_USER} --firstname Platform --lastname Admin --role Admin --email ${AIRFLOW_ADMIN_EMAIL} --password ${AIRFLOW_ADMIN_PASSWORD} || true
       "
     restart: "no"
 

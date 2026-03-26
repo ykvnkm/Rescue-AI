@@ -143,15 +143,14 @@ def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
     started = service.start_mission(mission.mission_id)
     if started is None:
         raise HTTPException(status_code=404, detail="Mission not found")
-    state = stream_controller.start(config)
 
     return {
         "mission_id": mission.mission_id,
         "status": started.status,
-        "created_at": mission.created_at,
-        "source_name": mission.source_name,
-        "fps": mission.fps,
-        "total_frames": mission.total_frames,
+        "created_at": updated_mission.created_at,
+        "source_name": updated_mission.source_name,
+        "fps": updated_mission.fps,
+        "total_frames": updated_mission.total_frames,
         "stream": {
             "running": state.running,
             "processed_frames": state.processed_frames,
