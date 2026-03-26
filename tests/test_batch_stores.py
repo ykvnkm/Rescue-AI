@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-from rescue_ai.application.batch_runner import RunStatusRecord
+from rescue_ai.application.batch_dtos import RunStatusRecord
 from rescue_ai.infrastructure.s3_artifact_store import LocalArtifactStorage
 from rescue_ai.infrastructure.status_store import JsonStatusStore, PostgresStatusStore
 

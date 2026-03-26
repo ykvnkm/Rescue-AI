@@ -5,12 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from rescue_ai.domain.entities import (
-    Alert,
-    Detection,
-    FrameEvent,
-    Mission,
-)
+from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
 
 
 @dataclass(frozen=True)
@@ -90,10 +85,6 @@ class ArtifactStorage(Protocol):
     ) -> str: ...
 
     def load_mission_report(self, mission_id: str) -> dict[str, object] | None: ...
-
-    def write_report(self, run_key: str, payload: dict[str, object]) -> str: ...
-
-    def write_debug_rows(self, run_key: str, rows: list[dict[str, object]]) -> str: ...
 
 
 class DetectorPort(Protocol):

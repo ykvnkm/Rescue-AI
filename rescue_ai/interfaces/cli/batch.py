@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import argparse
 
+from rescue_ai.application.batch_dtos import BatchRunRequest
 from rescue_ai.application.batch_runner import (
-    BatchRunRequest,
     MissionBatchRunner,
     MissionBatchRunnerDeps,
 )

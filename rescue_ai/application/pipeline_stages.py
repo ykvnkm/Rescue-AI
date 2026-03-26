@@ -373,19 +373,6 @@ def _as_int(value: object, *, field_name: str) -> int:
     raise RuntimeError(f"{field_name} must be an integer")
 
 
-def _as_float(value: object, *, field_name: str) -> float:
-    if isinstance(value, bool):
-        raise RuntimeError(f"{field_name} must be numeric")
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError as error:
-            raise RuntimeError(f"{field_name} must be numeric") from error
-    raise RuntimeError(f"{field_name} must be numeric")
-
-
 def _as_bool(value: object, *, field_name: str) -> bool:
     if isinstance(value, bool):
         return value

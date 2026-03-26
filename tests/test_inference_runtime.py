@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from rescue_ai.application.inference_config import InferenceConfig
 from rescue_ai.application.payloads import build_frame_payload, serialize_detections
-from rescue_ai.domain.value_objects import InferenceConfig
 from rescue_ai.infrastructure.annotation_index import build_annotation_index
 from rescue_ai.infrastructure.yolo_detector import YoloDetector, _resolve_person_ids
 

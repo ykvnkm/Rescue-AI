@@ -2,15 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Protocol
 from uuid import uuid4
 
-from rescue_ai.domain.entities import (
-    Alert,
-    Detection,
-    FrameEvent,
-    Mission,
-)
 from rescue_ai.domain.alert_policy import MissionAlertState, evaluate_alert
+from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
 from rescue_ai.domain.mission_metrics import (
     MissionReportData,
     build_gt_episodes,
@@ -18,7 +14,6 @@ from rescue_ai.domain.mission_metrics import (
     episode_id_for_ts,
     split_reviewed_alerts,
 )
-from rescue_ai.domain.value_objects import AlertRuleConfig
 from rescue_ai.domain.ports import (
     AlertRepository,
     ArtifactBlob,
@@ -26,6 +21,33 @@ from rescue_ai.domain.ports import (
     FrameEventRepository,
     MissionRepository,
 )
+from rescue_ai.domain.value_objects import AlertRuleConfig
+
+
+class PilotServicePort(Protocol):
+    """External contract of PilotService for infrastructure adapters."""
+
+    def set_report_metadata(self, payload: dict[str, object]) -> None: ...
+
+    def create_mission(self, source_name: str, total_frames: int, fps: float): ...
+
+    def start_mission(self, mission_id: str): ...
+
+    def ingest_frame_event(
+        self,
+        frame_event: FrameEvent,
+        detections: list[Detection],
+    ) -> list[Alert]: ...
+
+    def review_alert(self, alert_id: str, updates: dict[str, object]): ...
+
+    def complete_mission(
+        self,
+        mission_id: str,
+        completed_frame_id: int | None,
+    ): ...
+
+    def get_mission_report(self, mission_id: str) -> dict[str, object]: ...
 
 
 class PilotService:

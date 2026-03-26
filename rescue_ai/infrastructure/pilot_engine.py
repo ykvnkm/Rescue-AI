@@ -2,29 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Protocol
-
+from rescue_ai.application.pilot_service import PilotServicePort
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent
-
-
-class PilotServicePort(Protocol):
-    """Minimal pilot service contract used by batch engine adapter."""
-
-    def set_report_metadata(self, payload: dict[str, object]) -> None: ...
-    def create_mission(self, source_name: str, total_frames: int, fps: float): ...
-    def start_mission(self, mission_id: str): ...
-    def ingest_frame_event(
-        self,
-        frame_event: FrameEvent,
-        detections: list[Detection],
-    ) -> list[Alert]: ...
-    def review_alert(self, alert_id: str, updates: dict[str, object]): ...
-    def complete_mission(
-        self,
-        mission_id: str,
-        completed_frame_id: int | None,
-    ): ...
-    def get_mission_report(self, mission_id: str) -> dict[str, object]: ...
 
 
 class PilotMissionEngine:

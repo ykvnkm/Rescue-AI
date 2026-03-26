@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from rescue_ai.application.batch_runner import FrameRecord, MissionInput
+from rescue_ai.application.batch_dtos import FrameRecord, MissionInput
 from rescue_ai.application.pipeline_stages import (
     PipelinePaths,
     run_data_stage,

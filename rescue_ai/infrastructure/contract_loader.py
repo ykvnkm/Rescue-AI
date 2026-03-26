@@ -8,7 +8,8 @@ from pathlib import Path
 
 import yaml
 
-from rescue_ai.domain.value_objects import AlertRuleConfig, InferenceConfig
+from rescue_ai.application.inference_config import InferenceConfig
+from rescue_ai.domain.value_objects import AlertRuleConfig
 
 DEFAULT_CONTRACT_PATH = Path("configs/nsu_frames_yolov8n_alert_contract.yaml")
 DEFAULT_MODEL_URL = (

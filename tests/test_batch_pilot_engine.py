@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import cast
 
+from rescue_ai.application.pilot_service import PilotServicePort
 from rescue_ai.domain.entities import Detection, FrameEvent
-from rescue_ai.infrastructure.pilot_engine import PilotMissionEngine, PilotServicePort
+from rescue_ai.infrastructure.pilot_engine import PilotMissionEngine
 
 
 @dataclass

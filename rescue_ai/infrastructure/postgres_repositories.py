@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
-from rescue_ai.domain.mission_metrics import build_gt_episodes
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
+from rescue_ai.domain.mission_metrics import build_gt_episodes
 
 MISSION_COLUMNS = """
 mission_id,

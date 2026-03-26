@@ -6,7 +6,7 @@ import importlib
 import json
 from pathlib import Path
 
-from rescue_ai.application.batch_runner import RunStatusRecord
+from rescue_ai.application.batch_dtos import RunStatusRecord
 
 
 class JsonStatusStore:

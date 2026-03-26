@@ -10,9 +10,9 @@ from typing import Callable, Protocol
 from urllib.error import HTTPError, URLError
 
 from rescue_ai.application.frame_source import FrameSourceService, TimestampInputs
+from rescue_ai.application.inference_config import InferenceConfig
 from rescue_ai.application.payloads import build_frame_payload, serialize_detections
 from rescue_ai.domain.ports import DetectorPort, FramePublisherPort
-from rescue_ai.domain.value_objects import InferenceConfig
 
 
 class AnnotationIndexPort(Protocol):
@@ -239,8 +239,3 @@ class StreamOrchestrator:
         current.running = False
         current.stop_requested = True
         self._registry.set(current)
-
-
-def frame_name(frame_path: Path) -> str:
-    """Extract the file name from a frame path."""
-    return frame_path.name
