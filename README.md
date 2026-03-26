@@ -58,7 +58,7 @@ tests/
 <mission>/
   images/
     <mission>_000001.jpg
-    <mission>_0002.jpg
+    <mission>_000002.jpg
     ...
   annotations/
     *.json   # COCO annotations (опционально)
