@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     """Parse unified pipeline CLI arguments."""
     settings = get_settings()
     parser = argparse.ArgumentParser(
-        description="Rescue-AI unified ML pipeline (data → train → validate → inference)"
+        description="Rescue-AI ML pipeline (data/train/validate/inference)"
     )
     parser.add_argument(
         "--stage", required=True, choices=STAGES, help="Pipeline stage to run"

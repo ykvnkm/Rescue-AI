@@ -6,7 +6,6 @@ import pytest
 
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
 from rescue_ai.infrastructure.postgres_repositories import (
-    EpisodeProjectionSettings,
     PostgresAlertRepository,
     PostgresDatabase,
     PostgresFrameEventRepository,
