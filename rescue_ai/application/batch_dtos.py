@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Protocol
 
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent
 from rescue_ai.domain.ports import ReportMetadataPayload
-from rescue_ai.domain.value_objects import AlertRuleConfig
+from rescue_ai.domain.value_objects import AlertRuleConfig, AlertStatus
 
 # ── Data transfer objects ───────────────────────────────────────
 
@@ -161,7 +161,7 @@ class MissionEnginePort(Protocol):
     def review_alert(
         self,
         alert_id: str,
-        status: Literal["reviewed_confirmed", "reviewed_rejected"],
+        status: AlertStatus,
         reviewed_at_sec: float,
         reason: str,
     ) -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.domain.entities import Detection, FrameEvent
 from rescue_ai.domain.ports import AlertReviewPayload
-from rescue_ai.domain.value_objects import AlertRuleConfig
+from rescue_ai.domain.value_objects import AlertRuleConfig, AlertStatus
 from rescue_ai.infrastructure.memory_repositories import (
     InMemoryAlertRepository,
     InMemoryArtifactStorage,
@@ -112,7 +112,7 @@ def test_review_alert_cannot_be_applied_twice() -> None:
     )[0]
 
     review: AlertReviewPayload = {
-        "status": "reviewed_confirmed",
+        "status": AlertStatus.REVIEWED_CONFIRMED,
         "reviewed_by": "operator-1",
         "reviewed_at_sec": None,
         "decision_reason": "valid target",
@@ -123,7 +123,7 @@ def test_review_alert_cannot_be_applied_twice() -> None:
     assert reviewed.reviewed_at_sec == alert.ts_sec
 
     second_review: AlertReviewPayload = {
-        "status": "reviewed_rejected",
+        "status": AlertStatus.REVIEWED_REJECTED,
         "reviewed_by": "operator-2",
         "reviewed_at_sec": 1.0,
         "decision_reason": "should fail",

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from rescue_ai.domain.entities import Alert, FrameEvent, Mission
 from rescue_ai.domain.ports import AlertReviewPayload
-from rescue_ai.domain.value_objects import ArtifactBlob
+from rescue_ai.domain.value_objects import AlertStatus, ArtifactBlob
 
 
 @dataclass
@@ -67,7 +67,10 @@ class InMemoryMissionRepository:
 class InMemoryAlertRepository:
     """Alert repository implementation over the in-memory database."""
 
-    allowed_target_statuses = {"reviewed_confirmed", "reviewed_rejected"}
+    allowed_target_statuses = {
+        AlertStatus.REVIEWED_CONFIRMED,
+        AlertStatus.REVIEWED_REJECTED,
+    }
 
     def __init__(self, db: InMemoryDatabase) -> None:
         self._db = db
@@ -102,7 +105,7 @@ class InMemoryAlertRepository:
         status = updates["status"]
         if status not in self.allowed_target_statuses:
             raise ValueError("Invalid target status")
-        if alert.status != "queued":
+        if alert.status != AlertStatus.QUEUED:
             raise ValueError("Alert already reviewed")
 
         alert.status = status
