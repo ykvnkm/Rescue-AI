@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
+from rescue_ai.domain.value_objects import AlertStatus
 from rescue_ai.infrastructure.postgres_repositories import (
     PostgresAlertRepository,
     PostgresDatabase,
@@ -205,7 +206,7 @@ def test_update_alert_status(pg_db: PostgresDatabase) -> None:
     reviewed = alerts.update_status(
         "a-1",
         {
-            "status": "reviewed_confirmed",
+            "status": AlertStatus.REVIEWED_CONFIRMED,
             "reviewed_by": "operator-1",
             "reviewed_at_sec": 1.0,
             "decision_reason": "valid",
@@ -228,7 +229,7 @@ def test_update_already_reviewed_raises(pg_db: PostgresDatabase) -> None:
     alerts.update_status(
         "a-1",
         {
-            "status": "reviewed_confirmed",
+            "status": AlertStatus.REVIEWED_CONFIRMED,
             "reviewed_by": None,
             "reviewed_at_sec": None,
             "decision_reason": None,
@@ -239,7 +240,7 @@ def test_update_already_reviewed_raises(pg_db: PostgresDatabase) -> None:
         alerts.update_status(
             "a-1",
             {
-                "status": "reviewed_rejected",
+                "status": AlertStatus.REVIEWED_REJECTED,
                 "reviewed_by": None,
                 "reviewed_at_sec": None,
                 "decision_reason": None,
@@ -269,7 +270,7 @@ def test_update_returns_none_for_missing(pg_db: PostgresDatabase) -> None:
         alerts.update_status(
             "nope",
             {
-                "status": "reviewed_confirmed",
+                "status": AlertStatus.REVIEWED_CONFIRMED,
                 "reviewed_by": None,
                 "reviewed_at_sec": None,
                 "decision_reason": None,

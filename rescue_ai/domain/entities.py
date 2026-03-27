@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from rescue_ai.domain.value_objects import AlertStatus
+
 
 @dataclass
 class Mission:
@@ -36,8 +38,8 @@ class Detection:
 
     bbox: tuple[float, float, float, float]
     score: float
-    label: str = "person"
-    model_name: str = "yolo8n"
+    label: str
+    model_name: str
     explanation: str | None = None
 
 
@@ -53,7 +55,7 @@ class Alert:
     people_detected: int
     primary_detection: Detection
     detections: list[Detection] = field(default_factory=list)
-    status: str = "queued"
+    status: AlertStatus = AlertStatus.QUEUED
     reviewed_by: str | None = None
     reviewed_at_sec: float | None = None
     decision_reason: str | None = None

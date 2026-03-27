@@ -137,6 +137,7 @@ def _extract_detections(
                     float(box[3]),
                 ),
                 score=float(score),
+                label="person",
                 model_name=model_name,
             )
         )

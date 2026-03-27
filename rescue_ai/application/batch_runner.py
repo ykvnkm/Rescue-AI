@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Literal
 
 from rescue_ai.application.batch_dtos import (
     BatchArtifactPort,
@@ -24,6 +23,7 @@ from rescue_ai.application.batch_dtos import (
 )
 from rescue_ai.domain.entities import FrameEvent
 from rescue_ai.domain.ports import DetectorPort, ReportMetadataPayload
+from rescue_ai.domain.value_objects import AlertStatus
 
 PARTIAL_ERROR_RATE_THRESHOLD = 0.2
 
@@ -234,10 +234,10 @@ class MissionBatchRunner:
 
         if context.gt_available:
             for alert in alerts:
-                review_status: Literal["reviewed_confirmed", "reviewed_rejected"] = (
-                    "reviewed_confirmed"
+                review_status = (
+                    AlertStatus.REVIEWED_CONFIRMED
                     if frame.gt_person_present
-                    else "reviewed_rejected"
+                    else AlertStatus.REVIEWED_REJECTED
                 )
                 context.engine.review_alert(
                     alert_id=alert.alert_id,

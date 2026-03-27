@@ -10,6 +10,7 @@ from typing import Any, Sequence
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
 from rescue_ai.domain.mission_metrics import build_gt_episodes
 from rescue_ai.domain.ports import AlertReviewPayload
+from rescue_ai.domain.value_objects import AlertStatus
 from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
 
 MISSION_COLUMNS = """
@@ -247,7 +248,10 @@ class PostgresMissionRepository:
 class PostgresAlertRepository:
     """Postgres implementation of alert repository."""
 
-    allowed_target_statuses = {"reviewed_confirmed", "reviewed_rejected"}
+    allowed_target_statuses = {
+        AlertStatus.REVIEWED_CONFIRMED,
+        AlertStatus.REVIEWED_REJECTED,
+    }
 
     def __init__(
         self,
@@ -392,7 +396,7 @@ class PostgresAlertRepository:
                 existing = cursor.fetchone()
                 if existing is None:
                     return None
-                if str(existing[1]) != "queued":
+                if _coerce_alert_status(existing[1]) != AlertStatus.QUEUED:
                     raise ValueError("Alert already reviewed")
 
                 effective_reviewed_at = (
@@ -531,7 +535,7 @@ def _alert_from_row(row: Sequence[Any]) -> Alert:
             explanation=None if row[10] is None else str(row[10]),
         ),
         detections=detections,
-        status=str(row[12]),
+        status=_coerce_alert_status(row[12]),
         reviewed_by=None if row[13] is None else str(row[13]),
         reviewed_at_sec=None if row[14] is None else float(row[14]),
         decision_reason=None if row[15] is None else str(row[15]),
@@ -571,6 +575,13 @@ def _detection_from_payload(payload: dict[str, Any]) -> Detection:
             else str(payload.get("explanation"))
         ),
     )
+
+
+def _coerce_alert_status(value: Any) -> AlertStatus:
+    try:
+        return AlertStatus(str(value))
+    except ValueError as error:
+        raise ValueError(f"Invalid alert status in storage: {value}") from error
 
 
 def _coerce_bbox(value: Any) -> tuple[float, float, float, float]:

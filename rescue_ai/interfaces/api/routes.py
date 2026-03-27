@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent
 from rescue_ai.domain.ports import AlertReviewPayload
+from rescue_ai.domain.value_objects import AlertStatus
 from rescue_ai.interfaces.api.dependencies import (
     get_pilot_service,
     get_stream_controller,
@@ -299,7 +300,7 @@ def get_alert_frame(alert_id: str) -> Response:
 def confirm_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
     service = get_pilot_service()
     review: AlertReviewPayload = {
-        "status": "reviewed_confirmed",
+        "status": AlertStatus.REVIEWED_CONFIRMED,
         "reviewed_by": payload.reviewed_by,
         "reviewed_at_sec": payload.reviewed_at_sec,
         "decision_reason": payload.decision_reason,
@@ -317,7 +318,7 @@ def confirm_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
 def reject_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
     service = get_pilot_service()
     review: AlertReviewPayload = {
-        "status": "reviewed_rejected",
+        "status": AlertStatus.REVIEWED_REJECTED,
         "reviewed_by": payload.reviewed_by,
         "reviewed_at_sec": payload.reviewed_at_sec,
         "decision_reason": payload.decision_reason,

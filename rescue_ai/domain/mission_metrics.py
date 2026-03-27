@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from rescue_ai.domain.entities import Alert, FrameEvent
-from rescue_ai.domain.value_objects import AlertRuleConfig
+from rescue_ai.domain.value_objects import AlertRuleConfig, AlertStatus
 
 
 class MissionReportData(NamedTuple):
@@ -20,9 +20,11 @@ class MissionReportData(NamedTuple):
 def split_reviewed_alerts(alerts: list[Alert]) -> tuple[list[Alert], list[Alert]]:
     """Split alerts into confirmed and rejected lists based on review status."""
     confirmed_alerts = [
-        alert for alert in alerts if alert.status == "reviewed_confirmed"
+        alert for alert in alerts if alert.status == AlertStatus.REVIEWED_CONFIRMED
     ]
-    rejected_alerts = [alert for alert in alerts if alert.status == "reviewed_rejected"]
+    rejected_alerts = [
+        alert for alert in alerts if alert.status == AlertStatus.REVIEWED_REJECTED
+    ]
     return confirmed_alerts, rejected_alerts
 
 

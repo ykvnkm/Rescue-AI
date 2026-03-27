@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal, Protocol, TypedDict
+from typing import Protocol, TypedDict
 
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
-from rescue_ai.domain.value_objects import ArtifactBlob
+from rescue_ai.domain.value_objects import AlertStatus, ArtifactBlob
 
 
 class AlertReviewPayload(TypedDict):
     """Typed payload for applying an operator review to an alert."""
 
-    status: Literal["reviewed_confirmed", "reviewed_rejected"]
+    status: AlertStatus
     reviewed_by: str | None
     reviewed_at_sec: float | None
     decision_reason: str | None

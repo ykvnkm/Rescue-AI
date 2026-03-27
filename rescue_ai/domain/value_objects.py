@@ -1,6 +1,7 @@
 """Domain value objects."""
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 
 @dataclass(frozen=True)
@@ -23,3 +24,11 @@ class AlertRuleConfig:
     gap_end_sec: float
     gt_gap_end_sec: float
     match_tolerance_sec: float
+
+
+class AlertStatus(StrEnum):
+    """Alert lifecycle status in pilot mission flow."""
+
+    QUEUED = "queued"
+    REVIEWED_CONFIRMED = "reviewed_confirmed"
+    REVIEWED_REJECTED = "reviewed_rejected"

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from rescue_ai.application.pilot_service import PilotServicePort
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent
 from rescue_ai.domain.ports import AlertReviewPayload, ReportMetadataPayload
+from rescue_ai.domain.value_objects import AlertStatus
 
 
 class PilotMissionEngine:
@@ -48,7 +47,7 @@ class PilotMissionEngine:
     def review_alert(
         self,
         alert_id: str,
-        status: Literal["reviewed_confirmed", "reviewed_rejected"],
+        status: AlertStatus,
         reviewed_at_sec: float,
         reason: str,
     ) -> None:
