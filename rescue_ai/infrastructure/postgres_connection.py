@@ -88,7 +88,9 @@ class PostgresDatabase:
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
-                    TRUNCATE TABLE episodes, alerts, frame_events, missions CASCADE
+                    TRUNCATE TABLE
+                        sync_outbox, episodes, alerts, frame_events, missions
+                    CASCADE
                     """
                 )
             conn.commit()

@@ -161,6 +161,7 @@ def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
 
     return {
         "mission_id": mission.mission_id,
+        "slug": mission.slug,
         "status": started.status,
         "created_at": updated_mission.created_at,
         "source_name": updated_mission.source_name,

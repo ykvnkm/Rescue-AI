@@ -20,7 +20,8 @@ status,
 created_at,
 total_frames,
 fps,
-completed_frame_id
+completed_frame_id,
+slug
 """
 
 ALERT_COLUMNS = """
@@ -153,6 +154,22 @@ class PostgresMissionRepository:
     def create(self, mission: Mission) -> None:
         with self._db.connect() as conn:
             with conn.cursor() as cursor:
+                # Auto-generate slug if not provided: YYYY-MM-DD/mission-N
+                slug = mission.slug
+                if slug is None:
+                    created = _parse_iso_datetime(mission.created_at)
+                    date_str = created.strftime("%Y-%m-%d")
+                    cursor.execute(
+                        """
+                        SELECT count(*) FROM missions
+                        WHERE slug LIKE %s
+                        """,
+                        (f"{date_str}/mission-%",),
+                    )
+                    count = cursor.fetchone()[0]
+                    slug = f"{date_str}/mission-{count + 1}"
+                    mission.slug = slug
+
                 cursor.execute(
                     """
                     INSERT INTO missions (
@@ -162,9 +179,10 @@ class PostgresMissionRepository:
                         created_at,
                         total_frames,
                         fps,
-                        completed_frame_id
+                        completed_frame_id,
+                        slug
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         mission.mission_id,
@@ -174,6 +192,7 @@ class PostgresMissionRepository:
                         mission.total_frames,
                         mission.fps,
                         mission.completed_frame_id,
+                        slug,
                     ),
                 )
             conn.commit()
@@ -506,6 +525,7 @@ def _mission_from_row(row: Sequence[Any]) -> Mission:
         total_frames=int(row[4]),
         fps=float(row[5]),
         completed_frame_id=None if row[6] is None else int(row[6]),
+        slug=None if len(row) < 8 or row[7] is None else str(row[7]),
     )
 
 

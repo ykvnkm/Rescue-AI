@@ -22,7 +22,10 @@ from rescue_ai.domain.ports import (
 )
 from rescue_ai.domain.value_objects import AlertRuleConfig
 from rescue_ai.infrastructure.annotation_index import build_annotation_index
-from rescue_ai.infrastructure.artifact_storage import build_artifact_storage
+from rescue_ai.infrastructure.artifact_storage import (
+    LocalArtifactStorage,
+    build_artifact_storage,
+)
 from rescue_ai.infrastructure.contract_loader import (
     StreamContract,
     load_alert_rules_and_metadata,
@@ -134,7 +137,20 @@ def build_api_runtime() -> (
     mission_repository, alert_repository, frame_repository, reset_hook = (
         _build_repositories(alert_rules=alert_rules, settings=settings)
     )
-    artifact_storage = build_artifact_storage(settings.storage)
+
+    is_offline_first = settings.api.mode == "offline_first"
+    if is_offline_first and settings.api.repository_backend == "postgres":
+        artifact_storage = _build_offline_first_storage(settings)
+        mission_repository, alert_repository, frame_repository = (
+            _wrap_repositories_with_outbox(
+                settings=settings,
+                mission_repository=mission_repository,
+                alert_repository=alert_repository,
+                frame_repository=frame_repository,
+            )
+        )
+    else:
+        artifact_storage = build_artifact_storage(settings.storage)
 
     pilot_service = PilotService(
         dependencies=PilotService.Dependencies(
@@ -241,6 +257,61 @@ def _reset_memory_database(db: InMemoryDatabase) -> None:
     db.missions.clear()
     db.alerts.clear()
     db.mission_frames.clear()
+
+
+def _build_offline_first_storage(settings: Settings):
+    """Build OfflineFirstArtifactStorage for offline_first mode."""
+    from rescue_ai.infrastructure.offline_first_storage import (
+        OfflineFirstArtifactStorage,
+    )
+    from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
+    from rescue_ai.infrastructure.sync_outbox_repository import (
+        PostgresSyncOutboxRepository,
+    )
+
+    dsn = settings.database.dsn.strip()
+    if not dsn:
+        raise ValueError("DB_DSN required for offline_first mode")
+
+    db = PostgresDatabase(dsn=dsn)
+    outbox = PostgresSyncOutboxRepository(db)
+    local_storage = LocalArtifactStorage(settings.storage.local_root)
+
+    return OfflineFirstArtifactStorage(
+        local_storage=local_storage,
+        outbox=outbox,
+        s3_bucket=settings.storage.s3_bucket,
+        s3_prefix=settings.sync.s3_prefix,
+    )
+
+
+def _wrap_repositories_with_outbox(
+    *,
+    settings: Settings,
+    mission_repository,
+    alert_repository,
+    frame_repository,
+):
+    """Wrap Postgres repositories with offline-first outbox decorators."""
+    from rescue_ai.infrastructure.offline_first_repositories import (
+        OfflineFirstAlertRepository,
+        OfflineFirstFrameEventRepository,
+        OfflineFirstMissionRepository,
+    )
+    from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
+    from rescue_ai.infrastructure.sync_outbox_repository import (
+        PostgresSyncOutboxRepository,
+    )
+
+    dsn = settings.database.dsn.strip()
+    db = PostgresDatabase(dsn=dsn)
+    outbox = PostgresSyncOutboxRepository(db)
+
+    return (
+        OfflineFirstMissionRepository(inner=mission_repository, outbox=outbox),
+        OfflineFirstAlertRepository(inner=alert_repository, outbox=outbox),
+        OfflineFirstFrameEventRepository(inner=frame_repository, outbox=outbox),
+    )
 
 
 if __name__ == "__main__":

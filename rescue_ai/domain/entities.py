@@ -18,6 +18,7 @@ class Mission:
     total_frames: int
     fps: float
     completed_frame_id: int | None = None
+    slug: str | None = None
 
 
 @dataclass

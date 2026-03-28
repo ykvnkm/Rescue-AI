@@ -26,6 +26,7 @@ class AppSettings(BaseEnvSettings):
 class ApiSettings(BaseEnvSettings):
     host: str = Field(default="0.0.0.0", alias="APP_HOST")
     port: int = Field(default=8000, alias="APP_PORT")
+    mode: str = Field(default="default", alias="APP_MODE")
     repository_backend: str = Field(default="memory", alias="APP_REPOSITORY_BACKEND")
     postgres_ready_timeout_sec: float = Field(
         default=30.0,
@@ -80,6 +81,20 @@ class BatchSettings(BaseEnvSettings):
     s3_prefix: str = Field(default="batch", alias="BATCH_S3_PREFIX")
 
 
+class SyncSettings(BaseEnvSettings):
+    enabled: bool = Field(default=False, alias="SYNC_ENABLED")
+    remote_postgres_dsn: str = Field(default="", alias="SYNC_REMOTE_POSTGRES_DSN")
+    poll_interval_sec: float = Field(default=10.0, alias="SYNC_POLL_INTERVAL_SEC")
+    batch_size: int = Field(default=50, alias="SYNC_BATCH_SIZE")
+    backoff_initial_sec: float = Field(default=5.0, alias="SYNC_BACKOFF_INITIAL_SEC")
+    backoff_max_sec: float = Field(default=300.0, alias="SYNC_BACKOFF_MAX_SEC")
+    stuck_timeout_sec: float = Field(default=60.0, alias="SYNC_STUCK_TIMEOUT_SEC")
+    delete_local_after_sync: bool = Field(
+        default=False, alias="SYNC_DELETE_LOCAL_AFTER_SYNC"
+    )
+    s3_prefix: str = Field(default="missions", alias="SYNC_S3_PREFIX")
+
+
 class DetectionSettings(BaseEnvSettings):
     http_timeout_sec: float = Field(default=1.0, alias="DETECTION_HTTP_TIMEOUT_SEC")
 
@@ -94,6 +109,7 @@ class Settings(BaseSettings):
     database: DatabaseSettings
     storage: StorageSettings
     batch: BatchSettings
+    sync: SyncSettings
     detection: DetectionSettings
     secrets: SecretsSettings
 
@@ -106,6 +122,7 @@ def get_settings() -> Settings:
         database=DatabaseSettings(),
         storage=StorageSettings(),
         batch=BatchSettings(),
+        sync=SyncSettings(),
         detection=DetectionSettings(),
         secrets=SecretsSettings(),
     )

@@ -84,7 +84,11 @@ class PilotService:
         total_frames: int,
         fps: float,
     ) -> Mission:
-        """Create a new mission and persist it."""
+        """Create a new mission and persist it.
+
+        The repository auto-generates a human-readable slug
+        (e.g. ``2026-03-28/mission-1``) based on the creation date.
+        """
         mission = Mission(
             mission_id=str(uuid4()),
             source_name=source_name,
@@ -94,6 +98,9 @@ class PilotService:
             fps=fps,
         )
         self._deps.mission_repository.create(mission)
+        # Register slug in artifact storage so S3 paths use it
+        if mission.slug and hasattr(self._deps.artifact_storage, "register_slug"):
+            self._deps.artifact_storage.register_slug(mission.mission_id, mission.slug)
         return mission
 
     def get_mission(self, mission_id: str) -> Mission | None:
