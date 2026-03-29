@@ -4,7 +4,7 @@
 Показать end-to-end batch-контур на реальных данных: backfill, idempotency, артефакты и метрики качества.
 
 ## Предусловия
-- В `BATCH_MISSION_ROOT/<mission_id>/<ds>/images` и `annotations/` лежат реальные данные.
+- В S3 по префиксу `ARTIFACTS_S3_PREFIX/<mission_id>/<ds>/images` и `annotations/` лежат реальные данные.
 - Платформа поднята (`infra/docker-compose.platform.yml`).
 
 ## Рекомендуемый сценарий

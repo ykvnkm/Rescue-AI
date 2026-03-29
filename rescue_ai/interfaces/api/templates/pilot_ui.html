@@ -2,716 +2,359 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>Rescue Drone Station</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rescue AI Pilot Console</title>
   <style>
     :root {
-      --bg: #0a0f1f;
-      --panel: #10182b;
-      --panel-2: #0f1a30;
-      --accent: #f97316;
-      --accent-2: #fb923c;
-      --ok: #22c55e;
+      --bg: #0d1220;
+      --card: #111a2f;
+      --text: #dbe6ff;
+      --muted: #8ea2cc;
+      --accent: #36c2ff;
+      --ok: #1fbf75;
+      --warn: #ffb020;
       --bad: #ef4444;
-      --text: #e2e8f0;
-      --muted: #94a3b8;
-      --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
-      --radius: 18px;
-      --outline: rgba(148, 163, 184, 0.15);
+      --border: rgba(142, 162, 204, 0.25);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      padding: 0 24px 32px;
       background:
-        radial-gradient(circle at 15% 10%, rgba(249,115,22,0.18), transparent 40%),
-        radial-gradient(circle at 85% 0%, rgba(251,146,60,0.16), transparent 42%),
-        linear-gradient(180deg, rgba(15,23,42,0.9), rgba(10,15,31,0.95)),
-        repeating-linear-gradient(90deg, rgba(148,163,184,0.08) 0, rgba(148,163,184,0.08) 1px, transparent 1px, transparent 32px),
+        radial-gradient(circle at 12% 8%, rgba(54,194,255,0.16), transparent 35%),
+        radial-gradient(circle at 85% 0%, rgba(31,191,117,0.12), transparent 35%),
         var(--bg);
       color: var(--text);
-      font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font: 15px/1.45 "Segoe UI", system-ui, sans-serif;
+      min-height: 100vh;
     }
-    header { padding: 26px 0 14px; }
-    h1 {
-      margin: 0;
-      font-size: 30px;
-      font-weight: 700;
-      letter-spacing: -0.01em;
-      font-family: 'Space Grotesk', sans-serif;
-      text-align: center;
-    }
-    .layout {
+    .wrap {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 24px 16px 40px;
       display: grid;
-      grid-template-columns: 320px 1fr;
-      gap: 18px;
-      align-items: start;
+      gap: 14px;
     }
     .card {
-      background: linear-gradient(155deg, rgba(19,28,48,0.95), rgba(12,18,34,0.9));
-      border: 1px solid var(--outline);
-      border-radius: var(--radius);
-      padding: 16px;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(6px);
+      background: linear-gradient(155deg, #111a2f, #0f1730);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
     }
-    .card h3 {
-      margin: 0 0 12px;
-      font-size: 15px;
-      font-weight: 700;
+    h1 {
+      margin: 0;
+      font-size: 28px;
       letter-spacing: 0.01em;
-      color: var(--muted);
-      text-transform: uppercase;
     }
-    .field { margin-bottom: 10px; }
-    .field label {
-      display: block;
-      font-size: 12px;
-      color: var(--muted);
-      margin-bottom: 4px;
+    .subtitle { color: var(--muted); margin-top: 6px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
     }
+    .kpi {
+      background: rgba(8, 14, 28, 0.6);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px;
+    }
+    .kpi .k { font-size: 12px; color: var(--muted); }
+    .kpi .v { font-size: 16px; font-weight: 700; margin-top: 4px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
     input {
       width: 100%;
-      border: 1px solid rgba(148, 163, 184, 0.25);
-      background: rgba(15,23,42,0.7);
+      border: 1px solid var(--border);
       border-radius: 10px;
+      background: rgba(8, 14, 28, 0.6);
       color: var(--text);
       padding: 10px 12px;
       font-size: 14px;
     }
-    .btn {
-      width: 100%;
-      border: none;
+    .buttons { display: flex; gap: 10px; margin-top: 12px; }
+    button {
+      border: 0;
       border-radius: 12px;
-      padding: 12px 14px;
-      background: linear-gradient(120deg, var(--accent), var(--accent-2));
-      color: #07121e;
+      padding: 10px 14px;
       font-weight: 700;
       cursor: pointer;
-      margin-top: 8px;
-      box-shadow: 0 12px 30px rgba(249,115,22,0.35);
     }
-    .btn.secondary {
-      background: rgba(15,23,42,0.8);
-      color: var(--text);
-      border: 1px solid rgba(148, 163, 184, 0.2);
-      box-shadow: none;
-    }
-    .status {
-      margin-top: 10px;
-      color: var(--muted);
-      font-size: 12px;
-      white-space: pre-wrap;
-      min-height: 32px;
-    }
-    .console {
-      min-height: 730px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .frame-wrap {
-      position: relative;
-      width: 100%;
-      aspect-ratio: 16 / 9;
-      min-height: 540px;
-      background: rgba(6, 11, 22, 0.9);
-      border-radius: 14px;
-      border: 1px solid rgba(148, 163, 184, 0.2);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      cursor: grab;
-    }
-    .frame-wrap.dragging { cursor: grabbing; }
-    .zoom-content {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      transform-origin: 0 0;
-    }
-    #alertFrame {
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      display: none;
-    }
-    #bboxLayer {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-    }
-    .bbox-item {
-      position: absolute;
-      border: 2px solid #00f5d4;
-      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.65);
-      border-radius: 2px;
-      background: transparent;
-    }
-    #emptyState {
-      color: var(--muted);
-      font-size: 20px;
-      text-align: center;
-    }
-    .meta-row {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-    }
-    .meta-item {
-      background: rgba(15,23,42,0.75);
-      border: 1px solid rgba(148,163,184,0.2);
-      border-radius: 12px;
-      padding: 10px 12px;
-    }
-    .meta-item .k {
-      color: var(--muted);
-      font-size: 12px;
-      margin-bottom: 4px;
-      display: block;
-    }
-    .meta-item .v {
-      font-size: 15px;
-      font-weight: 600;
-      font-family: 'Space Grotesk', sans-serif;
-      word-break: break-word;
-    }
-    .actions {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-top: 4px;
-    }
-    .action-btn {
-      border: none;
-      border-radius: 14px;
-      padding: 16px;
-      font-size: 22px;
-      font-weight: 700;
-      cursor: pointer;
-      color: #08111f;
-      font-family: 'Space Grotesk', sans-serif;
-      box-shadow: 0 14px 30px rgba(0,0,0,0.35);
-    }
-    .action-btn.confirm { background: linear-gradient(120deg, #22c55e, #16a34a); }
-    .action-btn.reject { background: linear-gradient(120deg, #ef4444, #dc2626); color: #fff; }
-    .report-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 8px;
-      background: rgba(15,23,42,0.75);
-      border: 1px solid rgba(148,163,184,0.2);
-      border-radius: 12px;
-      overflow: hidden;
-    }
-    .report-table td {
-      border-bottom: 1px solid rgba(148,163,184,0.15);
-      padding: 10px 12px;
-      font-size: 14px;
-    }
-    .report-table tr:last-child td { border-bottom: none; }
-    .report-table td:first-child { color: var(--muted); width: 65%; }
-    .report-table td:last-child { font-weight: 700; text-align: right; }
-    @media (max-width: 1100px) {
-      .layout { grid-template-columns: 1fr; }
-      .meta-row { grid-template-columns: 1fr 1fr; }
+    .primary { background: linear-gradient(120deg, var(--accent), #6fe3ff); color: #03131b; }
+    .secondary { background: rgba(8, 14, 28, 0.6); color: var(--text); border: 1px solid var(--border); }
+    .danger { background: linear-gradient(120deg, #ff6b6b, #ef4444); color: #fff; }
+    .status { white-space: pre-wrap; min-height: 36px; color: var(--muted); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+    .ok { background: rgba(31,191,117,0.2); color: #8af0be; }
+    .warn { background: rgba(255,176,32,0.2); color: #ffd58a; }
+    .bad { background: rgba(239,68,68,0.2); color: #ffc0c0; }
+    @media (max-width: 780px) {
+      .grid { grid-template-columns: 1fr; }
+      .buttons { flex-direction: column; }
     }
   </style>
 </head>
 <body>
-<header>
-  <h1>Rescue Drone Station</h1>
-</header>
+  <main class="wrap">
+    <section class="card">
+      <h1>Rescue AI Pilot Console</h1>
+      <div class="subtitle">RPi stream emulator: запуск миссии по ID папки внутри <span class="mono">RPI_MISSIONS_DIR</span>, realtime-поток через RTSP.</div>
+    </section>
 
-<div class="layout">
-  <aside class="card">
-    <h3>Параметры миссии</h3>
-    <div class="field">
-      <label>Путь к папке с кадрами</label>
-      <input id="framesDir" placeholder="/abs/path/to/frames" />
-    </div>
-
-    <button class="btn" onclick="startMissionFlow()">Начать миссию</button>
-    <button class="btn secondary" onclick="completeMission()">Закончить миссию</button>
-    <button class="btn secondary" onclick="loadReport()">Отчет по миссии</button>
-
-    <div class="status" id="missionStatus"></div>
-  </aside>
-
-  <section class="card console">
-    <div class="frame-wrap">
-      <div id="emptyState">Ожидание алертов…</div>
-      <div id="zoomContent" class="zoom-content">
-        <img id="alertFrame" alt="alert frame" />
-        <div id="bboxLayer"></div>
+    <section class="card">
+      <div class="grid">
+        <div class="kpi">
+          <div class="k">Service /health</div>
+          <div class="v" id="healthV">—</div>
+        </div>
+        <div class="kpi">
+          <div class="k">Service /ready</div>
+          <div class="v" id="readyV">—</div>
+        </div>
+        <div class="kpi">
+          <div class="k">RPi Link /rpi/status</div>
+          <div class="v" id="rpiV">—</div>
+        </div>
+        <div class="kpi">
+          <div class="k">Current mission</div>
+          <div class="v mono" id="missionV">—</div>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <div class="meta-row">
-      <div class="meta-item">
-        <span class="k">Время алерта</span>
-        <span class="v" id="metaTime">—</span>
+    <section class="card">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.14); background:rgba(0,0,0,0.22); margin-bottom:12px;">
+        <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-start; text-align:left;">
+          <div style="font-size:12px; color:var(--muted);">Состояние канала RaspberryPi</div>
+          <div style="font-size:13px; color:var(--text); text-align:left; width:100%;">
+            Статус: <strong id="rpiConnStatus" style="color:#fbbf24;">не проверено</strong>
+          </div>
+          <div id="missionsMeta" style="font-size:12px; color:var(--muted); text-align:left; width:100%;"></div>
+        </div>
+        <button class="secondary" id="checkRpiBtn" type="button">Проверить канал</button>
       </div>
-      <div class="meta-item">
-        <span class="k">Статус</span>
-        <span class="v" id="metaStatus">—</span>
-      </div>
-      <div class="meta-item">
-        <span class="k">Score</span>
-        <span class="v" id="metaScore">—</span>
-      </div>
-    </div>
 
-    <div class="actions">
-      <button class="action-btn confirm" onclick="reviewCurrent('confirm')">Подтвердить</button>
-      <button class="action-btn reject" onclick="reviewCurrent('reject')">Отклонить</button>
-    </div>
+      <label for="rpiMissionSelect">Выбор миссии (RaspberryPi)</label>
+      <select id="rpiMissionSelect" style="width:100%; border:1px solid var(--border); border-radius:10px; background:rgba(8, 14, 28, 0.6); color:var(--text); padding:10px 12px; font-size:14px;">
+        <option value="" selected disabled>Загрузка миссий...</option>
+      </select>
+      <div class="subtitle">Если миссия не отображается, нажми «Проверить канал».</div>
+      <div class="buttons">
+        <button class="primary" id="startBtn">Start stream</button>
+        <button class="danger" id="stopBtn">Stop stream</button>
+        <button class="secondary" id="refreshBtn">Refresh status</button>
+      </div>
+      <div class="status" id="statusBox"></div>
+    </section>
 
-    <div class="card" style="padding:12px; margin-top:4px;">
-      <h3 style="margin-bottom:8px;">Отчет по миссии</h3>
-      <table class="report-table">
-        <tbody>
-          <tr><td>Всего эпизодов</td><td id="rEpisodesTotal">—</td></tr>
-          <tr><td>Найдено эпизодов</td><td id="rEpisodesFound">—</td></tr>
-          <tr><td>Полнота по эпизодам</td><td id="rRecall">—</td></tr>
-          <tr><td>Время до первого подтверждения (с)</td><td id="rTtfc">—</td></tr>
-          <tr><td>Всего алертов</td><td id="rAlertsTotal">—</td></tr>
-          <tr><td>Подтверждено</td><td id="rConfirmed">—</td></tr>
-          <tr><td>Отклонено</td><td id="rRejected">—</td></tr>
-          <tr><td>Ложных тревог в минуту</td><td id="rFpMin">—</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-</div>
+    <section class="card">
+      <div class="kpi">
+        <div class="k">Stream details</div>
+        <div class="v mono" id="streamDetails">—</div>
+      </div>
+    </section>
+  </main>
 
 <script>
-const api = '';
-const alertSeenAt = new Map();
-let currentAlert = null;
+const statusBox = document.getElementById('statusBox');
+const missionV = document.getElementById('missionV');
+const streamDetails = document.getElementById('streamDetails');
+const missionsMeta = document.getElementById('missionsMeta');
+const rpiConnStatus = document.getElementById('rpiConnStatus');
+const missionSelect = document.getElementById('rpiMissionSelect');
+const checkRpiBtn = document.getElementById('checkRpiBtn');
 let currentMissionId = '';
-let streamPollTimer = null;
-let reportLoadedMissionId = '';
-let missionClosed = false;
-let zoomScale = 1;
-let panX = 0;
-let panY = 0;
-let dragStartX = 0;
-let dragStartY = 0;
-let dragActive = false;
-let lastRenderedAlertId = '';
+let pollTimer = null;
 
-function nowSec() {
-  return Date.now() / 1000;
+function setStatus(text) {
+  statusBox.textContent = text;
 }
 
-function missionId() {
-  return currentMissionId;
+function badge(label, cls) {
+  return `<span class="badge ${cls}">${label}</span>`;
 }
 
-function setMissionStatus(text) {
-  document.getElementById('missionStatus').textContent = text;
+async function loadSystemStatus() {
+  const health = await fetch('/health').then((r) => r.ok ? r.json() : null).catch(() => null);
+  document.getElementById('healthV').innerHTML = health ? badge('ok', 'ok') : badge('error', 'bad');
+
+  const readyResp = await fetch('/ready').catch(() => null);
+  if (readyResp && readyResp.ok) {
+    document.getElementById('readyV').innerHTML = badge('ready', 'ok');
+  } else {
+    document.getElementById('readyV').innerHTML = badge('not ready', 'warn');
+  }
+
+  const rpi = await fetch('/rpi/status').then((r) => r.ok ? r.json() : null).catch(() => null);
+  if (rpi && rpi.connected) {
+    document.getElementById('rpiV').innerHTML = `${badge('connected', 'ok')} <span class="mono">${rpi.base_url}</span>`;
+  } else if (rpi) {
+    document.getElementById('rpiV').innerHTML = `${badge('disconnected', 'bad')} <span class="mono">${rpi.base_url || '-'}</span>`;
+  } else {
+    document.getElementById('rpiV').innerHTML = badge('unavailable', 'bad');
+  }
 }
 
-function formatWallTime(iso) {
-  if (!iso) return '—';
-  const dt = new Date(iso);
-  if (Number.isNaN(dt.getTime())) return iso;
-  return dt.toLocaleString('ru-RU');
+async function checkRpiConnection(showStatus = true) {
+  const rpi = await fetch('/rpi/status').then((r) => r.ok ? r.json() : null).catch(() => null);
+  if (rpi && rpi.connected) {
+    rpiConnStatus.textContent = 'канал активен';
+    rpiConnStatus.style.color = '#86efac';
+    if (showStatus) {
+      setStatus('Подключение к RaspberryPi установлено.');
+    }
+    return true;
+  }
+  rpiConnStatus.textContent = 'канал недоступен';
+  rpiConnStatus.style.color = '#fca5a5';
+  if (showStatus) {
+    const reason = rpi && rpi.detail ? rpi.detail : 'RaspberryPi недоступен';
+    setStatus(reason);
+  }
+  return false;
 }
 
-function resetAlertView() {
-  currentAlert = null;
-  lastRenderedAlertId = '';
-  document.getElementById('emptyState').style.display = 'block';
-  const frame = document.getElementById('alertFrame');
-  frame.style.display = 'none';
-  frame.removeAttribute('data-alert-id');
-  document.getElementById('bboxLayer').innerHTML = '';
-  document.getElementById('metaTime').textContent = '—';
-  document.getElementById('metaStatus').textContent = '—';
-  document.getElementById('metaScore').textContent = '—';
-  resetZoomPan();
+function renderMissionOptions(missions) {
+  missionSelect.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  placeholder.textContent = missions.length ? 'Выберите миссию' : 'Миссии не найдены';
+  missionSelect.appendChild(placeholder);
+
+  for (const mission of missions) {
+    const option = document.createElement('option');
+    option.value = mission.mission_id;
+    option.textContent = mission.name ? `${mission.mission_id} — ${mission.name}` : mission.mission_id;
+    missionSelect.appendChild(option);
+  }
+  missionsMeta.textContent = missions.length
+    ? `Доступно миссий на RPi: ${missions.length}`
+    : 'Каталог пустой.';
 }
 
-function applyViewportTransform() {
-  document.getElementById('zoomContent').style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomScale})`;
-}
-
-function clampPan() {
-  const frameWrap = document.querySelector('.frame-wrap');
-  const zoomContent = document.getElementById('zoomContent');
-  if (!frameWrap || !zoomContent) return;
-  const viewportW = frameWrap.clientWidth;
-  const viewportH = frameWrap.clientHeight;
-  const scaledW = zoomContent.clientWidth * zoomScale;
-  const scaledH = zoomContent.clientHeight * zoomScale;
-
-  const minX = Math.min(0, viewportW - scaledW);
-  const minY = Math.min(0, viewportH - scaledH);
-  panX = Math.max(minX, Math.min(0, panX));
-  panY = Math.max(minY, Math.min(0, panY));
-}
-
-function resetZoomPan() {
-  zoomScale = 1;
-  panX = 0;
-  panY = 0;
-  applyViewportTransform();
-}
-
-function setupMouseZoomAndPan() {
-  const frameWrap = document.querySelector('.frame-wrap');
-  if (!frameWrap) return;
-
-  frameWrap.addEventListener('wheel', (event) => {
-    event.preventDefault();
-    const prevScale = zoomScale;
-    const zoomIntensity = event.ctrlKey ? 0.012 : 0.009;
-    const nextScale = Math.max(
-      1,
-      Math.min(12, Number((prevScale * Math.exp(-event.deltaY * zoomIntensity)).toFixed(4))),
-    );
-    if (nextScale === prevScale) return;
-
-    const rect = frameWrap.getBoundingClientRect();
-    const cursorX = event.clientX - rect.left;
-    const cursorY = event.clientY - rect.top;
-    const worldX = (cursorX - panX) / prevScale;
-    const worldY = (cursorY - panY) / prevScale;
-
-    zoomScale = nextScale;
-    panX = cursorX - worldX * zoomScale;
-    panY = cursorY - worldY * zoomScale;
-    clampPan();
-    applyViewportTransform();
-  }, { passive: false });
-
-  frameWrap.addEventListener('mousedown', (event) => {
-    if (event.button !== 0) return;
-    if (zoomScale <= 1) return;
-    dragActive = true;
-    frameWrap.classList.add('dragging');
-    dragStartX = event.clientX - panX;
-    dragStartY = event.clientY - panY;
-  });
-
-  window.addEventListener('mousemove', (event) => {
-    if (!dragActive) return;
-    panX = event.clientX - dragStartX;
-    panY = event.clientY - dragStartY;
-    clampPan();
-    applyViewportTransform();
-  });
-
-  window.addEventListener('mouseup', () => {
-    dragActive = false;
-    frameWrap.classList.remove('dragging');
-  });
-
-  frameWrap.addEventListener('dblclick', () => {
-    resetZoomPan();
-  });
-
-  window.addEventListener('resize', () => {
-    clampPan();
-    applyViewportTransform();
-  });
-}
-
-async function startMissionFlow() {
-  const framesDir = document.getElementById('framesDir').value.trim();
-  if (!framesDir) {
-    alert('Укажите путь к папке с кадрами');
+async function loadMissionCatalog(showStatus = false) {
+  const connected = await checkRpiConnection(showStatus);
+  if (!connected) {
+    missionsMeta.textContent = 'Каталог недоступен: нет связи с RaspberryPi.';
+    missionSelect.innerHTML = '<option value="" selected disabled>Миссии недоступны</option>';
     return;
   }
-  const payload = {
-    source_name: 'pilot-mission',
-    fps: 2.0,
-    frames_dir: framesDir,
-    api_base: window.location.origin,
-  };
 
-  const response = await fetch(api + '/v1/missions/start-flow', {
+  const resp = await fetch('/rpi/missions').catch(() => null);
+  if (!resp || !resp.ok) {
+    missionsMeta.textContent = 'Не удалось загрузить каталог миссий.';
+    if (showStatus) {
+      setStatus('Ошибка загрузки каталога миссий.');
+    }
+    missionSelect.innerHTML = '<option value="" selected disabled>Ошибка загрузки</option>';
+    return;
+  }
+
+  const data = await resp.json().catch(() => ({ missions: [] }));
+  const missions = Array.isArray(data.missions) ? data.missions : [];
+  renderMissionOptions(missions);
+  if (showStatus) {
+    setStatus(`Каталог миссий загружен: ${missions.length}.`);
+  }
+}
+
+async function startMission() {
+  const rpiMissionId = missionSelect.value.trim();
+  if (!rpiMissionId) {
+    setStatus('Выбери миссию из каталога RaspberryPi.');
+    return;
+  }
+
+  setStatus('Запуск потока...');
+  const resp = await fetch('/predict/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ rpi_mission_id: rpiMissionId }),
   });
-  const data = await response.json();
-  if (!response.ok) {
-    setMissionStatus(data.detail || 'Ошибка запуска миссии');
+  const data = await resp.json().catch(() => ({}));
+
+  if (!resp.ok) {
+    setStatus(`Start failed (${resp.status}): ${data.detail || 'unknown error'}`);
     return;
   }
 
   currentMissionId = data.mission_id;
-  reportLoadedMissionId = '';
-  missionClosed = false;
-  setMissionStatus(`Миссия запущена: ${data.mission_id}`);
-  startStreamPolling();
-  await refreshAlerts();
+  missionV.textContent = `${data.mission_id} (source=${data.source_name})`;
+  renderStream(data.stream);
+  setStatus(`Поток запущен. mission_id=${data.mission_id}`);
+  startPolling();
 }
 
-async function completeMission() {
-  if (!missionId()) return;
-  const response = await fetch(api + `/v1/missions/${missionId()}/complete`, {
-    method: 'POST',
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    setMissionStatus(data.detail || 'Ошибка завершения миссии');
+async function stopMission() {
+  if (!currentMissionId) {
+    setStatus('Нет активной mission_id.');
     return;
   }
-  const completedFrameId = data.completed_frame_id ?? '—';
-  setMissionStatus(`Миссия завершена. Последний учтенный кадр: ${completedFrameId}`);
-  missionClosed = true;
-  if (data.report) {
-    setReportRow('rEpisodesTotal', data.report.episodes_total);
-    setReportRow('rEpisodesFound', data.report.episodes_found);
-    setReportRow('rRecall', data.report.recall_event);
-    setReportRow('rTtfc', data.report.ttfc_sec);
-    setReportRow('rAlertsTotal', data.report.alerts_total);
-    setReportRow('rConfirmed', data.report.alerts_confirmed);
-    setReportRow('rRejected', data.report.alerts_rejected);
-    setReportRow('rFpMin', data.report.fp_per_minute);
-  } else {
-    await loadReport();
-  }
-  stopStreamPolling();
-  resetAlertView();
-}
-
-function drawBboxes(alert) {
-  const frame = document.getElementById('alertFrame');
-  const layer = document.getElementById('bboxLayer');
-  layer.innerHTML = '';
-
-  const bboxes = (alert.bboxes && alert.bboxes.length) ? alert.bboxes : [alert.bbox];
-  if (!frame.naturalWidth || !frame.naturalHeight || !bboxes.length) {
+  const resp = await fetch(`/predict/${currentMissionId}/stop`, { method: 'POST' });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    setStatus(`Stop failed (${resp.status}): ${data.detail || 'unknown error'}`);
     return;
   }
-
-  const frameWidth = frame.clientWidth;
-  const frameHeight = frame.clientHeight;
-  const imageAspect = frame.naturalWidth / frame.naturalHeight;
-  const frameAspect = frameWidth / frameHeight;
-  const renderedWidth = imageAspect > frameAspect ? frameWidth : frameHeight * imageAspect;
-  const renderedHeight = imageAspect > frameAspect ? frameWidth / imageAspect : frameHeight;
-  const offsetX = (frameWidth - renderedWidth) / 2;
-  const offsetY = (frameHeight - renderedHeight) / 2;
-  const scaleX = renderedWidth / frame.naturalWidth;
-  const scaleY = renderedHeight / frame.naturalHeight;
-
-  bboxes.forEach((bboxRaw) => {
-    if (!bboxRaw || bboxRaw.length !== 4) return;
-    const parsed = normalizeBboxToPixels(bboxRaw, frame.naturalWidth, frame.naturalHeight);
-    if (!parsed) return;
-    const [x1, y1, x2, y2] = parsed;
-
-    const padPx = 8;
-    const left = Math.max(offsetX + x1 * scaleX - padPx, 0);
-    const top = Math.max(offsetY + y1 * scaleY - padPx, 0);
-    const right = Math.min(offsetX + x2 * scaleX + padPx, frameWidth);
-    const bottom = Math.min(offsetY + y2 * scaleY + padPx, frameHeight);
-
-    const width = Math.max(right - left, 3);
-    const height = Math.max(bottom - top, 3);
-    const box = document.createElement('div');
-    box.className = 'bbox-item';
-    box.style.left = `${left}px`;
-    box.style.top = `${top}px`;
-    box.style.width = `${width}px`;
-    box.style.height = `${height}px`;
-    layer.appendChild(box);
-  });
+  renderStream(data.stream);
+  setStatus(`Поток остановлен. status=${data.status}`);
+  stopPolling();
 }
 
-function normalizeBboxToPixels(raw, imageWidth, imageHeight) {
-  const values = raw.map((item) => Number(item));
-  if (values.some((item) => Number.isNaN(item))) return null;
-  let [x1, y1, x2, y2] = values;
-
-  const maxValue = Math.max(Math.abs(x1), Math.abs(y1), Math.abs(x2), Math.abs(y2));
-  const looksNormalized = maxValue <= 1.5;
-  if (looksNormalized) {
-    x1 *= imageWidth;
-    x2 *= imageWidth;
-    y1 *= imageHeight;
-    y2 *= imageHeight;
-  }
-
-  x1 = Math.max(0, Math.min(x1, imageWidth));
-  y1 = Math.max(0, Math.min(y1, imageHeight));
-  x2 = Math.max(0, Math.min(x2, imageWidth));
-  y2 = Math.max(0, Math.min(y2, imageHeight));
-  if (x2 <= x1 || y2 <= y1) return null;
-  return [x1, y1, x2, y2];
-}
-
-function updateAlertMeta(alert) {
-  document.getElementById('metaTime').textContent = formatWallTime(alert.alert_time_iso);
-  document.getElementById('metaStatus').textContent = alert.status;
-  document.getElementById('metaScore').textContent = String(alert.score ?? '—');
-}
-
-function renderAlert(alert, forceImageReload = false) {
-  currentAlert = alert;
-  if (!alertSeenAt.has(alert.alert_id)) {
-    alertSeenAt.set(alert.alert_id, nowSec());
-  }
-
-  document.getElementById('emptyState').style.display = 'none';
-  const frame = document.getElementById('alertFrame');
-  frame.style.display = 'block';
-  const frameUrl = `/v1/alerts/${alert.alert_id}/frame`;
-  const shouldReloadImage = forceImageReload || frame.dataset.alertId !== alert.alert_id;
-  if (shouldReloadImage) {
-    frame.onload = () => drawBboxes(alert);
-    frame.src = frameUrl;
-    frame.dataset.alertId = alert.alert_id;
-    resetZoomPan();
-  } else {
-    drawBboxes(alert);
-  }
-  updateAlertMeta(alert);
-  lastRenderedAlertId = alert.alert_id;
-}
-
-async function refreshAlerts() {
-  if (missionClosed) {
+function renderStream(stream) {
+  if (!stream) {
+    streamDetails.textContent = 'stream state unavailable';
     return;
   }
-  if (!missionId()) {
-    resetAlertView();
+  const parts = [
+    `running=${String(stream.running)}`,
+    `session_id=${stream.session_id || '-'}`,
+    `rtsp_url=${stream.rtsp_url || '-'}`,
+    `rpi_mission_id=${stream.rpi_mission_id || '-'}`,
+    `error=${stream.error || '-'}`,
+  ];
+  streamDetails.textContent = parts.join('\n');
+}
+
+async function pollMission() {
+  if (!currentMissionId) return;
+  const resp = await fetch(`/predict/${currentMissionId}`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    setStatus(`Status failed (${resp.status}): ${data.detail || 'unknown error'}`);
     return;
   }
-  const response = await fetch(api + `/v1/alerts?mission_id=${encodeURIComponent(missionId())}&status=queued`);
-  if (response.status === 404) {
-    missionClosed = true;
-    stopStreamPolling();
-    currentMissionId = '';
-    resetAlertView();
-    setMissionStatus('Сессия недоступна после перезапуска сервиса. Запустите новую миссию.');
-    return;
-  }
-  if (!response.ok) {
-    setMissionStatus('Ошибка получения очереди алертов');
-    return;
-  }
-  const alerts = await response.json();
-  if (!alerts.length) {
-    resetAlertView();
-    const stream = await fetchStreamStatus();
-    if (stream && stream.running) {
-      setMissionStatus(`Миссия в работе: ${stream.processed_frames}/${stream.total_frames} кадров`);
-    }
-    return;
-  }
-  const headAlert = alerts[0];
-  if (lastRenderedAlertId === headAlert.alert_id) {
-    currentAlert = headAlert;
-    drawBboxes(headAlert);
-    updateAlertMeta(headAlert);
-    return;
-  }
-  renderAlert(headAlert, true);
-}
-
-async function fetchStreamStatus() {
-  if (!missionId()) return null;
-  const response = await fetch(api + `/v1/missions/${missionId()}/stream/status`);
-  if (response.status === 404) {
-    missionClosed = true;
-    stopStreamPolling();
-    currentMissionId = '';
-    resetAlertView();
-    setMissionStatus('Сессия недоступна после перезапуска сервиса. Запустите новую миссию.');
-    return null;
-  }
-  if (!response.ok) return null;
-  return response.json();
-}
-
-function stopStreamPolling() {
-  if (streamPollTimer) {
-    clearInterval(streamPollTimer);
-    streamPollTimer = null;
+  renderStream(data.stream);
+  if (data.status) {
+    setStatus(`mission=${data.mission_id}, status=${data.status}`);
   }
 }
 
-function startStreamPolling() {
-  stopStreamPolling();
-  streamPollTimer = setInterval(async () => {
-    const stream = await fetchStreamStatus();
-    if (!stream) return;
-    if (stream.error) {
-      setMissionStatus(`Ошибка потока: ${stream.error}`);
-      stopStreamPolling();
-      return;
-    }
-    if (stream.running) {
-      setMissionStatus(`Миссия в работе: ${stream.processed_frames}/${stream.total_frames} кадров`);
-      return;
-    }
-    if (stream.total_frames > 0 && stream.processed_frames >= stream.total_frames) {
-      setMissionStatus(`Миссия завершена: ${stream.processed_frames}/${stream.total_frames} кадров`);
-      if (reportLoadedMissionId !== missionId()) {
-        await loadReport();
-        reportLoadedMissionId = missionId();
-      }
-      stopStreamPolling();
-    }
-  }, 1000);
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
 }
 
-async function reviewCurrent(action) {
-  if (!currentAlert) return;
-
-  const seenAt = alertSeenAt.get(currentAlert.alert_id) || nowSec();
-  const reaction = Math.max(nowSec() - seenAt, 0);
-  const reviewedAtSec = Number((Number(currentAlert.ts_sec) + reaction).toFixed(3));
-
-  await fetch(api + `/v1/alerts/${currentAlert.alert_id}/${action}`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      reviewed_by: 'operator',
-      reviewed_at_sec: reviewedAtSec,
-      decision_reason: action === 'confirm' ? 'manual confirm' : 'manual reject',
-    }),
-  });
-
-  await refreshAlerts();
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(pollMission, 1500);
 }
 
-function setReportRow(id, value) {
-  document.getElementById(id).textContent = value ?? '—';
-}
+document.getElementById('startBtn').addEventListener('click', startMission);
+document.getElementById('stopBtn').addEventListener('click', stopMission);
+document.getElementById('refreshBtn').addEventListener('click', async () => {
+  await loadSystemStatus();
+  await loadMissionCatalog(true);
+  await pollMission();
+});
+checkRpiBtn.addEventListener('click', async () => {
+  await loadMissionCatalog(true);
+});
 
-async function loadReport() {
-  if (!missionId()) return;
-  const response = await fetch(api + `/v1/missions/${missionId()}/report`);
-  const report = await response.json();
-
-  setReportRow('rEpisodesTotal', report.episodes_total);
-  setReportRow('rEpisodesFound', report.episodes_found);
-  setReportRow('rRecall', report.recall_event);
-  setReportRow('rTtfc', report.ttfc_sec);
-  setReportRow('rAlertsTotal', report.alerts_total);
-  setReportRow('rConfirmed', report.alerts_confirmed);
-  setReportRow('rRejected', report.alerts_rejected);
-  setReportRow('rFpMin', report.fp_per_minute);
-}
-
-setInterval(() => {
-  refreshAlerts();
-}, 1200);
-
-setupMouseZoomAndPan();
+loadSystemStatus();
+loadMissionCatalog();
 </script>
 </body>
 </html>

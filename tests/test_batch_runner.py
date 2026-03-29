@@ -20,8 +20,8 @@ from rescue_ai.application.batch_runner import (
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent
 from rescue_ai.domain.ports import ReportMetadataPayload
 from rescue_ai.domain.value_objects import AlertRuleConfig, AlertStatus
-from rescue_ai.infrastructure.artifact_storage import LocalArtifactStorage
 from rescue_ai.infrastructure.status_store import JsonStatusStore
+from tests.support.in_memory_repositories import InMemoryArtifactStorage
 
 
 class FakeSource:
@@ -166,14 +166,13 @@ def _runner(
     mission_input: MissionInput,
     detector: FakeDetector | ErrorDetector,
     statuses: JsonStatusStore,
-    temp_dir: str,
     engine: FakeEngine,
 ) -> MissionBatchRunner:
     return MissionBatchRunner(
         MissionBatchRunnerDeps(
             source=FakeSource(mission_input),
             detector=detector,
-            artifacts=LocalArtifactStorage(root=Path(temp_dir) / "artifacts"),
+            artifacts=InMemoryArtifactStorage(),
             statuses=statuses,
             engine_factory=FakeEngineFactory(engine),
         )
@@ -230,7 +229,6 @@ def test_batch_skip_when_completed_and_not_force() -> None:
             ),
             detector=FakeDetector(),
             statuses=status_store,
-            temp_dir=temp_dir,
             engine=FakeEngine(reviewed=[]),
         )
         result = runner.run(_request())
@@ -248,7 +246,6 @@ def test_batch_no_gt_does_not_auto_review_and_marks_kpi_not_applicable() -> None
             ),
             detector=FakeDetector(),
             statuses=JsonStatusStore(path=Path(temp_dir) / "runs.json"),
-            temp_dir=temp_dir,
             engine=engine,
         )
 
@@ -272,7 +269,6 @@ def test_batch_partial_status_on_corrupted_rate() -> None:
             ),
             detector=FakeDetector(),
             statuses=status_store,
-            temp_dir=temp_dir,
             engine=FakeEngine(reviewed=[]),
         )
 
@@ -293,7 +289,6 @@ def test_batch_failed_on_empty_input() -> None:
             mission_input=MissionInput(source_uri="s", frames=[], gt_available=True),
             detector=FakeDetector(),
             statuses=JsonStatusStore(path=Path(temp_dir) / "runs.json"),
-            temp_dir=temp_dir,
             engine=FakeEngine(reviewed=[]),
         )
 
@@ -311,7 +306,6 @@ def test_force_rerun_sets_running_reason() -> None:
             ),
             detector=FakeDetector(),
             statuses=status_store,
-            temp_dir=temp_dir,
             engine=FakeEngine(reviewed=[]),
         )
 
@@ -335,7 +329,6 @@ def test_detector_error_yields_partial_instead_of_failed() -> None:
             ),
             detector=ErrorDetector(),
             statuses=status_store,
-            temp_dir=temp_dir,
             engine=FakeEngine(reviewed=[]),
         )
         result = runner.run(_request(force=True))
@@ -360,7 +353,6 @@ def test_partial_reason_for_corrupted_input_without_force() -> None:
             ),
             detector=FakeDetector(),
             statuses=status_store,
-            temp_dir=temp_dir,
             engine=FakeEngine(reviewed=[]),
         )
         result = runner.run(_request(force=False))

@@ -2,16 +2,14 @@
 
 Supports four stages that run sequentially in Airflow:
 
-    data  →  train  →  validate  →  inference
+    data  ->  train  ->  validate  ->  inference
 
 Usage::
 
     python -m rescue_ai.interfaces.cli.batch \\
         --stage data \\
         --mission-id demo_mission \\
-        --ds 2026-03-01 \\
-        --model-version yolov8n_baseline_multiscale \\
-        --code-version dev
+        --ds 2026-03-01
 """
 
 from __future__ import annotations
@@ -33,48 +31,68 @@ from rescue_ai.application.pipeline_stages import (
     run_validate_stage,
 )
 from rescue_ai.config import get_settings
-from rescue_ai.domain.ports import ReportMetadataPayload
+from rescue_ai.domain.ports import DetectorPort, ReportMetadataPayload
 from rescue_ai.domain.value_objects import AlertRuleConfig
 from rescue_ai.infrastructure.artifact_storage import (
-    LocalArtifactStorage,
     S3ArtifactBackendSettings,
     S3ArtifactStorage,
+    build_s3_storage,
 )
 from rescue_ai.infrastructure.contract_loader import load_stream_contract
-from rescue_ai.infrastructure.local_mission_source import LocalMissionSource
-from rescue_ai.infrastructure.memory_repositories import (
-    InMemoryAlertRepository,
-    InMemoryArtifactStorage,
-    InMemoryDatabase,
-    InMemoryFrameEventRepository,
-    InMemoryMissionRepository,
-)
 from rescue_ai.infrastructure.pilot_engine import PilotMissionEngine
-from rescue_ai.infrastructure.stage_store import LocalStageStore, S3StageStore
-from rescue_ai.infrastructure.status_store import JsonStatusStore, PostgresStatusStore
+from rescue_ai.infrastructure.postgres_connection import (
+    PostgresDatabase,
+    dsn_with_search_path,
+)
+from rescue_ai.infrastructure.postgres_repositories import (
+    EpisodeProjectionSettings,
+    PostgresAlertRepository,
+    PostgresFrameEventRepository,
+    PostgresMissionRepository,
+)
+from rescue_ai.infrastructure.s3_mission_source import S3MissionSource
+from rescue_ai.infrastructure.stage_store import S3StageStore
+from rescue_ai.infrastructure.status_store import PostgresStatusStore
 from rescue_ai.infrastructure.yolo_detector import YoloDetector
 
-# ── CLI argument parsing ────────────────────────────────────────
-
-
 STAGES = ("data", "train", "validate", "inference")
+DEFAULT_MODEL_VERSION = "yolov8n_baseline_multiscale"
+DEFAULT_CODE_VERSION = "main"
+DEFAULT_BATCH_OUTPUT_SUFFIX = "batch"
+DEFAULT_SOURCE_FPS = 6.0
 
 
 class PilotMissionEngineFactory:
-    """Creates isolated in-memory pilot engine instances per run."""
+    """Creates isolated Postgres-backed mission engine instances per run."""
 
     def create(
         self,
         alert_rules: AlertRuleConfig,
         report_metadata: ReportMetadataPayload,
     ) -> PilotMissionEngine:
-        db = InMemoryDatabase()
+        settings = get_settings()
+        dsn = settings.database.dsn.strip()
+        if not dsn:
+            raise ValueError("DB_DSN is required")
+        app_dsn = dsn_with_search_path(dsn, "app")
+
+        postgres_db = PostgresDatabase(dsn=app_dsn)
+        episode_settings = EpisodeProjectionSettings(
+            gt_gap_end_sec=alert_rules.gt_gap_end_sec,
+            match_tolerance_sec=alert_rules.match_tolerance_sec,
+        )
         pilot = PilotService(
             dependencies=PilotService.Dependencies(
-                mission_repository=InMemoryMissionRepository(db),
-                alert_repository=InMemoryAlertRepository(db),
-                frame_event_repository=InMemoryFrameEventRepository(db),
-                artifact_storage=InMemoryArtifactStorage(),
+                mission_repository=PostgresMissionRepository(postgres_db),
+                alert_repository=PostgresAlertRepository(
+                    postgres_db,
+                    episode_settings=episode_settings,
+                ),
+                frame_event_repository=PostgresFrameEventRepository(
+                    postgres_db,
+                    episode_settings=episode_settings,
+                ),
+                artifact_storage=build_s3_storage(settings.storage),
             ),
             alert_rules=alert_rules,
         )
@@ -82,38 +100,11 @@ class PilotMissionEngineFactory:
         return PilotMissionEngine(pilot=pilot)
 
     def factory_name(self) -> str:
-        return "pilot-in-memory"
-
-
-def _is_remote_env(runtime_env: str) -> bool:
-    return runtime_env.strip().lower() in {
-        "shared",
-        "stage",
-        "staging",
-        "prod",
-        "production",
-    }
-
-
-def _batch_status_backend() -> str:
-    settings = get_settings()
-    configured = settings.batch.status_backend.strip().lower()
-    if configured:
-        return configured
-    return "postgres" if _is_remote_env(settings.batch.runtime_env) else "json"
-
-
-def _batch_artifact_backend() -> str:
-    settings = get_settings()
-    configured = settings.batch.artifact_backend.strip().lower()
-    if configured:
-        return configured
-    return "s3" if _is_remote_env(settings.batch.runtime_env) else "local"
+        return "pilot-postgres"
 
 
 def parse_args() -> argparse.Namespace:
     """Parse unified pipeline CLI arguments."""
-    settings = get_settings()
     parser = argparse.ArgumentParser(
         description="Rescue-AI ML pipeline (data/train/validate/inference)"
     )
@@ -122,74 +113,58 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--mission-id", required=True)
     parser.add_argument("--ds", required=True)
-    parser.add_argument("--model-version", default=settings.batch.model_version)
-    parser.add_argument("--code-version", default=settings.batch.code_version)
+    parser.add_argument("--model-version", default=DEFAULT_MODEL_VERSION)
+    parser.add_argument("--code-version", default=DEFAULT_CODE_VERSION)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--min-accuracy", type=float, default=0.75)
     return parser.parse_args()
 
 
-# ── Factory functions ───────────────────────────────────────────
-
-
-def build_stage_store():
-    """Build stage artifact store (local or S3) from settings."""
+def _build_s3_settings() -> S3ArtifactBackendSettings:
     settings = get_settings()
-    if _batch_artifact_backend() == "s3" and settings.storage.s3_bucket:
-        s3_settings = S3ArtifactBackendSettings(
-            endpoint=settings.storage.s3_endpoint,
-            region=settings.storage.s3_region,
-            access_key_id=settings.storage.s3_access_key_id,
-            secret_access_key=settings.storage.s3_secret_access_key,
-            bucket=settings.storage.s3_bucket,
-        )
-        return S3StageStore(s3_settings)
-    return LocalStageStore(root=settings.batch.artifact_root / "stages")
-
-
-def build_status_store():
-    """Build run status store based on environment configuration."""
-    settings = get_settings()
-    if _batch_status_backend() == "postgres":
-        dsn = settings.database.batch_dsn.strip()
-        if not dsn:
-            raise ValueError("BATCH_POSTGRES_DSN is required for postgres backend")
-        from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
-
-        return PostgresStatusStore(db=PostgresDatabase(dsn=dsn))
-    return JsonStatusStore(path=settings.batch.status_path)
-
-
-def build_artifact_store():
-    """Build artifact store based on environment configuration."""
-    settings = get_settings()
-    if _batch_artifact_backend() == "s3":
-        bucket = settings.storage.s3_bucket
-        if not bucket:
-            raise ValueError("ARTIFACTS_S3_BUCKET is required for s3 backend")
-        s3_settings = S3ArtifactBackendSettings(
-            endpoint=settings.storage.s3_endpoint,
-            region=settings.storage.s3_region,
-            access_key_id=settings.storage.s3_access_key_id,
-            secret_access_key=settings.storage.s3_secret_access_key,
-            bucket=bucket,
-            strict=settings.storage.strict,
-        )
-        fallback = LocalArtifactStorage(root=settings.batch.artifact_root)
-        return S3ArtifactStorage(settings=s3_settings, fallback_storage=fallback)
-    return LocalArtifactStorage(root=settings.batch.artifact_root)
-
-
-def build_source() -> LocalMissionSource:
-    """Build local mission source for batch processing."""
-    settings = get_settings()
-    return LocalMissionSource(
-        root_dir=settings.batch.mission_root,
-        fps=settings.batch.source_fps,
+    if not settings.storage.s3_bucket:
+        raise ValueError("ARTIFACTS_S3_BUCKET is required for batch pipeline")
+    return S3ArtifactBackendSettings(
+        endpoint=settings.storage.s3_endpoint,
+        region=settings.storage.s3_region,
+        access_key_id=settings.storage.s3_access_key_id,
+        secret_access_key=settings.storage.s3_secret_access_key,
+        bucket=settings.storage.s3_bucket,
     )
 
 
-def build_runner(detector) -> MissionBatchRunner:
+def build_stage_store() -> S3StageStore:
+    """Build S3 stage artifact store from settings."""
+    return S3StageStore(_build_s3_settings())
+
+
+def build_status_store() -> PostgresStatusStore:
+    """Build Postgres run status store."""
+    settings = get_settings()
+    dsn = settings.database.dsn.strip()
+    if not dsn:
+        raise ValueError("DB_DSN is required")
+    app_dsn = dsn_with_search_path(dsn, "app")
+
+    return PostgresStatusStore(db=PostgresDatabase(dsn=app_dsn))
+
+
+def build_artifact_store() -> S3ArtifactStorage:
+    """Build S3 artifact store for batch outputs."""
+    return S3ArtifactStorage(settings=_build_s3_settings())
+
+
+def build_source() -> S3MissionSource:
+    """Build S3 mission source for batch processing."""
+    settings = get_settings()
+    return S3MissionSource(
+        settings=_build_s3_settings(),
+        source_prefix=settings.storage.s3_prefix,
+        fps=DEFAULT_SOURCE_FPS,
+    )
+
+
+def build_runner(detector: DetectorPort) -> MissionBatchRunner:
     """Build batch runner with all dependencies wired."""
     return MissionBatchRunner(
         MissionBatchRunnerDeps(
@@ -202,17 +177,20 @@ def build_runner(detector) -> MissionBatchRunner:
     )
 
 
-# ── Main ────────────────────────────────────────────────────────
-
-
 def main() -> None:
     """Run a single pipeline stage."""
     args = parse_args()
     settings = get_settings()
 
     store = build_stage_store()
+    root_prefix = settings.storage.s3_prefix.strip("/")
+    batch_prefix = (
+        f"{root_prefix}/{DEFAULT_BATCH_OUTPUT_SUFFIX}"
+        if root_prefix
+        else DEFAULT_BATCH_OUTPUT_SUFFIX
+    )
     paths = PipelinePaths(
-        prefix=settings.batch.s3_prefix,
+        prefix=batch_prefix,
         mission_id=args.mission_id,
         ds=args.ds,
         model_version=args.model_version,
@@ -234,7 +212,7 @@ def main() -> None:
             config=contract.inference, model_version=args.model_version
         )
 
-        def _model_probe():
+        def _model_probe() -> dict[str, object]:
             detector.warmup()
             return {
                 "runtime": detector.runtime_name(),
@@ -268,14 +246,14 @@ def main() -> None:
 
     elif args.stage == "inference":
 
-        def _runner_factory():
+        def _runner_factory() -> tuple[MissionBatchRunner, BatchRunRequest]:
             contract = load_stream_contract(
                 service_version=settings.app.service_version
             )
-            detector = YoloDetector(
+            det = YoloDetector(
                 config=contract.inference, model_version=args.model_version
             )
-            runner = build_runner(detector=detector)
+            runner = build_runner(detector=det)
             request = BatchRunRequest(
                 mission_id=args.mission_id,
                 ds=args.ds,

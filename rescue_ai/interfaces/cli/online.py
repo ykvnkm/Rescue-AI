@@ -1,19 +1,14 @@
-"""Online API server entry point with optional Postgres readiness checks."""
+"""Online API server entry point."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Callable, TypedDict
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from typing import Callable
 
 import uvicorn
 
-from rescue_ai.application.frame_source import FrameSourceService
 from rescue_ai.application.pilot_service import PilotService
-from rescue_ai.application.stream_orchestrator import (
-    StreamConfig,
-    StreamOrchestrator,
-    StreamState,
-)
 from rescue_ai.config import Settings, get_settings
 from rescue_ai.domain.ports import (
     AlertRepository,
@@ -21,106 +16,117 @@ from rescue_ai.domain.ports import (
     MissionRepository,
 )
 from rescue_ai.domain.value_objects import AlertRuleConfig
-from rescue_ai.infrastructure.annotation_index import build_annotation_index
-from rescue_ai.infrastructure.artifact_storage import build_artifact_storage
-from rescue_ai.infrastructure.contract_loader import (
-    StreamContract,
-    load_alert_rules_and_metadata,
-    load_stream_contract,
+from rescue_ai.infrastructure.artifact_storage import build_s3_storage
+from rescue_ai.infrastructure.contract_loader import load_alert_rules_and_metadata
+from rescue_ai.infrastructure.postgres_connection import (
+    dsn_with_search_path,
+    wait_for_postgres,
 )
-from rescue_ai.infrastructure.http_publisher import HttpFramePublisher
-from rescue_ai.infrastructure.memory_repositories import (
-    InMemoryAlertRepository,
-    InMemoryDatabase,
-    InMemoryFrameEventRepository,
-    InMemoryMissionRepository,
-)
-from rescue_ai.infrastructure.postgres_connection import wait_for_postgres
-from rescue_ai.infrastructure.yolo_detector import YoloDetector
+from rescue_ai.infrastructure.rpi_client import RpiClient
 from rescue_ai.interfaces.api.dependencies import ApiRuntime, set_runtime
 
 
-class StreamOptions(TypedDict):
-    """External options accepted when creating stream configuration."""
+@dataclass
+class RpiStreamState:
+    """RPi streaming session state bound to one mission."""
 
-    frames_dir: str
-    annotations_path: str | None
-    fps: float
-    api_base: str
+    mission_id: str
+    rpi_mission_id: str
+    session_id: str
+    rtsp_url: str
+    target_fps: float
+    running: bool
+    started_at: str
+    last_stats: dict[str, object] | None = None
+    error: str | None = None
 
 
 class DetectionStreamController:
-    """Owns the stream orchestrator and exposes stream lifecycle methods."""
+    """Controls Raspberry Pi streaming sessions for mission runs."""
 
-    def __init__(self, *, http_timeout_sec: float, service_version: str) -> None:
-        self._frame_source = FrameSourceService()
-        self._service_version = service_version
-        self._orchestrator = StreamOrchestrator(
-            detector_factory=YoloDetector,
-            frame_publisher=HttpFramePublisher(timeout_sec=http_timeout_sec),
-            frame_source=self._frame_source,
-        )
+    def __init__(self, settings: Settings) -> None:
+        self._rpi_settings = settings.rpi
+        self._sessions: dict[str, RpiStreamState] = {}
 
-    def build_config(
+    def start(
         self,
+        *,
         mission_id: str,
-        options: StreamOptions,
-        contract: StreamContract | None = None,
-        frame_source: FrameSourceService | None = None,
-    ) -> StreamConfig:
-        """Build a StreamConfig from mission options and contract defaults."""
-        resolved_contract = contract or load_stream_contract(
-            service_version=self._service_version
+        rpi_mission_id: str,
+        target_fps: float,
+    ) -> RpiStreamState:
+        current = self._sessions.get(mission_id)
+        if current is not None and current.running:
+            raise ValueError("Stream already running for mission")
+
+        session = self._client().start_stream(
+            mission_id=rpi_mission_id,
+            target_fps=target_fps,
+            timeout_sec=self._rpi_settings.timeout_sec,
         )
-        source = frame_source or self._frame_source
-
-        frames_path = Path(options["frames_dir"])
-        if not frames_path.exists() or not frames_path.is_dir():
-            raise ValueError(f"frames dir not found: {frames_path}")
-
-        frame_files = source.list_frame_files(frames_path)
-        if not frame_files:
-            raise ValueError("no frames found")
-
-        annotations = build_annotation_index(
-            frames_dir=frames_path,
-            explicit_path=options["annotations_path"],
-        )
-
-        fps = options["fps"]
-        if fps <= 0:
-            fps = resolved_contract.dataset_fps
-
-        return StreamConfig(
+        state = RpiStreamState(
             mission_id=mission_id,
-            frame_files=frame_files,
-            fps=fps,
-            api_base=options["api_base"],
-            annotations=annotations,
-            inference=resolved_contract.inference,
-            min_detections_per_frame=resolved_contract.min_detections_per_frame,
+            rpi_mission_id=rpi_mission_id,
+            session_id=session.session_id,
+            rtsp_url=session.rtsp_url,
+            target_fps=target_fps,
+            running=True,
+            started_at=datetime.now(timezone.utc).isoformat(),
         )
+        self._sessions[mission_id] = state
+        return state
 
-    def start(self, config: StreamConfig) -> StreamState:
-        """Start a detection stream with the given configuration."""
-        return self._orchestrator.start_stream(config)
+    def stop(self, mission_id: str) -> RpiStreamState | None:
+        state = self._sessions.get(mission_id)
+        if state is None:
+            return None
 
-    def stop(self, mission_id: str) -> StreamState | None:
-        """Request graceful stop of the stream for a mission."""
-        return self._orchestrator.stop_stream(mission_id)
+        if state.running:
+            try:
+                self._client().stop_stream(
+                    state.session_id, timeout_sec=self._rpi_settings.timeout_sec
+                )
+            except (ValueError, RuntimeError, OSError) as error:
+                state.error = f"{type(error).__name__}: {error}"
 
-    def wait_stopped(
-        self, mission_id: str, timeout_sec: float = 3.0
-    ) -> StreamState | None:
-        """Block until the stream has stopped or timeout expires."""
-        return self._orchestrator.wait_stream_stopped(
-            mission_id=mission_id,
-            timeout_sec=timeout_sec,
-        )
+        state.running = False
+        return state
 
-    def get_state(self, mission_id: str) -> StreamState | None:
-        """Return current stream state for a mission, or None."""
-        return self._orchestrator.get_stream_state(mission_id)
+    def get_state(self, mission_id: str) -> RpiStreamState | None:
+        state = self._sessions.get(mission_id)
+        if state is None:
+            return None
+        if not state.running:
+            return state
+
+        try:
+            stats = self._client().session_stats(
+                state.session_id, timeout_sec=self._rpi_settings.timeout_sec
+            )
+            state.last_stats = stats
+            state.error = None
+        except (ValueError, RuntimeError, OSError) as error:
+            state.error = f"{type(error).__name__}: {error}"
+        return state
+
+    def as_payload(self, mission_id: str) -> dict[str, object] | None:
+        state = self.get_state(mission_id)
+        if state is None:
+            return None
+        return asdict(state)
+
+    def check_rpi_health(self) -> dict[str, object]:
+        return self._client().health(timeout_sec=self._rpi_settings.timeout_sec)
+
+    def list_rpi_missions(self) -> list[dict[str, str]]:
+        catalog = self._client().catalog(timeout_sec=self._rpi_settings.timeout_sec)
+        return [
+            {"mission_id": mission.mission_id, "name": mission.name}
+            for mission in catalog.missions
+        ]
+
+    def _client(self) -> RpiClient:
+        return RpiClient(self._rpi_settings)
 
 
 def build_api_runtime() -> (
@@ -132,9 +138,13 @@ def build_api_runtime() -> (
         service_version=settings.app.service_version
     )
     mission_repository, alert_repository, frame_repository, reset_hook = (
-        _build_repositories(alert_rules=alert_rules, settings=settings)
+        _build_repositories(
+            alert_rules=alert_rules,
+            settings=settings,
+        )
     )
-    artifact_storage = build_artifact_storage(settings.storage)
+
+    artifact_storage = build_s3_storage(settings.storage)
 
     pilot_service = PilotService(
         dependencies=PilotService.Dependencies(
@@ -147,10 +157,7 @@ def build_api_runtime() -> (
     )
     pilot_service.set_report_metadata(report_metadata)
 
-    stream_controller = DetectionStreamController(
-        http_timeout_sec=settings.detection.http_timeout_sec,
-        service_version=settings.app.service_version,
-    )
+    stream_controller = DetectionStreamController(settings=settings)
     return pilot_service, stream_controller, reset_hook
 
 
@@ -174,16 +181,12 @@ def main() -> None:
 
 
 def _prepare_postgres_backend() -> None:
-    """Wait for Postgres readiness when postgres backend is enabled."""
     settings = get_settings()
-    if settings.api.repository_backend != "postgres":
-        return
-
     dsn = settings.database.dsn
     if not dsn:
-        raise RuntimeError("Postgres backend requires DB_DSN")
-
-    wait_for_postgres(dsn, timeout_sec=settings.api.postgres_ready_timeout_sec)
+        raise RuntimeError("DB_DSN is required")
+    app_dsn = dsn_with_search_path(dsn, "app")
+    wait_for_postgres(app_dsn, timeout_sec=settings.api.postgres_ready_timeout_sec)
 
 
 def _build_repositories(
@@ -196,51 +199,30 @@ def _build_repositories(
     FrameEventRepository,
     Callable[[], None],
 ]:
-    backend = settings.api.repository_backend
+    from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
+    from rescue_ai.infrastructure.postgres_repositories import (
+        EpisodeProjectionSettings,
+        PostgresAlertRepository,
+        PostgresFrameEventRepository,
+        PostgresMissionRepository,
+    )
 
-    if backend == "memory":
-        memory_db = InMemoryDatabase()
-        return (
-            InMemoryMissionRepository(memory_db),
-            InMemoryAlertRepository(memory_db),
-            InMemoryFrameEventRepository(memory_db),
-            lambda: _reset_memory_database(memory_db),
-        )
+    dsn = settings.database.dsn.strip()
+    if not dsn:
+        raise ValueError("DB_DSN is required")
+    app_dsn = dsn_with_search_path(dsn, "app")
 
-    if backend == "postgres":
-        from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
-        from rescue_ai.infrastructure.postgres_repositories import (
-            EpisodeProjectionSettings,
-            PostgresAlertRepository,
-            PostgresFrameEventRepository,
-            PostgresMissionRepository,
-        )
-
-        dsn = settings.database.dsn.strip()
-        if not dsn:
-            raise ValueError("Postgres backend requires DB_DSN")
-
-        postgres_db = PostgresDatabase(dsn=dsn)
-        episode_settings = EpisodeProjectionSettings(
-            gt_gap_end_sec=alert_rules.gt_gap_end_sec,
-            match_tolerance_sec=alert_rules.match_tolerance_sec,
-        )
-        return (
-            PostgresMissionRepository(postgres_db),
-            PostgresAlertRepository(postgres_db, episode_settings=episode_settings),
-            PostgresFrameEventRepository(
-                postgres_db, episode_settings=episode_settings
-            ),
-            postgres_db.truncate_all,
-        )
-
-    raise ValueError("APP_REPOSITORY_BACKEND must be one of: memory, postgres")
-
-
-def _reset_memory_database(db: InMemoryDatabase) -> None:
-    db.missions.clear()
-    db.alerts.clear()
-    db.mission_frames.clear()
+    postgres_db = PostgresDatabase(dsn=app_dsn)
+    episode_settings = EpisodeProjectionSettings(
+        gt_gap_end_sec=alert_rules.gt_gap_end_sec,
+        match_tolerance_sec=alert_rules.match_tolerance_sec,
+    )
+    return (
+        PostgresMissionRepository(postgres_db),
+        PostgresAlertRepository(postgres_db, episode_settings=episode_settings),
+        PostgresFrameEventRepository(postgres_db, episode_settings=episode_settings),
+        postgres_db.truncate_all,
+    )
 
 
 if __name__ == "__main__":

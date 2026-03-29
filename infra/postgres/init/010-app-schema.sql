@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS missions (
     created_at  TIMESTAMPTZ NOT NULL,
     total_frames INTEGER NOT NULL,
     fps         DOUBLE PRECISION NOT NULL,
-    completed_frame_id INTEGER
+    completed_frame_id INTEGER,
+    slug        TEXT UNIQUE
 );
 CREATE INDEX IF NOT EXISTS ix_missions_status ON missions (status);
 

@@ -1,6 +1,7 @@
 services:
   api:
     build: .
+    restart: unless-stopped
     ports:
       - "${APP_PORT:-8000}:8000"
     env_file:
@@ -8,35 +9,35 @@ services:
     environment:
       APP_HOST: "0.0.0.0"
       APP_PORT: "8000"
-      APP_POSTGRES_HOST: "${APP_POSTGRES_HOST:-}"
-      APP_POSTGRES_PORT: "${APP_POSTGRES_PORT:-}"
-      APP_POSTGRES_DB: "${APP_POSTGRES_DB:-}"
-      APP_POSTGRES_USER: "${APP_POSTGRES_USER:-}"
-      APP_POSTGRES_PASSWORD: "${APP_POSTGRES_PASSWORD:-}"
-      APP_POSTGRES_AUTO_MIGRATE: "${APP_POSTGRES_AUTO_MIGRATE:-true}"
       APP_POSTGRES_READY_TIMEOUT_SEC: "${APP_POSTGRES_READY_TIMEOUT_SEC:-30}"
+      DB_DSN: "postgresql://${APP_POSTGRES_USER}:${APP_POSTGRES_PASSWORD}@postgres:5432/${APP_POSTGRES_DB:-rescue}"
+      BATCH_POSTGRES_DSN: "postgresql://${APP_POSTGRES_USER}:${APP_POSTGRES_PASSWORD}@postgres:5432/${APP_POSTGRES_DB:-rescue}"
     volumes:
-      - "${MISSION_DIR:-./artifacts/public}:/data/mission:ro"
-      - "./runtime/artifacts:/app/runtime/artifacts"
       - model_cache:/app/runtime/models
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   postgres:
     image: postgres:16
-    profiles: ["postgres"]
     restart: unless-stopped
     environment:
-      POSTGRES_DB: "${APP_POSTGRES_DB}"
+      POSTGRES_DB: "${APP_POSTGRES_DB:-rescue}"
       POSTGRES_USER: "${APP_POSTGRES_USER}"
       POSTGRES_PASSWORD: "${APP_POSTGRES_PASSWORD}"
+      POSTGRES_APP_USER: "${APP_POSTGRES_USER}"
+      POSTGRES_APP_PASSWORD: "${APP_POSTGRES_PASSWORD}"
+      POSTGRES_AIRFLOW_PASSWORD: "${APP_POSTGRES_PASSWORD}"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 10
     ports:
-      - "5432:5432"
+      - "${APP_POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
 
 volumes:
   model_cache:

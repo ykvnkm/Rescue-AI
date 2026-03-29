@@ -1,4 +1,4 @@
-"""In-memory repository implementations for testing."""
+"""In-memory repository implementations used only in tests."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -10,16 +10,12 @@ from rescue_ai.domain.value_objects import AlertStatus, ArtifactBlob
 
 @dataclass
 class InMemoryDatabase:
-    """In-memory storage for missions, alerts and frame events."""
-
     missions: dict[str, Mission] = field(default_factory=dict)
     alerts: dict[str, Alert] = field(default_factory=dict)
     mission_frames: dict[str, list[FrameEvent]] = field(default_factory=dict)
 
 
 class InMemoryMissionRepository:
-    """Mission repository implementation over the in-memory database."""
-
     def __init__(self, db: InMemoryDatabase) -> None:
         self._db = db
 
@@ -65,8 +61,6 @@ class InMemoryMissionRepository:
 
 
 class InMemoryAlertRepository:
-    """Alert repository implementation over the in-memory database."""
-
     allowed_target_statuses = {
         AlertStatus.REVIEWED_CONFIRMED,
         AlertStatus.REVIEWED_REJECTED,
@@ -98,7 +92,6 @@ class InMemoryAlertRepository:
         alert_id: str,
         updates: AlertReviewPayload,
     ) -> Alert | None:
-        """Apply a review decision to an alert."""
         alert = self._db.alerts.get(alert_id)
         if alert is None:
             return None
@@ -119,15 +112,16 @@ class InMemoryAlertRepository:
 
 
 class InMemoryFrameEventRepository:
-    """Frame event repository implementation over the in-memory database."""
-
     def __init__(self, db: InMemoryDatabase) -> None:
         self._db = db
 
     def add(self, frame_event: FrameEvent) -> None:
-        self._db.mission_frames.setdefault(frame_event.mission_id, []).append(
-            frame_event
-        )
+        frames = self._db.mission_frames.setdefault(frame_event.mission_id, [])
+        for idx, existing in enumerate(frames):
+            if existing.frame_id == frame_event.frame_id:
+                frames[idx] = frame_event
+                return
+        frames.append(frame_event)
 
     def list_by_mission(self, mission_id: str) -> list[FrameEvent]:
         return list(self._db.mission_frames.get(mission_id, []))
@@ -135,8 +129,6 @@ class InMemoryFrameEventRepository:
 
 @dataclass
 class InMemoryArtifactStorage:
-    """In-memory artifact storage used by batch pilot engine and tests."""
-
     stored_frames: dict[tuple[str, int], str] = field(default_factory=dict)
     _reports: dict[str, dict[str, object]] = field(default_factory=dict)
 
@@ -164,11 +156,9 @@ class InMemoryArtifactStorage:
         return dict(payload) if payload is not None else None
 
     def write_report(self, run_key: str, payload: dict[str, object]) -> str:
-        """Store a batch run report in memory."""
         self._reports[run_key] = dict(payload)
         return f"memory://batch/{run_key}/report.json"
 
     def write_debug_rows(self, run_key: str, rows: list[dict[str, object]]) -> str:
-        """Store batch debug rows (no-op for in-memory, returns URI)."""
         _ = rows
         return f"memory://batch/{run_key}/debug.csv"

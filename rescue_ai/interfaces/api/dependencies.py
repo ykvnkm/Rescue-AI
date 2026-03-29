@@ -9,26 +9,29 @@ from __future__ import annotations
 
 import importlib
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Callable, Protocol
 
 from rescue_ai.application.pilot_service import PilotService
-from rescue_ai.application.stream_orchestrator import StreamConfig, StreamState
 
 
 class StreamControllerPort(Protocol):
     """Minimal stream controller contract consumed by API routes."""
 
-    def build_config(self, mission_id: str, options: Any) -> StreamConfig: ...
+    def start(
+        self,
+        *,
+        mission_id: str,
+        rpi_mission_id: str,
+        target_fps: float,
+    ) -> object: ...
 
-    def start(self, config: StreamConfig) -> StreamState: ...
+    def stop(self, mission_id: str) -> object | None: ...
 
-    def stop(self, mission_id: str) -> StreamState | None: ...
+    def as_payload(self, mission_id: str) -> dict[str, object] | None: ...
 
-    def wait_stopped(
-        self, mission_id: str, timeout_sec: float = 3.0
-    ) -> StreamState | None: ...
+    def check_rpi_health(self) -> dict[str, object]: ...
 
-    def get_state(self, mission_id: str) -> StreamState | None: ...
+    def list_rpi_missions(self) -> list[dict[str, str]]: ...
 
 
 @dataclass
@@ -73,7 +76,7 @@ def _clear_runtime() -> None:
 
 
 def get_container() -> ApiRuntime:
-    """Backward-compatible alias for tests expecting a cached container getter."""
+    """Return initialized API runtime container."""
     return _ensure_runtime()
 
 

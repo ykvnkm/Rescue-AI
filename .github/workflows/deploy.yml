@@ -1,0 +1,160 @@
+name: deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-online:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push online image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: online
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/rescue-ai-online:latest
+            ghcr.io/${{ github.repository }}/rescue-ai-online:sha-${{ github.sha }}
+
+  build-batch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push batch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: batch
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/rescue-ai-batch:latest
+            ghcr.io/${{ github.repository }}/rescue-ai-batch:sha-${{ github.sha }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs:
+      - build-online
+      - build-batch
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Upload Airflow infra to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "infra/docker-compose.platform.yml,infra/airflow"
+          target: ~/rescue-ai
+          strip_components: 0
+
+      - name: Deploy online + Airflow DAG stack via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            ONLINE_IMAGE="ghcr.io/${{ github.repository }}/rescue-ai-online:sha-${{ github.sha }}"
+            BATCH_IMAGE="ghcr.io/${{ github.repository }}/rescue-ai-batch:sha-${{ github.sha }}"
+            APP_DIR="$HOME/rescue-ai"
+            AIRFLOW_DB_DSN="${{ secrets.AIRFLOW_DB_DSN }}"
+            if [ -z "$AIRFLOW_DB_DSN" ]; then
+              AIRFLOW_DB_DSN="${{ secrets.DB_DSN }}"
+            fi
+            mkdir -p "$APP_DIR"
+            mkdir -p "$APP_DIR/infra"
+
+            cat > "$APP_DIR/.env" <<'ENVFILE'
+            APP_HOST=0.0.0.0
+            APP_PORT=8000
+            APP_POSTGRES_READY_TIMEOUT_SEC=30
+            DB_DSN=${{ secrets.DB_DSN }}
+            ARTIFACTS_S3_ENDPOINT=${{ secrets.ARTIFACTS_S3_ENDPOINT }}
+            ARTIFACTS_S3_REGION=${{ secrets.ARTIFACTS_S3_REGION }}
+            ARTIFACTS_S3_ACCESS_KEY_ID=${{ secrets.ARTIFACTS_S3_ACCESS_KEY_ID }}
+            ARTIFACTS_S3_SECRET_ACCESS_KEY=${{ secrets.ARTIFACTS_S3_SECRET_ACCESS_KEY }}
+            ARTIFACTS_S3_BUCKET=${{ secrets.ARTIFACTS_S3_BUCKET }}
+            ARTIFACTS_S3_PREFIX=missions
+            RPI_BASE_URL=${{ secrets.RPI_BASE_URL }}
+            RPI_MISSIONS_DIR=${{ secrets.RPI_MISSIONS_DIR }}
+            RPI_RTSP_PORT=${{ secrets.RPI_RTSP_PORT }}
+            RPI_RTSP_PATH_PREFIX=live
+            RPI_TIMEOUT_SEC=10
+            ENVFILE
+
+            cp "$APP_DIR/.env" "$APP_DIR/infra/platform.env"
+            cat >> "$APP_DIR/infra/platform.env" <<ENVFILE
+            AIRFLOW_DB_DSN=$AIRFLOW_DB_DSN
+            AIRFLOW_ADMIN_USER=${{ secrets.AIRFLOW_ADMIN_USER }}
+            AIRFLOW_ADMIN_PASSWORD=${{ secrets.AIRFLOW_ADMIN_PASSWORD }}
+            AIRFLOW_ADMIN_EMAIL=${{ secrets.AIRFLOW_ADMIN_EMAIL }}
+            BATCH_IMAGE=ghcr.io/${{ github.repository }}/rescue-ai-batch:sha-${{ github.sha }}
+            ENVFILE
+
+            docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" -p "${{ secrets.GHCR_TOKEN }}"
+            docker pull "$ONLINE_IMAGE"
+            docker pull "$BATCH_IMAGE"
+
+            docker run --rm \
+              --env-file "$APP_DIR/.env" \
+              "$ONLINE_IMAGE" \
+              python -c "import os, psycopg; dsn=os.environ['DB_DSN']; conn=psycopg.connect(dsn); cur=conn.cursor(); cur.execute('CREATE SCHEMA IF NOT EXISTS app'); cur.execute('CREATE SCHEMA IF NOT EXISTS airflow'); conn.commit(); conn.close()"
+
+            docker rm -f rescue-ai-online || true
+            docker run -d \
+              --name rescue-ai-online \
+              --restart unless-stopped \
+              --env-file "$APP_DIR/.env" \
+              -p 8000:8000 \
+              "$ONLINE_IMAGE"
+
+            docker compose \
+              -f "$APP_DIR/infra/docker-compose.platform.yml" \
+              --env-file "$APP_DIR/infra/platform.env" \
+              up -d airflow-init airflow-webserver airflow-scheduler
