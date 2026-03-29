@@ -196,10 +196,18 @@ jobs:
               "$ONLINE_IMAGE"
 
             # Run Airflow init in foreground: immediate logs and fast-fail.
-            docker compose \
+            if ! timeout 300 docker compose \
               -f "$APP_DIR/infra/docker-compose.platform.yml" \
               --env-file "$APP_DIR/infra/platform.env" \
-              run --rm airflow-init
+              run --rm airflow-init; then
+              echo "airflow-init timed out or failed; dumping diagnostics"
+              docker compose \
+                -f "$APP_DIR/infra/docker-compose.platform.yml" \
+                --env-file "$APP_DIR/infra/platform.env" \
+                ps || true
+              docker logs "$(docker ps -aqf name=rescue-platform-airflow-init-run | head -n 1)" || true
+              exit 1
+            fi
 
             docker compose \
               -f "$APP_DIR/infra/docker-compose.platform.yml" \
