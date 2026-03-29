@@ -199,15 +199,23 @@ jobs:
             if ! timeout 300 docker compose \
               -f "$APP_DIR/infra/docker-compose.platform.yml" \
               --env-file "$APP_DIR/infra/platform.env" \
-              run --rm airflow-init; then
+              up --no-deps --abort-on-container-exit --exit-code-from airflow-init airflow-init; then
               echo "airflow-init timed out or failed; dumping diagnostics"
               docker compose \
                 -f "$APP_DIR/infra/docker-compose.platform.yml" \
                 --env-file "$APP_DIR/infra/platform.env" \
                 ps || true
-              docker logs "$(docker ps -aqf name=rescue-platform-airflow-init-run | head -n 1)" || true
+              docker compose \
+                -f "$APP_DIR/infra/docker-compose.platform.yml" \
+                --env-file "$APP_DIR/infra/platform.env" \
+                logs --no-color --tail=200 airflow-init || true
               exit 1
             fi
+
+            docker compose \
+              -f "$APP_DIR/infra/docker-compose.platform.yml" \
+              --env-file "$APP_DIR/infra/platform.env" \
+              rm -f airflow-init >/dev/null 2>&1 || true
 
             docker compose \
               -f "$APP_DIR/infra/docker-compose.platform.yml" \
