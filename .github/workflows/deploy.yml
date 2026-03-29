@@ -169,14 +169,14 @@ jobs:
             ENVFILE
 
             cp "$APP_DIR/.env" "$APP_DIR/infra/platform.env"
-            cat >> "$APP_DIR/infra/platform.env" <<ENVFILE
-            AIRFLOW_DB_DSN=$AIRFLOW_DB_DSN
-            DOCKER_GID=$DOCKER_GID
-            AIRFLOW_ADMIN_USER=${{ secrets.AIRFLOW_ADMIN_USER }}
-            AIRFLOW_ADMIN_PASSWORD=${{ secrets.AIRFLOW_ADMIN_PASSWORD }}
-            AIRFLOW_ADMIN_EMAIL=${{ secrets.AIRFLOW_ADMIN_EMAIL }}
-            BATCH_IMAGE=$BATCH_IMAGE
-            ENVFILE
+            {
+              printf 'AIRFLOW_DB_DSN=%s\n' "$AIRFLOW_DB_DSN"
+              printf 'DOCKER_GID=%s\n' "$DOCKER_GID"
+              printf 'AIRFLOW_ADMIN_USER=%s\n' '${{ secrets.AIRFLOW_ADMIN_USER }}'
+              printf 'AIRFLOW_ADMIN_PASSWORD=%s\n' '${{ secrets.AIRFLOW_ADMIN_PASSWORD }}'
+              printf 'AIRFLOW_ADMIN_EMAIL=%s\n' '${{ secrets.AIRFLOW_ADMIN_EMAIL }}'
+              printf 'BATCH_IMAGE=%s\n' "$BATCH_IMAGE"
+            } >> "$APP_DIR/infra/platform.env"
 
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
             docker pull "$ONLINE_IMAGE"
