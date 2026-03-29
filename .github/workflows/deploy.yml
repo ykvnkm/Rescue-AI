@@ -34,8 +34,8 @@ jobs:
           target: online
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/rescue-ai-online:latest
-            ghcr.io/${{ github.repository }}/rescue-ai-online:sha-${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/rescue-ai-online:latest
+            ghcr.io/${{ github.repository_owner }}/rescue-ai-online:sha-${{ github.sha }}
 
   build-batch:
     runs-on: ubuntu-latest
@@ -64,8 +64,8 @@ jobs:
           target: batch
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/rescue-ai-batch:latest
-            ghcr.io/${{ github.repository }}/rescue-ai-batch:sha-${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:latest
+            ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:sha-${{ github.sha }}
 
   deploy:
     runs-on: ubuntu-latest
@@ -100,8 +100,8 @@ jobs:
           script: |
             set -euo pipefail
 
-            ONLINE_IMAGE="ghcr.io/${{ github.repository }}/rescue-ai-online:sha-${{ github.sha }}"
-            BATCH_IMAGE="ghcr.io/${{ github.repository }}/rescue-ai-batch:sha-${{ github.sha }}"
+            ONLINE_IMAGE="ghcr.io/${{ github.repository_owner }}/rescue-ai-online:sha-${{ github.sha }}"
+            BATCH_IMAGE="ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:sha-${{ github.sha }}"
             APP_DIR="$HOME/rescue-ai"
             AIRFLOW_DB_DSN="${{ secrets.AIRFLOW_DB_DSN }}"
             if [ -z "$AIRFLOW_DB_DSN" ]; then
@@ -134,7 +134,7 @@ jobs:
             AIRFLOW_ADMIN_USER=${{ secrets.AIRFLOW_ADMIN_USER }}
             AIRFLOW_ADMIN_PASSWORD=${{ secrets.AIRFLOW_ADMIN_PASSWORD }}
             AIRFLOW_ADMIN_EMAIL=${{ secrets.AIRFLOW_ADMIN_EMAIL }}
-            BATCH_IMAGE=ghcr.io/${{ github.repository }}/rescue-ai-batch:sha-${{ github.sha }}
+            BATCH_IMAGE=ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:sha-${{ github.sha }}
             ENVFILE
 
             docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" -p "${{ secrets.GHCR_TOKEN }}"
