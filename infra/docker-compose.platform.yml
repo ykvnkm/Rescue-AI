@@ -36,9 +36,9 @@ services:
   airflow-init:
     <<: *airflow-common
     command: >
-      bash -c "
+      bash -euc "
       airflow db migrate &&
-      airflow users create --username ${AIRFLOW_ADMIN_USER} --firstname Platform --lastname Admin --role Admin --email ${AIRFLOW_ADMIN_EMAIL} --password ${AIRFLOW_ADMIN_PASSWORD} || true
+      airflow users create --username \"$${AIRFLOW_ADMIN_USER}\" --firstname Platform --lastname Admin --role Admin --email \"$${AIRFLOW_ADMIN_EMAIL}\" --password \"$${AIRFLOW_ADMIN_PASSWORD}\" || true
       "
     restart: "no"
 
