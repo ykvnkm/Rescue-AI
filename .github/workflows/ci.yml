@@ -48,7 +48,7 @@ jobs:
       - name: Run mypy
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run mypy rescue_ai tests
+        run: uv run mypy rescue_ai tests scripts
 
       - name: Run pylint
         env:

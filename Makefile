@@ -26,7 +26,7 @@ lint:
 	$(UV) black --check rescue_ai tests scripts
 	$(UV) isort --check-only rescue_ai tests scripts
 	$(UV) flake8 rescue_ai tests scripts
-	$(UV) mypy rescue_ai tests
+	$(UV) mypy rescue_ai tests scripts
 	$(UV) pylint rescue_ai tests scripts
 	python -m py_compile infra/airflow/dags/rescue_batch_daily.py
 
