@@ -156,7 +156,13 @@ jobs:
               -p 8000:8000 \
               "$ONLINE_IMAGE"
 
+            # Run Airflow init in foreground: immediate logs and fast-fail.
             docker compose \
               -f "$APP_DIR/infra/docker-compose.platform.yml" \
               --env-file "$APP_DIR/infra/platform.env" \
-              up -d airflow-init airflow-webserver airflow-scheduler
+              run --rm airflow-init
+
+            docker compose \
+              -f "$APP_DIR/infra/docker-compose.platform.yml" \
+              --env-file "$APP_DIR/infra/platform.env" \
+              up -d airflow-webserver airflow-scheduler
