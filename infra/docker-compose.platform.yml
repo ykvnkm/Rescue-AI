@@ -11,58 +11,27 @@ x-airflow-common: &airflow-common
     - ${PLATFORM_ENV_FILE:-./platform.env}
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_AIRFLOW_PASSWORD}@postgres:5432/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_DSN}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_SCHEMA: airflow
     AIRFLOW__CORE__LOAD_EXAMPLES: "False"
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
     AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-    BATCH_RUNTIME_ENV: ${BATCH_RUNTIME_ENV}
-    BATCH_MISSION_ID: ${BATCH_MISSION_ID}
-    BATCH_CODE_VERSION: ${BATCH_CODE_VERSION}
-    BATCH_MODEL_VERSION: ${BATCH_MODEL_VERSION}
-    BATCH_MISSION_ROOT: ${BATCH_MISSION_ROOT}
-    BATCH_ARTIFACT_ROOT: ${BATCH_ARTIFACT_ROOT}
-    BATCH_STATUS_PATH: ${BATCH_STATUS_PATH}
-    BATCH_POSTGRES_DSN: ${BATCH_POSTGRES_DSN}
+    BATCH_IMAGE: ${BATCH_IMAGE}
+    DB_DSN: ${DB_DSN}
+    ARTIFACTS_S3_ENDPOINT: ${ARTIFACTS_S3_ENDPOINT}
+    ARTIFACTS_S3_REGION: ${ARTIFACTS_S3_REGION}
+    ARTIFACTS_S3_ACCESS_KEY_ID: ${ARTIFACTS_S3_ACCESS_KEY_ID}
+    ARTIFACTS_S3_SECRET_ACCESS_KEY: ${ARTIFACTS_S3_SECRET_ACCESS_KEY}
+    ARTIFACTS_S3_BUCKET: ${ARTIFACTS_S3_BUCKET}
+    ARTIFACTS_S3_PREFIX: ${ARTIFACTS_S3_PREFIX}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - airflow_logs:/opt/airflow/logs
     - ./airflow/plugins:/opt/airflow/plugins
     - /var/run/docker.sock:/var/run/docker.sock
     - airflow_shared_data:/opt/airflow/data
-  depends_on:
-    postgres:
-      condition: service_healthy
 
 services:
-  postgres:
-    image: postgres:16
-    env_file:
-      - ${PLATFORM_ENV_FILE:-./platform.env}
-    environment:
-      POSTGRES_USER: ${POSTGRES_ADMIN_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DEFAULT_DB}
-    ports:
-      - "5433:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ADMIN_USER} -d ${POSTGRES_DEFAULT_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  batch-runner-image:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-      network: host
-    image: rescue-ai-batch:local
-    command: ["bash", "-lc", "echo rescue-ai-batch image built"]
-    profiles:
-      - batch-build
-
   airflow-init:
     <<: *airflow-common
     command: >
@@ -89,7 +58,6 @@ services:
         condition: service_completed_successfully
 
 volumes:
-  postgres_data:
   airflow_logs:
   airflow_shared_data:
     name: airflow_shared_data

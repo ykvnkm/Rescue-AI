@@ -1,15 +1,12 @@
-"""FastAPI route handlers for mission and stream endpoints."""
+"""FastAPI route handlers for Rescue-AI API."""
 
-from datetime import datetime, timedelta, timezone
+from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from rescue_ai.application.pilot_service import PilotService
-from rescue_ai.domain.entities import Alert, Detection, FrameEvent
-from rescue_ai.domain.ports import AlertReviewPayload
-from rescue_ai.domain.value_objects import AlertStatus
+from rescue_ai.config import get_settings
 from rescue_ai.interfaces.api.dependencies import (
     get_pilot_service,
     get_stream_controller,
@@ -17,385 +14,220 @@ from rescue_ai.interfaces.api.dependencies import (
 from rescue_ai.interfaces.api.ui_page import build_ui_html
 
 router = APIRouter()
+DEFAULT_STREAM_FPS = 6.0
 
 
-class DetectionRequest(BaseModel):
-    """Single detection item in frame ingestion payload."""
-
-    bbox: tuple[float, float, float, float]
-    score: float = Field(ge=0.0, le=1.0)
-    label: str = "person"
-    model_name: str = "yolo8n"
-    explanation: str | None = None
+class HealthResponse(BaseModel):
+    status: str = Field(description="Service health status", examples=["ok"])
 
 
-class FrameIngestRequest(BaseModel):
-    """Frame ingestion request with detections and ground truth."""
-
-    frame_id: int = Field(ge=0)
-    ts_sec: float = Field(ge=0.0)
-    image_uri: str
-    gt_person_present: bool
-    gt_episode_id: str | None = None
-    detections: list[DetectionRequest] = Field(default_factory=list)
-
-
-class ReviewRequest(BaseModel):
-    """Alert review decision from operator."""
-
-    reviewed_by: str | None = None
-    reviewed_at_sec: float | None = Field(default=None, ge=0.0)
-    decision_reason: str | None = None
-
-
-class MissionStartFlowRequest(BaseModel):
-    """Request to create and start a mission with detection stream."""
-
-    source_name: str = "pilot-dataset"
-    fps: float = Field(default=2.0, gt=0.0)
-    frames_dir: str
-    annotations_path: str | None = None
-    api_base: str = "http://127.0.0.1:8000"
-
-
-@router.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@router.get("/", response_class=HTMLResponse)
-def ui_index() -> str:
-    return build_ui_html()
-
-
-@router.get("/favicon.ico")
-def favicon() -> Response:
-    return Response(status_code=204)
-
-
-@router.get("/ready")
-def ready() -> dict[str, str]:
-    return {"status": "ready"}
-
-
-@router.get("/version")
-def version() -> dict[str, str]:
-    return {"version": "0.1.0"}
-
-
-@router.post("/v1/missions/{mission_id}/complete")
-def complete_mission(mission_id: str) -> dict[str, object]:
-    service = get_pilot_service()
-    stream_controller = get_stream_controller()
-    if service.get_mission(mission_id) is None:
-        raise HTTPException(status_code=404, detail="Mission not found")
-
-    stream_controller.stop(mission_id)
-    state = stream_controller.wait_stopped(mission_id)
-
-    completed_frame_id = None
-    if state is not None and state.processed_frames > 0:
-        completed_frame_id = state.processed_frames - 1
-
-    mission = service.complete_mission(
-        mission_id=mission_id,
-        completed_frame_id=completed_frame_id,
+class ReadyResponse(BaseModel):
+    status: str = Field(description="Readiness status", examples=["ready"])
+    checks: dict[str, bool] = Field(
+        description="Configuration checks for required external integrations"
     )
-    if mission is None:
-        raise HTTPException(status_code=404, detail="Mission not found")
-    try:
-        report = service.get_mission_report(mission_id)
-    except Exception as error:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Artifact/report storage error: {type(error).__name__}: {error}",
-        ) from error
-    return {
-        "mission_id": mission.mission_id,
-        "status": mission.status,
-        "completed_frame_id": mission.completed_frame_id,
-        "report": report,
+
+
+class RpiStatusResponse(BaseModel):
+    connected: bool = Field(description="Whether RPi service is reachable")
+    base_url: str = Field(description="RPi service base URL")
+    detail: str | None = Field(default=None, description="Failure details")
+
+
+class RpiMissionItemResponse(BaseModel):
+    mission_id: str = Field(description="Mission ID on Raspberry Pi")
+    name: str = Field(description="Human-readable mission name")
+
+
+class RpiMissionsResponse(BaseModel):
+    missions: list[RpiMissionItemResponse]
+
+
+class PredictStartRequest(BaseModel):
+    rpi_mission_id: str = Field(description="Mission ID on Raspberry Pi")
+
+
+class PredictStartResponse(BaseModel):
+    mission_id: str
+    status: str
+    source_name: str
+    fps: float
+    stream: dict[str, object]
+
+
+class PredictStatusResponse(BaseModel):
+    mission_id: str
+    status: str
+    completed_frame_id: int | None
+    stream: dict[str, object] | None
+
+
+class PredictStopResponse(BaseModel):
+    mission_id: str
+    status: str
+    stream: dict[str, object] | None
+    report: dict[str, object]
+
+
+@router.get("/health", response_model=HealthResponse, tags=["system"])
+def health() -> HealthResponse:
+    return HealthResponse(status="ok")
+
+
+@router.get("/ready", response_model=ReadyResponse, tags=["system"])
+def ready() -> ReadyResponse:
+    settings = get_settings()
+    checks = {
+        "db_dsn_configured": bool(settings.database.dsn.strip()),
+        "s3_bucket_configured": bool(settings.storage.s3_bucket.strip()),
+        "s3_access_key_configured": bool(settings.storage.s3_access_key_id.strip()),
+        "s3_secret_key_configured": bool(settings.storage.s3_secret_access_key.strip()),
+        "rpi_base_url_configured": bool(settings.rpi.base_url.strip()),
+        "rpi_rtsp_port_configured": settings.rpi.rtsp_port > 0,
     }
+    if not all(checks.values()):
+        raise HTTPException(
+            status_code=503, detail={"status": "not_ready", "checks": checks}
+        )
+    return ReadyResponse(status="ready", checks=checks)
 
 
-@router.post("/v1/missions/start-flow")
-def start_mission_flow(payload: MissionStartFlowRequest) -> dict[str, object]:
+@router.get("/rpi/status", response_model=RpiStatusResponse, tags=["system"])
+def rpi_status() -> RpiStatusResponse:
+    settings = get_settings()
+    base_url = settings.rpi.base_url
+    if not base_url:
+        return RpiStatusResponse(
+            connected=False, base_url="", detail="RPI_BASE_URL not configured"
+        )
+
+    stream_controller = get_stream_controller()
+    try:
+        stream_controller.check_rpi_health()
+        return RpiStatusResponse(connected=True, base_url=base_url)
+    except (ValueError, RuntimeError, OSError) as error:
+        return RpiStatusResponse(
+            connected=False,
+            base_url=base_url,
+            detail=f"{type(error).__name__}: {error}",
+        )
+
+
+@router.get("/rpi/missions", response_model=RpiMissionsResponse, tags=["system"])
+def rpi_missions() -> RpiMissionsResponse:
+    stream_controller = get_stream_controller()
+    try:
+        missions = stream_controller.list_rpi_missions()
+    except (ValueError, RuntimeError, OSError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"RPi catalog fetch failed: {type(error).__name__}: {error}",
+        ) from error
+    return RpiMissionsResponse(
+        missions=[
+            RpiMissionItemResponse(
+                mission_id=item.get("mission_id", ""),
+                name=item.get("name", item.get("mission_id", "")),
+            )
+            for item in missions
+            if item.get("mission_id", "")
+        ]
+    )
+
+
+@router.get("/pilot", include_in_schema=False, response_class=HTMLResponse)
+def pilot_ui() -> HTMLResponse:
+    return HTMLResponse(content=build_ui_html())
+
+
+@router.post("/predict/start", response_model=PredictStartResponse, tags=["predict"])
+def start_predict(payload: PredictStartRequest) -> PredictStartResponse:
     service = get_pilot_service()
     stream_controller = get_stream_controller()
+
     mission = service.create_mission(
-        source_name=payload.source_name,
+        source_name=f"rpi:{payload.rpi_mission_id}",
         total_frames=0,
-        fps=payload.fps,
+        fps=DEFAULT_STREAM_FPS,
     )
-
-    try:
-        config = stream_controller.build_config(
-            mission_id=mission.mission_id,
-            options={
-                "frames_dir": payload.frames_dir,
-                "annotations_path": payload.annotations_path,
-                "fps": payload.fps,
-                "api_base": payload.api_base,
-            },
-        )
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-
-    updated_mission = service.update_mission(
-        mission.mission_id, total_frames=len(config.frame_files)
-    )
-    if updated_mission is None:
-        raise HTTPException(status_code=404, detail="Mission not found")
-
     started = service.start_mission(mission.mission_id)
     if started is None:
         raise HTTPException(status_code=404, detail="Mission not found")
 
     try:
-        state = stream_controller.start(config)
-    except (ValueError, RuntimeError) as error:
+        stream = stream_controller.start(
+            mission_id=mission.mission_id,
+            rpi_mission_id=payload.rpi_mission_id,
+            target_fps=DEFAULT_STREAM_FPS,
+        )
+    except ValueError as error:
+        error_text = str(error)
+        if "not found" in error_text.lower():
+            raise HTTPException(status_code=404, detail=error_text) from error
+        raise HTTPException(status_code=409, detail=error_text) from error
+    except (RuntimeError, OSError) as error:
         raise HTTPException(
             status_code=503,
-            detail=f"Mission preflight failed: {error}",
+            detail=f"RPi stream start failed: {type(error).__name__}: {error}",
         ) from error
 
-    return {
-        "mission_id": mission.mission_id,
-        "slug": mission.slug,
-        "status": started.status,
-        "created_at": updated_mission.created_at,
-        "source_name": updated_mission.source_name,
-        "fps": updated_mission.fps,
-        "total_frames": updated_mission.total_frames,
-        "stream": {
-            "running": state.running,
-            "processed_frames": state.processed_frames,
-            "total_frames": state.total_frames,
-            "last_frame_name": state.last_frame_name,
-            "error": state.error,
-            "stop_requested": state.stop_requested,
-        },
-    }
+    return PredictStartResponse(
+        mission_id=mission.mission_id,
+        status=started.status,
+        source_name=mission.source_name,
+        fps=mission.fps,
+        stream=stream_controller.as_payload(mission.mission_id)
+        or {"session_id": getattr(stream, "session_id", "")},
+    )
 
 
-@router.get("/v1/missions/{mission_id}/stream/status")
-def get_mission_stream_status(mission_id: str) -> dict[str, object]:
+@router.get(
+    "/predict/{mission_id}", response_model=PredictStatusResponse, tags=["predict"]
+)
+def get_predict_status(mission_id: str) -> PredictStatusResponse:
     service = get_pilot_service()
     stream_controller = get_stream_controller()
-    if service.get_mission(mission_id) is None:
+
+    mission = service.get_mission(mission_id)
+    if mission is None:
         raise HTTPException(status_code=404, detail="Mission not found")
 
-    state = stream_controller.get_state(mission_id)
-    if state is None:
-        return {
-            "mission_id": mission_id,
-            "running": False,
-            "processed_frames": 0,
-            "total_frames": 0,
-            "last_frame_name": None,
-            "error": None,
-            "stop_requested": False,
-        }
-    return {
-        "mission_id": state.mission_id,
-        "running": state.running,
-        "processed_frames": state.processed_frames,
-        "total_frames": state.total_frames,
-        "last_frame_name": state.last_frame_name,
-        "error": state.error,
-        "stop_requested": state.stop_requested,
-    }
-
-
-@router.post("/v1/missions/{mission_id}/frames")
-def ingest_frame_endpoint(
-    mission_id: str,
-    payload: FrameIngestRequest,
-) -> dict[str, object]:
-    service = get_pilot_service()
-    detections = [
-        Detection(
-            bbox=item.bbox,
-            score=item.score,
-            label=item.label,
-            model_name=item.model_name,
-            explanation=item.explanation,
-        )
-        for item in payload.detections
-    ]
-    frame_event = FrameEvent(
-        mission_id=mission_id,
-        frame_id=payload.frame_id,
-        ts_sec=payload.ts_sec,
-        image_uri=payload.image_uri,
-        gt_person_present=payload.gt_person_present,
-        gt_episode_id=payload.gt_episode_id,
+    return PredictStatusResponse(
+        mission_id=mission.mission_id,
+        status=mission.status,
+        completed_frame_id=mission.completed_frame_id,
+        stream=stream_controller.as_payload(mission_id),
     )
 
-    try:
-        alerts = service.ingest_frame_event(
-            frame_event=frame_event,
-            detections=detections,
-        )
-    except ValueError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except Exception as error:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Artifact storage error: {type(error).__name__}: {error}",
-        ) from error
 
-    return {
-        "mission_id": mission_id,
-        "frame_id": payload.frame_id,
-        "accepted": True,
-        "alerts_created": len(alerts),
-        "alert_ids": [alert.alert_id for alert in alerts],
-    }
-
-
-@router.get("/v1/alerts")
-def get_alerts(
-    mission_id: str | None = None,
-    status: str | None = None,
-) -> list[dict[str, object]]:
+@router.post(
+    "/predict/{mission_id}/stop", response_model=PredictStopResponse, tags=["predict"]
+)
+def stop_predict(mission_id: str) -> PredictStopResponse:
     service = get_pilot_service()
-    if mission_id is not None and service.get_mission(mission_id) is None:
+    stream_controller = get_stream_controller()
+
+    mission = service.get_mission(mission_id)
+    if mission is None:
         raise HTTPException(status_code=404, detail="Mission not found")
-    alerts = service.list_alerts(mission_id=mission_id, status=status)
-    return [_alert_to_dict(alert, service=service) for alert in alerts]
 
+    stream_controller.stop(mission_id)
 
-@router.get("/v1/alerts/{alert_id}")
-def get_alert_details(alert_id: str) -> dict[str, object]:
-    service = get_pilot_service()
-    alert = service.get_alert(alert_id)
-    if alert is None:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return _alert_to_dict(alert, service=service)
+    updated = service.complete_mission(mission_id=mission_id, completed_frame_id=None)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
 
-
-@router.get("/v1/alerts/{alert_id}/frame")
-def get_alert_frame(alert_id: str) -> Response:
-    service = get_pilot_service()
     try:
-        artifact = service.get_alert_frame_artifact(alert_id)
-    except ValueError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except FileNotFoundError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except Exception as error:
+        report = service.get_mission_report(mission_id)
+    except (ValueError, RuntimeError, OSError) as error:
         raise HTTPException(
             status_code=502,
-            detail=f"Artifact storage error: {type(error).__name__}: {error}",
+            detail=f"Report generation error: {type(error).__name__}: {error}",
         ) from error
 
-    return Response(
-        content=artifact.content,
-        media_type=artifact.media_type,
-        headers={"Content-Disposition": f'inline; filename="{artifact.filename}"'},
+    return PredictStopResponse(
+        mission_id=updated.mission_id,
+        status=updated.status,
+        stream=stream_controller.as_payload(mission_id),
+        report=report,
     )
-
-
-@router.post("/v1/alerts/{alert_id}/confirm")
-def confirm_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
-    service = get_pilot_service()
-    review: AlertReviewPayload = {
-        "status": AlertStatus.REVIEWED_CONFIRMED,
-        "reviewed_by": payload.reviewed_by,
-        "reviewed_at_sec": payload.reviewed_at_sec,
-        "decision_reason": payload.decision_reason,
-    }
-    try:
-        alert = service.review_alert(alert_id, review)
-    except ValueError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    if alert is None:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return _alert_to_dict(alert, service=service)
-
-
-@router.post("/v1/alerts/{alert_id}/reject")
-def reject_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
-    service = get_pilot_service()
-    review: AlertReviewPayload = {
-        "status": AlertStatus.REVIEWED_REJECTED,
-        "reviewed_by": payload.reviewed_by,
-        "reviewed_at_sec": payload.reviewed_at_sec,
-        "decision_reason": payload.decision_reason,
-    }
-    try:
-        alert = service.review_alert(alert_id, review)
-    except ValueError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    if alert is None:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return _alert_to_dict(alert, service=service)
-
-
-@router.get("/v1/missions/{mission_id}/report")
-def get_mission_report_endpoint(mission_id: str) -> dict[str, object]:
-    service = get_pilot_service()
-    try:
-        return service.get_mission_report(mission_id)
-    except ValueError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except Exception as error:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Artifact/report storage error: {type(error).__name__}: {error}",
-        ) from error
-
-
-@router.get("/v1/missions/{mission_id}/debug/episodes")
-def get_mission_episode_debug_endpoint(
-    mission_id: str,
-    limit: int = 200,
-) -> dict[str, object]:
-    service = get_pilot_service()
-    if limit <= 0:
-        raise HTTPException(status_code=400, detail="limit must be > 0")
-    try:
-        return service.get_mission_episode_debug(mission_id=mission_id, limit=limit)
-    except ValueError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-
-
-def _alert_to_dict(alert: Alert, service: PilotService) -> dict[str, object]:
-    mission = service.get_mission(alert.mission_id)
-    wall_time = _build_alert_wall_time(
-        created_at=mission.created_at if mission is not None else None,
-        offset_sec=alert.ts_sec,
-    )
-    return {
-        "alert_id": alert.alert_id,
-        "mission_id": alert.mission_id,
-        "frame_id": alert.frame_id,
-        "ts_sec": alert.ts_sec,
-        "alert_time_iso": wall_time,
-        "image_uri": alert.image_uri,
-        "people_detected": alert.people_detected,
-        "bbox": list(alert.primary_detection.bbox),
-        "bboxes": [list(item.bbox) for item in alert.detections],
-        "scores": [item.score for item in alert.detections],
-        "score": alert.primary_detection.score,
-        "label": alert.primary_detection.label,
-        "model_name": alert.primary_detection.model_name,
-        "explanation": alert.primary_detection.explanation,
-        "status": alert.status,
-        "reviewed_by": alert.reviewed_by,
-        "reviewed_at_sec": alert.reviewed_at_sec,
-        "decision_reason": alert.decision_reason,
-    }
-
-
-def _build_alert_wall_time(created_at: str | None, offset_sec: float) -> str | None:
-    if created_at is None:
-        return None
-    try:
-        base = datetime.fromisoformat(created_at)
-    except ValueError:
-        return None
-    if base.tzinfo is None:
-        base = base.replace(tzinfo=timezone.utc)
-    return (base + timedelta(seconds=offset_sec)).isoformat()

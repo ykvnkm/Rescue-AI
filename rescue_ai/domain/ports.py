@@ -124,40 +124,6 @@ class ArtifactStorage(Protocol):
     def load_mission_report(self, mission_id: str) -> Mapping[str, object] | None: ...
 
 
-class SyncOutboxPort(Protocol):
-    """Port for outbox-based deferred sync operations."""
-
-    def enqueue(
-        self,
-        *,
-        entity_type: str,
-        entity_id: str,
-        operation: str,
-        idempotency_key: str,
-        payload_json: dict[str, object] | None = None,
-        local_path: str | None = None,
-        s3_bucket: str | None = None,
-        s3_key: str | None = None,
-    ) -> None:
-        """Create a pending outbox entry (idempotent by idempotency_key)."""
-
-    def fetch_pending(self, batch_size: int) -> list[dict[str, object]]:
-        """Atomically claim a batch of pending entries (status → in_progress)."""
-
-    def mark_synced(self, entry_id: int) -> None: ...
-
-    def mark_failed(
-        self,
-        entry_id: int,
-        *,
-        error: str,
-        next_retry_at: str,
-    ) -> None: ...
-
-    def reset_stuck(self, stuck_timeout_sec: float) -> int:
-        """Reset in_progress entries that exceeded the stuck timeout."""
-
-
 class DetectorPort(Protocol):
     """Port for ML detector used by both online and batch services."""
 

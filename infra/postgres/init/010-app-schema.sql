@@ -66,26 +66,3 @@ CREATE TABLE IF NOT EXISTS batch_mission_runs (
     debug_uri TEXT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
--- ── Outbox for offline-first sync ────────────────────────────
-CREATE TABLE IF NOT EXISTS sync_outbox (
-    id              BIGSERIAL PRIMARY KEY,
-    entity_type     TEXT NOT NULL,
-    entity_id       TEXT NOT NULL,
-    operation       TEXT NOT NULL,
-    payload_json    JSONB,
-    local_path      TEXT,
-    s3_bucket       TEXT,
-    s3_key          TEXT,
-    status          TEXT NOT NULL DEFAULT 'pending',
-    retry_count     INTEGER NOT NULL DEFAULT 0,
-    next_retry_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_error      TEXT,
-    idempotency_key TEXT NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_sync_outbox_idempotency UNIQUE (idempotency_key)
-);
-CREATE INDEX IF NOT EXISTS ix_sync_outbox_status_next
-    ON sync_outbox (status, next_retry_at)
-    WHERE status IN ('pending', 'in_progress');

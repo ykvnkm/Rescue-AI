@@ -1,6 +1,7 @@
 services:
   api:
     build: .
+    restart: unless-stopped
     ports:
       - "${APP_PORT:-8000}:8000"
     env_file:
@@ -8,52 +9,15 @@ services:
     environment:
       APP_HOST: "0.0.0.0"
       APP_PORT: "8000"
-      APP_MODE: "${APP_MODE:-offline_first}"
-      APP_REPOSITORY_BACKEND: "postgres"
-      APP_POSTGRES_HOST: "postgres"
-      APP_POSTGRES_PORT: "5432"
-      APP_POSTGRES_DB: "${APP_POSTGRES_DB:-rescue}"
-      APP_POSTGRES_USER: "${APP_POSTGRES_USER}"
-      APP_POSTGRES_PASSWORD: "${APP_POSTGRES_PASSWORD}"
-      APP_POSTGRES_AUTO_MIGRATE: "${APP_POSTGRES_AUTO_MIGRATE:-true}"
       APP_POSTGRES_READY_TIMEOUT_SEC: "${APP_POSTGRES_READY_TIMEOUT_SEC:-30}"
       DB_DSN: "postgresql://${APP_POSTGRES_USER}:${APP_POSTGRES_PASSWORD}@postgres:5432/${APP_POSTGRES_DB:-rescue}"
-      ARTIFACTS_BACKEND: "local"
-      ARTIFACTS_LOCAL_ROOT: "/app/runtime/artifacts"
-      SYNC_ENABLED: "${SYNC_ENABLED:-false}"
+      BATCH_POSTGRES_DSN: "postgresql://${APP_POSTGRES_USER}:${APP_POSTGRES_PASSWORD}@postgres:5432/${APP_POSTGRES_DB:-rescue}"
     volumes:
-      - "${MISSION_DIR:-./artifacts/public}:/data/mission:ro"
-      - artifacts_data:/app/runtime/artifacts
       - model_cache:/app/runtime/models
     depends_on:
       postgres:
         condition: service_healthy
 
-  sync-worker:
-    build: .
-    command: ["uv", "run", "python", "-m", "rescue_ai.interfaces.cli.sync"]
-    profiles: ["sync"]
-    env_file:
-      - .env
-    environment:
-      APP_MODE: "offline_first"
-      DB_DSN: "postgresql://${APP_POSTGRES_USER}:${APP_POSTGRES_PASSWORD}@postgres:5432/${APP_POSTGRES_DB:-rescue}"
-      SYNC_ENABLED: "true"
-      SYNC_REMOTE_POSTGRES_DSN: "${SYNC_REMOTE_POSTGRES_DSN}"
-      SYNC_POLL_INTERVAL_SEC: "${SYNC_POLL_INTERVAL_SEC:-10}"
-      SYNC_BATCH_SIZE: "${SYNC_BATCH_SIZE:-50}"
-      SYNC_BACKOFF_INITIAL_SEC: "${SYNC_BACKOFF_INITIAL_SEC:-5}"
-      SYNC_BACKOFF_MAX_SEC: "${SYNC_BACKOFF_MAX_SEC:-300}"
-      SYNC_STUCK_TIMEOUT_SEC: "${SYNC_STUCK_TIMEOUT_SEC:-60}"
-      SYNC_DELETE_LOCAL_AFTER_SYNC: "${SYNC_DELETE_LOCAL_AFTER_SYNC:-false}"
-      SYNC_S3_PREFIX: "${SYNC_S3_PREFIX:-missions}"
-    volumes:
-      - artifacts_data:/app/runtime/artifacts
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  # ── Локальный Postgres (бортовая БД) ─────────────────────────
   postgres:
     image: postgres:16
     restart: unless-stopped
@@ -61,7 +25,6 @@ services:
       POSTGRES_DB: "${APP_POSTGRES_DB:-rescue}"
       POSTGRES_USER: "${APP_POSTGRES_USER}"
       POSTGRES_PASSWORD: "${APP_POSTGRES_PASSWORD}"
-      # Переменные для init-скрипта 001-platform-bootstrap.sql
       POSTGRES_APP_USER: "${APP_POSTGRES_USER}"
       POSTGRES_APP_PASSWORD: "${APP_POSTGRES_PASSWORD}"
       POSTGRES_AIRFLOW_PASSWORD: "${APP_POSTGRES_PASSWORD}"
@@ -76,28 +39,6 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
 
-  # ── Локальный симулятор удалённого PG (только для тестов без Supabase) ──
-  postgres-remote:
-    image: postgres:16
-    profiles: ["local-remote"]
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: "${REMOTE_POSTGRES_DB:-rescue_remote}"
-      POSTGRES_USER: "${REMOTE_POSTGRES_USER:-rescue_remote}"
-      POSTGRES_PASSWORD: "${REMOTE_POSTGRES_PASSWORD:-rescue_remote_secret}"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    ports:
-      - "${REMOTE_POSTGRES_PORT:-5433}:5432"
-    volumes:
-      - postgres_remote_data:/var/lib/postgresql/data
-      - ./infra/postgres/init-remote:/docker-entrypoint-initdb.d:ro
-
 volumes:
   model_cache:
   postgres_data:
-  postgres_remote_data:
-  artifacts_data:

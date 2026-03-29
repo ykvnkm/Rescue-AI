@@ -1,27 +1,12 @@
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pytest
 
 from rescue_ai.application.batch_dtos import RunStatusRecord
-from rescue_ai.infrastructure.artifact_storage import LocalArtifactStorage
 from rescue_ai.infrastructure.status_store import JsonStatusStore, PostgresStatusStore
-
-
-def test_local_artifact_store_writes_report_and_debug() -> None:
-    with TemporaryDirectory() as temp_dir:
-        store = LocalArtifactStorage(root=Path(temp_dir))
-        report_uri = store.write_report("m:d:c:m", {"status": "completed"})
-        debug_uri = store.write_debug_rows("m:d:c:m", [{"frame_id": 1, "ok": True}])
-
-        assert Path(report_uri).exists()
-        assert Path(debug_uri).exists()
-        payload = json.loads(Path(report_uri).read_text(encoding="utf-8"))
-        assert payload["status"] == "completed"
 
 
 def test_json_status_store_roundtrip() -> None:
@@ -45,23 +30,18 @@ def test_json_status_store_roundtrip() -> None:
 
 
 @pytest.mark.integration
-def test_postgres_status_store_roundtrip() -> None:
-    dsn = os.getenv("BATCH_TEST_POSTGRES_DSN")
-    if not dsn:
-        pytest.skip("BATCH_TEST_POSTGRES_DSN is not set")
-
+def test_postgres_status_store_roundtrip(pg_dsn: str) -> None:
     psycopg = pytest.importorskip("psycopg")
-
     root = Path(__file__).resolve().parents[1]
     schema_path = root / "infra" / "postgres" / "init" / "010-app-schema.sql"
-    with psycopg.connect(dsn) as conn:
+    with psycopg.connect(pg_dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(schema_path.read_text(encoding="utf-8"))
         conn.commit()
 
     from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
 
-    store = PostgresStatusStore(db=PostgresDatabase(dsn=dsn))
+    store = PostgresStatusStore(db=PostgresDatabase(dsn=pg_dsn))
     store.upsert(RunStatusRecord(run_key="test-key", status="running", reason="init"))
     record = store.get("test-key")
 

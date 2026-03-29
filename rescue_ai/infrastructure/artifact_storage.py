@@ -11,7 +11,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
-from shutil import copy2
 from urllib.parse import urlparse
 
 from rescue_ai.config import StorageSettings
@@ -31,14 +30,13 @@ S3_OPERATION_ERRORS = (ClientError, BotoCoreError, OSError)
 
 @dataclass(frozen=True)
 class S3ArtifactBackendSettings:
-    """Settings for private S3 artifact backend."""
+    """Settings for S3 artifact backend."""
 
     endpoint: str | None = None
     region: str | None = None
     access_key_id: str | None = None
     secret_access_key: str | None = None
     bucket: str | None = None
-    strict: bool = True
 
     @property
     def ready(self) -> bool:
@@ -50,33 +48,16 @@ class S3ArtifactBackendSettings:
             and self.bucket
         )
 
-    @property
-    def has_credentials(self) -> bool:
-        return bool(self.access_key_id and self.secret_access_key)
 
-
-def build_artifact_storage(settings: StorageSettings):
-    """Build artifact storage adapter from explicit artifact settings."""
-    local_storage = LocalArtifactStorage(settings.local_root)
-
-    if settings.backend != "s3":
-        return local_storage
-    has_credentials = bool(settings.s3_access_key_id and settings.s3_secret_access_key)
-    is_ready = bool(
-        settings.s3_endpoint
-        and settings.s3_region
-        and settings.s3_access_key_id
-        and settings.s3_secret_access_key
-        and settings.s3_bucket
-    )
-    if not has_credentials:
-        return local_storage
-    if not is_ready:
+def build_s3_storage(settings: StorageSettings) -> S3ArtifactStorage:
+    """Build S3 artifact storage from settings. Raises if credentials missing."""
+    if not settings.s3_access_key_id or not settings.s3_secret_access_key:
         raise RuntimeError(
-            "ARTIFACTS_BACKEND=s3 requires ARTIFACTS_S3_ENDPOINT, ARTIFACTS_S3_REGION, "
-            "ARTIFACTS_S3_ACCESS_KEY_ID, ARTIFACTS_S3_SECRET_ACCESS_KEY, "
-            "ARTIFACTS_S3_BUCKET"
+            "S3 credentials required: set ARTIFACTS_S3_ACCESS_KEY_ID "
+            "and ARTIFACTS_S3_SECRET_ACCESS_KEY"
         )
+    if not settings.s3_bucket:
+        raise RuntimeError("ARTIFACTS_S3_BUCKET is required")
 
     backend_settings = S3ArtifactBackendSettings(
         endpoint=settings.s3_endpoint,
@@ -84,110 +65,18 @@ def build_artifact_storage(settings: StorageSettings):
         access_key_id=settings.s3_access_key_id,
         secret_access_key=settings.s3_secret_access_key,
         bucket=settings.s3_bucket,
-        strict=settings.strict,
     )
-    return S3ArtifactStorage(
-        settings=backend_settings,
-        fallback_storage=local_storage,
-    )
-
-
-class LocalArtifactStorage:
-    """Stores artifacts in local filesystem under runtime root."""
-
-    def __init__(self, root: Path) -> None:
-        self._root = root
-        self._root.mkdir(parents=True, exist_ok=True)
-
-    def store_frame(self, mission_id: str, frame_id: int, source_uri: str) -> str:
-        source_path = _local_path_from_uri(source_uri)
-        if source_path is None or not source_path.exists() or not source_path.is_file():
-            return source_uri
-
-        suffix = source_path.suffix.lower() or ".bin"
-        target_path = self._frame_path(
-            mission_id=mission_id, frame_id=frame_id, suffix=suffix
-        )
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        copy2(source_path, target_path)
-        return str(target_path.resolve())
-
-    def load_frame(self, image_uri: str) -> ArtifactBlob | None:
-        image_path = _local_path_from_uri(image_uri)
-        if image_path is None or not image_path.exists() or not image_path.is_file():
-            return None
-
-        media_type, _ = mimetypes.guess_type(image_path.name)
-        return ArtifactBlob(
-            content=image_path.read_bytes(),
-            media_type=media_type or "application/octet-stream",
-            filename=image_path.name,
-        )
-
-    def save_mission_report(self, mission_id: str, report: Mapping[str, object]) -> str:
-        report_path = self._report_path(mission_id)
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        return str(report_path.resolve())
-
-    def load_mission_report(self, mission_id: str) -> Mapping[str, object] | None:
-        report_path = self._report_path(mission_id)
-        if not report_path.exists() or not report_path.is_file():
-            return None
-        try:
-            payload = json.loads(report_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(payload, dict):
-            return None
-        return payload
-
-    def write_report(self, run_key: str, payload: dict[str, object]) -> str:
-        """Write a batch run report to the local filesystem."""
-        safe_key = run_key.replace(":", "__")
-        path = self._root / safe_key / "report.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        return str(path)
-
-    def write_debug_rows(self, run_key: str, rows: list[dict[str, object]]) -> str:
-        """Write batch debug rows as CSV to the local filesystem."""
-        safe_key = run_key.replace(":", "__")
-        path = self._root / safe_key / "debug.csv"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        headers = sorted({key for row in rows for key in row.keys()}) if rows else []
-        with path.open("w", encoding="utf-8", newline="") as output:
-            writer = csv.DictWriter(output, fieldnames=headers)
-            if headers:
-                writer.writeheader()
-                writer.writerows(rows)
-        return str(path)
-
-    def _report_path(self, mission_id: str) -> Path:
-        return self._root / "missions" / mission_id / "report.json"
-
-    def _frame_path(self, mission_id: str, frame_id: int, suffix: str) -> Path:
-        return self._root / "missions" / mission_id / "frames" / f"{frame_id}{suffix}"
+    return S3ArtifactStorage(settings=backend_settings)
 
 
 class S3ArtifactStorage:
-    """Stores artifacts in private S3 bucket with local fallback."""
+    """Stores artifacts in S3-compatible bucket."""
 
-    def __init__(
-        self,
-        settings: S3ArtifactBackendSettings,
-        fallback_storage: LocalArtifactStorage,
-    ) -> None:
+    def __init__(self, settings: S3ArtifactBackendSettings) -> None:
         if boto3 is None:
-            raise RuntimeError("boto3 is required for ARTIFACTS_BACKEND=s3")
+            raise RuntimeError("boto3 is required for S3 storage")
 
         self._settings = settings
-        self._fallback = fallback_storage
         self._lock = threading.Lock()
         self._pending_frames: dict[str, PendingFrameUpload] = {}
         self._uploads = ThreadPoolExecutor(max_workers=2, thread_name_prefix="artifact")
@@ -208,9 +97,8 @@ class S3ArtifactStorage:
         key = f"missions/{mission_id}/frames/{frame_id}{suffix}"
         s3_uri = f"s3://{self._settings.bucket}/{key}"
 
-        local_uri = self._fallback.store_frame(mission_id, frame_id, source_uri)
         with self._lock:
-            self._pending_frames[key] = PendingFrameUpload(fallback_uri=local_uri)
+            self._pending_frames[key] = PendingFrameUpload(source_uri=source_uri)
 
         media_type, _ = mimetypes.guess_type(source_path.name)
         payload = source_path.read_bytes()
@@ -225,24 +113,20 @@ class S3ArtifactStorage:
     def load_frame(self, image_uri: str) -> ArtifactBlob | None:
         parsed = _parse_s3_uri(image_uri)
         if parsed is None:
-            return self._fallback.load_frame(image_uri)
+            return None
         bucket, key = parsed
 
         with self._lock:
             pending = self._pending_frames.get(key)
-        if pending is not None and pending.error is not None and self._settings.strict:
+        if pending is not None and pending.error is not None:
             raise RuntimeError(pending.error)
 
         try:
             response = self._client.get_object(Bucket=bucket, Key=key)
         except S3_OPERATION_ERRORS as error:
-            if pending is not None:
-                return self._fallback.load_frame(pending.fallback_uri)
             if _is_missing_s3_object_error(error):
                 return None
-            if self._settings.strict:
-                raise
-            return self._fallback.load_frame(image_uri)
+            raise
 
         with self._lock:
             self._pending_frames.pop(key, None)
@@ -261,17 +145,12 @@ class S3ArtifactStorage:
     def save_mission_report(self, mission_id: str, report: Mapping[str, object]) -> str:
         key = self._report_key(mission_id)
         payload = json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8")
-        try:
-            self._client.put_object(
-                Bucket=self._settings.bucket,
-                Key=key,
-                Body=payload,
-                ContentType="application/json",
-            )
-        except S3_OPERATION_ERRORS:
-            if self._settings.strict:
-                raise
-            return self._fallback.save_mission_report(mission_id, report)
+        self._client.put_object(
+            Bucket=self._settings.bucket,
+            Key=key,
+            Body=payload,
+            ContentType="application/json",
+        )
         return f"s3://{self._settings.bucket}/{key}"
 
     def load_mission_report(self, mission_id: str) -> Mapping[str, object] | None:
@@ -281,9 +160,7 @@ class S3ArtifactStorage:
         except S3_OPERATION_ERRORS as error:
             if _is_missing_s3_object_error(error):
                 return None
-            if self._settings.strict:
-                raise
-            return self._fallback.load_mission_report(mission_id)
+            raise
 
         try:
             payload = json.loads(response["Body"].read().decode("utf-8"))
@@ -298,12 +175,7 @@ class S3ArtifactStorage:
         safe_key = run_key.replace(":", "__")
         key = f"{safe_key}/report.json"
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
-        try:
-            self._client.put_object(Bucket=self._settings.bucket, Key=key, Body=body)
-        except S3_OPERATION_ERRORS:
-            if self._settings.strict:
-                raise
-            return self._fallback.write_report(run_key, payload)
+        self._client.put_object(Bucket=self._settings.bucket, Key=key, Body=body)
         return f"s3://{self._settings.bucket}/{key}"
 
     def write_debug_rows(self, run_key: str, rows: list[dict[str, object]]) -> str:
@@ -316,16 +188,11 @@ class S3ArtifactStorage:
         if headers:
             writer.writeheader()
             writer.writerows(rows)
-        try:
-            self._client.put_object(
-                Bucket=self._settings.bucket,
-                Key=key,
-                Body=buffer.getvalue().encode("utf-8"),
-            )
-        except S3_OPERATION_ERRORS:
-            if self._settings.strict:
-                raise
-            return self._fallback.write_debug_rows(run_key, rows)
+        self._client.put_object(
+            Bucket=self._settings.bucket,
+            Key=key,
+            Body=buffer.getvalue().encode("utf-8"),
+        )
         return f"s3://{self._settings.bucket}/{key}"
 
     def _report_key(self, mission_id: str) -> str:
@@ -386,7 +253,7 @@ def _is_missing_s3_object_error(error: Exception) -> bool:
 
 @dataclass
 class PendingFrameUpload:
-    """Pending async frame upload with local fallback and optional error."""
+    """Pending async frame upload tracking."""
 
-    fallback_uri: str
+    source_uri: str
     error: str | None = None

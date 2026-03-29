@@ -4,7 +4,7 @@ from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.domain.entities import Detection, FrameEvent
 from rescue_ai.domain.ports import AlertReviewPayload
 from rescue_ai.domain.value_objects import AlertRuleConfig, AlertStatus
-from rescue_ai.infrastructure.memory_repositories import (
+from tests.support.in_memory_repositories import (
     InMemoryAlertRepository,
     InMemoryArtifactStorage,
     InMemoryDatabase,
@@ -134,3 +134,55 @@ def test_review_alert_cannot_be_applied_twice() -> None:
         assert str(error) == "Alert already reviewed"
     else:  # pragma: no cover
         raise AssertionError("Expected repeated review to be rejected")
+
+
+def test_create_mission_is_idempotent_for_same_source() -> None:
+    service, db = _build_pilot_service()
+
+    first = service.create_mission(
+        source_name="rpi:mission-1", total_frames=10, fps=6.0
+    )
+    second = service.create_mission(
+        source_name="rpi:mission-1",
+        total_frames=25,
+        fps=8.0,
+    )
+
+    assert first.mission_id == second.mission_id
+    assert len(db.missions) == 1
+    assert second.total_frames == 25
+    assert second.fps == 8.0
+
+
+def test_reingest_same_frame_keeps_single_alert_and_frame_event() -> None:
+    service, db = _build_pilot_service()
+    mission = service.create_mission(
+        source_name="rpi:mission-1", total_frames=1, fps=6.0
+    )
+    service.start_mission(mission.mission_id)
+
+    frame = FrameEvent(
+        mission_id=mission.mission_id,
+        frame_id=1,
+        ts_sec=0.0,
+        image_uri="file:///tmp/frame.jpg",
+        gt_person_present=True,
+        gt_episode_id="ep-1",
+    )
+    detections = [
+        Detection(
+            bbox=(10.0, 20.0, 30.0, 40.0),
+            score=0.99,
+            label="person",
+            model_name="yolo8n",
+            explanation="strong-hit",
+        )
+    ]
+
+    first_alerts = service.ingest_frame_event(frame_event=frame, detections=detections)
+    second_alerts = service.ingest_frame_event(frame_event=frame, detections=detections)
+
+    assert len(first_alerts) == 1
+    assert not second_alerts
+    assert len(db.alerts) == 1
+    assert len(db.mission_frames[mission.mission_id]) == 1

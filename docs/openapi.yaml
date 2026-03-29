@@ -1,0 +1,333 @@
+openapi: 3.1.0
+info:
+  title: Rescue-AI
+  description: ML-powered aerial search & rescue system. Processes drone video frames
+    in real-time, detects people using YOLOv8, and generates alerts for rescue operators.
+  version: 0.1.0
+paths:
+  /health:
+    get:
+      tags:
+      - system
+      summary: Health
+      operationId: health_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /ready:
+    get:
+      tags:
+      - system
+      summary: Ready
+      operationId: ready_ready_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyResponse'
+  /rpi/status:
+    get:
+      tags:
+      - system
+      summary: Rpi Status
+      operationId: rpi_status_rpi_status_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RpiStatusResponse'
+  /rpi/missions:
+    get:
+      tags:
+      - system
+      summary: Rpi Missions
+      operationId: rpi_missions_rpi_missions_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RpiMissionsResponse'
+  /predict/start:
+    post:
+      tags:
+      - predict
+      summary: Start Predict
+      operationId: start_predict_predict_start_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PredictStartRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictStartResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /predict/{mission_id}:
+    get:
+      tags:
+      - predict
+      summary: Get Predict Status
+      operationId: get_predict_status_predict__mission_id__get
+      parameters:
+      - name: mission_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Mission Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /predict/{mission_id}/stop:
+    post:
+      tags:
+      - predict
+      summary: Stop Predict
+      operationId: stop_predict_predict__mission_id__stop_post
+      parameters:
+      - name: mission_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Mission Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictStopResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    HealthResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+          description: Service health status
+          examples:
+          - ok
+      type: object
+      required:
+      - status
+      title: HealthResponse
+    PredictStartRequest:
+      properties:
+        rpi_mission_id:
+          type: string
+          title: Rpi Mission Id
+          description: Mission ID on Raspberry Pi
+      type: object
+      required:
+      - rpi_mission_id
+      title: PredictStartRequest
+    PredictStartResponse:
+      properties:
+        mission_id:
+          type: string
+          title: Mission Id
+        status:
+          type: string
+          title: Status
+        source_name:
+          type: string
+          title: Source Name
+        fps:
+          type: number
+          title: Fps
+        stream:
+          additionalProperties: true
+          type: object
+          title: Stream
+      type: object
+      required:
+      - mission_id
+      - status
+      - source_name
+      - fps
+      - stream
+      title: PredictStartResponse
+    PredictStatusResponse:
+      properties:
+        mission_id:
+          type: string
+          title: Mission Id
+        status:
+          type: string
+          title: Status
+        completed_frame_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Completed Frame Id
+        stream:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Stream
+      type: object
+      required:
+      - mission_id
+      - status
+      - completed_frame_id
+      - stream
+      title: PredictStatusResponse
+    PredictStopResponse:
+      properties:
+        mission_id:
+          type: string
+          title: Mission Id
+        status:
+          type: string
+          title: Status
+        stream:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Stream
+        report:
+          additionalProperties: true
+          type: object
+          title: Report
+      type: object
+      required:
+      - mission_id
+      - status
+      - stream
+      - report
+      title: PredictStopResponse
+    ReadyResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+          description: Readiness status
+          examples:
+          - ready
+        checks:
+          additionalProperties:
+            type: boolean
+          type: object
+          title: Checks
+          description: Configuration checks for required external integrations
+      type: object
+      required:
+      - status
+      - checks
+      title: ReadyResponse
+    RpiMissionItemResponse:
+      properties:
+        mission_id:
+          type: string
+          title: Mission Id
+          description: Mission ID on Raspberry Pi
+        name:
+          type: string
+          title: Name
+          description: Human-readable mission name
+      type: object
+      required:
+      - mission_id
+      - name
+      title: RpiMissionItemResponse
+    RpiMissionsResponse:
+      properties:
+        missions:
+          items:
+            $ref: '#/components/schemas/RpiMissionItemResponse'
+          type: array
+          title: Missions
+      type: object
+      required:
+      - missions
+      title: RpiMissionsResponse
+    RpiStatusResponse:
+      properties:
+        connected:
+          type: boolean
+          title: Connected
+          description: Whether RPi service is reachable
+        base_url:
+          type: string
+          title: Base Url
+          description: RPi service base URL
+        detail:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Detail
+          description: Failure details
+      type: object
+      required:
+      - connected
+      - base_url
+      title: RpiStatusResponse
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError

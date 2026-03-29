@@ -72,9 +72,7 @@ class PostgresDatabase:
         try:
             psycopg = importlib.import_module("psycopg")
         except ImportError as exc:  # pragma: no cover
-            raise RuntimeError(
-                "psycopg is required for APP_REPOSITORY_BACKEND=postgres"
-            ) from exc
+            raise RuntimeError("psycopg is required for Postgres repositories") from exc
 
         self._psycopg = psycopg
         self._dsn = dsn
@@ -89,7 +87,7 @@ class PostgresDatabase:
                 cursor.execute(
                     """
                     TRUNCATE TABLE
-                        sync_outbox, episodes, alerts, frame_events, missions
+                        episodes, alerts, frame_events, missions
                     CASCADE
                     """
                 )

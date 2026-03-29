@@ -313,6 +313,19 @@ class PostgresAlertRepository:
                         %s::jsonb, %s, %s, %s, %s,
                         %s::jsonb, %s, %s, %s, %s
                     )
+                    ON CONFLICT (alert_id)
+                    DO UPDATE SET
+                        mission_id = EXCLUDED.mission_id,
+                        frame_id = EXCLUDED.frame_id,
+                        ts_sec = EXCLUDED.ts_sec,
+                        image_uri = EXCLUDED.image_uri,
+                        people_detected = EXCLUDED.people_detected,
+                        primary_bbox = EXCLUDED.primary_bbox,
+                        primary_score = EXCLUDED.primary_score,
+                        primary_label = EXCLUDED.primary_label,
+                        primary_model_name = EXCLUDED.primary_model_name,
+                        primary_explanation = EXCLUDED.primary_explanation,
+                        detections = EXCLUDED.detections
                     """,
                     (
                         alert.alert_id,

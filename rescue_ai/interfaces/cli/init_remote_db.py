@@ -3,25 +3,25 @@
 Usage:
     python -m rescue_ai.interfaces.cli.init_remote_db
 
-Reads SYNC_REMOTE_POSTGRES_DSN from env / .env and executes
-infra/postgres/init-remote/001-remote-schema.sql against it.
+Reads DB_DSN from env / .env and executes
+infra/postgres/init/010-app-schema.sql against it.
 """
 
 from __future__ import annotations
 
 import importlib
 import logging
-import os
 from pathlib import Path
 
 from rescue_ai.config import get_settings
+from rescue_ai.infrastructure.postgres_connection import dsn_with_search_path
 
 _SQL_FILE = (
     Path(__file__).resolve().parents[3]
     / "infra"
     / "postgres"
-    / "init-remote"
-    / "001-remote-schema.sql"
+    / "init"
+    / "010-app-schema.sql"
 )
 
 logging.basicConfig(
@@ -33,21 +33,20 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     settings = get_settings()
-    dsn = settings.sync.remote_postgres_dsn
-    if not dsn:
-        dsn = os.getenv("SYNC_REMOTE_POSTGRES_DSN", "")
+    dsn = settings.database.dsn
     if not dsn:
         raise RuntimeError(
-            "SYNC_REMOTE_POSTGRES_DSN is required. "
-            "Set it in .env or as an environment variable."
+            "DB_DSN is required. Set it in .env or as an environment variable."
         )
+    app_dsn = dsn_with_search_path(dsn, "app")
 
     psycopg = importlib.import_module("psycopg")
     sql = _SQL_FILE.read_text(encoding="utf-8")
 
     logger.info("Connecting to remote Postgres...")
-    with psycopg.connect(dsn) as conn:
+    with psycopg.connect(app_dsn) as conn:
         with conn.cursor() as cur:
+            cur.execute("CREATE SCHEMA IF NOT EXISTS app")
             cur.execute(sql)
         conn.commit()
 

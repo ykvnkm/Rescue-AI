@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -26,8 +25,6 @@ class AppSettings(BaseEnvSettings):
 class ApiSettings(BaseEnvSettings):
     host: str = Field(default="0.0.0.0", alias="APP_HOST")
     port: int = Field(default=8000, alias="APP_PORT")
-    mode: str = Field(default="default", alias="APP_MODE")
-    repository_backend: str = Field(default="memory", alias="APP_REPOSITORY_BACKEND")
     postgres_ready_timeout_sec: float = Field(
         default=30.0,
         alias="APP_POSTGRES_READY_TIMEOUT_SEC",
@@ -36,71 +33,33 @@ class ApiSettings(BaseEnvSettings):
 
 class DatabaseSettings(BaseEnvSettings):
     dsn: str = Field(default="", alias="DB_DSN")
-    batch_dsn: str = Field(default="", alias="BATCH_POSTGRES_DSN")
 
 
 class StorageSettings(BaseEnvSettings):
-    backend: str = Field(default="s3", alias="ARTIFACTS_BACKEND")
-    local_root: Path = Field(
-        default=Path("runtime/artifacts"),
-        alias="ARTIFACTS_LOCAL_ROOT",
-    )
-    strict: bool = Field(default=True, alias="ARTIFACTS_S3_STRICT")
     s3_endpoint: str = Field(default="", alias="ARTIFACTS_S3_ENDPOINT")
-    s3_region: str = Field(default="us-east-1", alias="ARTIFACTS_S3_REGION")
+    s3_region: str = Field(default="ru-central1", alias="ARTIFACTS_S3_REGION")
     s3_access_key_id: str = Field(default="", alias="ARTIFACTS_S3_ACCESS_KEY_ID")
     s3_secret_access_key: str = Field(
         default="", alias="ARTIFACTS_S3_SECRET_ACCESS_KEY"
     )
     s3_bucket: str = Field(default="", alias="ARTIFACTS_S3_BUCKET")
-    s3_prefix: str = Field(default="batch", alias="ARTIFACTS_S3_PREFIX")
+    s3_prefix: str = Field(default="missions", alias="ARTIFACTS_S3_PREFIX")
+
+
+class RpiSettings(BaseEnvSettings):
+    base_url: str = Field(default="", alias="RPI_BASE_URL")
+    missions_dir: str = Field(default="", alias="RPI_MISSIONS_DIR")
+    rtsp_port: int = Field(default=0, alias="RPI_RTSP_PORT")
+    rtsp_path_prefix: str = Field(default="live", alias="RPI_RTSP_PATH_PREFIX")
+    timeout_sec: float = Field(default=10.0, alias="RPI_TIMEOUT_SEC")
 
 
 class BatchSettings(BaseEnvSettings):
-    runtime_env: str = Field(default="local", alias="BATCH_RUNTIME_ENV")
-    status_backend: str = Field(default="", alias="BATCH_STATUS_BACKEND")
-    artifact_backend: str = Field(default="", alias="BATCH_ARTIFACT_BACKEND")
-    model_version: str = Field(
-        default="yolov8n_baseline_multiscale",
-        alias="BATCH_MODEL_VERSION",
-    )
-    code_version: str = Field(default="dev", alias="BATCH_CODE_VERSION")
-    source_fps: float = Field(default=6.0, alias="BATCH_SOURCE_FPS")
-    status_path: Path = Field(
-        default=Path("/opt/airflow/data/status/runs.json"),
-        alias="BATCH_STATUS_PATH",
-    )
-    artifact_root: Path = Field(
-        default=Path("/opt/airflow/data/artifacts"),
-        alias="BATCH_ARTIFACT_ROOT",
-    )
-    mission_root: Path = Field(
-        default=Path("/opt/airflow/data/missions"),
-        alias="BATCH_MISSION_ROOT",
-    )
-    s3_prefix: str = Field(default="batch", alias="BATCH_S3_PREFIX")
-
-
-class SyncSettings(BaseEnvSettings):
-    enabled: bool = Field(default=False, alias="SYNC_ENABLED")
-    remote_postgres_dsn: str = Field(default="", alias="SYNC_REMOTE_POSTGRES_DSN")
-    poll_interval_sec: float = Field(default=10.0, alias="SYNC_POLL_INTERVAL_SEC")
-    batch_size: int = Field(default=50, alias="SYNC_BATCH_SIZE")
-    backoff_initial_sec: float = Field(default=5.0, alias="SYNC_BACKOFF_INITIAL_SEC")
-    backoff_max_sec: float = Field(default=300.0, alias="SYNC_BACKOFF_MAX_SEC")
-    stuck_timeout_sec: float = Field(default=60.0, alias="SYNC_STUCK_TIMEOUT_SEC")
-    delete_local_after_sync: bool = Field(
-        default=False, alias="SYNC_DELETE_LOCAL_AFTER_SYNC"
-    )
-    s3_prefix: str = Field(default="missions", alias="SYNC_S3_PREFIX")
+    """Reserved for future batch-specific runtime settings."""
 
 
 class DetectionSettings(BaseEnvSettings):
     http_timeout_sec: float = Field(default=1.0, alias="DETECTION_HTTP_TIMEOUT_SEC")
-
-
-class SecretsSettings(BaseEnvSettings):
-    online_api_token: str = Field(default="", alias="ONLINE_API_TOKEN")
 
 
 class Settings(BaseSettings):
@@ -108,10 +67,9 @@ class Settings(BaseSettings):
     api: ApiSettings
     database: DatabaseSettings
     storage: StorageSettings
+    rpi: RpiSettings
     batch: BatchSettings
-    sync: SyncSettings
     detection: DetectionSettings
-    secrets: SecretsSettings
 
 
 @lru_cache(maxsize=1)
@@ -121,8 +79,7 @@ def get_settings() -> Settings:
         api=ApiSettings(),
         database=DatabaseSettings(),
         storage=StorageSettings(),
+        rpi=RpiSettings(),
         batch=BatchSettings(),
-        sync=SyncSettings(),
         detection=DetectionSettings(),
-        secrets=SecretsSettings(),
     )

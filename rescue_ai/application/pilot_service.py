@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Protocol, cast
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
 
 from rescue_ai.domain.alert_policy import MissionAlertState, evaluate_alert
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
@@ -89,8 +89,19 @@ class PilotService:
         The repository auto-generates a human-readable slug
         (e.g. ``2026-03-28/mission-1``) based on the creation date.
         """
+        mission_id = _stable_mission_id(source_name)
+        existing = self._deps.mission_repository.get(mission_id)
+        if existing is not None:
+            updated = self._deps.mission_repository.update_details(
+                mission_id,
+                source_name=source_name,
+                total_frames=total_frames,
+                fps=fps,
+            )
+            return updated if updated is not None else existing
+
         mission = Mission(
-            mission_id=str(uuid4()),
+            mission_id=mission_id,
             source_name=source_name,
             status="created",
             created_at=_utc_now_iso(),
@@ -350,7 +361,10 @@ class PilotService:
         people_detected: int,
     ) -> Alert:
         alert = Alert(
-            alert_id=str(uuid4()),
+            alert_id=_stable_alert_id(
+                mission_id=frame_event.mission_id,
+                frame_id=frame_event.frame_id,
+            ),
             mission_id=frame_event.mission_id,
             frame_id=frame_event.frame_id,
             ts_sec=frame_event.ts_sec,
@@ -364,3 +378,11 @@ class PilotService:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _stable_mission_id(source_name: str) -> str:
+    return str(uuid5(NAMESPACE_URL, f"rescue-ai/mission/{source_name}"))
+
+
+def _stable_alert_id(mission_id: str, frame_id: int) -> str:
+    return str(uuid5(NAMESPACE_URL, f"rescue-ai/alert/{mission_id}/{frame_id}"))
