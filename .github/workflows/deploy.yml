@@ -150,23 +150,23 @@ jobs:
             mkdir -p "$APP_DIR"
             mkdir -p "$APP_DIR/infra"
 
-            cat > "$APP_DIR/.env" <<'ENVFILE'
-            APP_HOST=0.0.0.0
-            APP_PORT=8000
-            APP_POSTGRES_READY_TIMEOUT_SEC=30
-            DB_DSN=${{ secrets.DB_DSN }}
-            ARTIFACTS_S3_ENDPOINT=${{ secrets.ARTIFACTS_S3_ENDPOINT }}
-            ARTIFACTS_S3_REGION=${{ secrets.ARTIFACTS_S3_REGION }}
-            ARTIFACTS_S3_ACCESS_KEY_ID=${{ secrets.ARTIFACTS_S3_ACCESS_KEY_ID }}
-            ARTIFACTS_S3_SECRET_ACCESS_KEY=${{ secrets.ARTIFACTS_S3_SECRET_ACCESS_KEY }}
-            ARTIFACTS_S3_BUCKET=${{ secrets.ARTIFACTS_S3_BUCKET }}
-            ARTIFACTS_S3_PREFIX=missions
-            RPI_BASE_URL=${{ secrets.RPI_BASE_URL }}
-            RPI_MISSIONS_DIR=${{ secrets.RPI_MISSIONS_DIR }}
-            RPI_RTSP_PORT=${{ secrets.RPI_RTSP_PORT }}
-            RPI_RTSP_PATH_PREFIX=live
-            RPI_TIMEOUT_SEC=10
-            ENVFILE
+            {
+              printf 'APP_HOST=%s\n' '0.0.0.0'
+              printf 'APP_PORT=%s\n' '8000'
+              printf 'APP_POSTGRES_READY_TIMEOUT_SEC=%s\n' '30'
+              printf 'DB_DSN=%s\n' '${{ secrets.DB_DSN }}'
+              printf 'ARTIFACTS_S3_ENDPOINT=%s\n' '${{ secrets.ARTIFACTS_S3_ENDPOINT }}'
+              printf 'ARTIFACTS_S3_REGION=%s\n' '${{ secrets.ARTIFACTS_S3_REGION }}'
+              printf 'ARTIFACTS_S3_ACCESS_KEY_ID=%s\n' '${{ secrets.ARTIFACTS_S3_ACCESS_KEY_ID }}'
+              printf 'ARTIFACTS_S3_SECRET_ACCESS_KEY=%s\n' '${{ secrets.ARTIFACTS_S3_SECRET_ACCESS_KEY }}'
+              printf 'ARTIFACTS_S3_BUCKET=%s\n' '${{ secrets.ARTIFACTS_S3_BUCKET }}'
+              printf 'ARTIFACTS_S3_PREFIX=%s\n' 'missions'
+              printf 'RPI_BASE_URL=%s\n' '${{ secrets.RPI_BASE_URL }}'
+              printf 'RPI_MISSIONS_DIR=%s\n' '${{ secrets.RPI_MISSIONS_DIR }}'
+              printf 'RPI_RTSP_PORT=%s\n' '${{ secrets.RPI_RTSP_PORT }}'
+              printf 'RPI_RTSP_PATH_PREFIX=%s\n' 'live'
+              printf 'RPI_TIMEOUT_SEC=%s\n' '10'
+            } > "$APP_DIR/.env"
 
             cp "$APP_DIR/.env" "$APP_DIR/infra/platform.env"
             {
