@@ -7,8 +7,31 @@ on:
   workflow_dispatch:
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      images_changed: ${{ steps.filter.outputs.images }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect image-impacting changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            images:
+              - 'Dockerfile'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'rescue_ai/**'
+              - 'configs/**'
+              - 'scripts/**'
+
   build-online:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.images_changed == 'true'
     permissions:
       contents: read
       packages: write
@@ -33,12 +56,16 @@ jobs:
           context: .
           target: online
           push: true
+          cache-from: type=gha,scope=rescue-ai-online
+          cache-to: type=gha,scope=rescue-ai-online,mode=max
           tags: |
             ghcr.io/${{ github.repository_owner }}/rescue-ai-online:latest
             ghcr.io/${{ github.repository_owner }}/rescue-ai-online:sha-${{ github.sha }}
 
   build-batch:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.images_changed == 'true'
     permissions:
       contents: read
       packages: write
@@ -63,13 +90,20 @@ jobs:
           context: .
           target: batch
           push: true
+          cache-from: type=gha,scope=rescue-ai-batch
+          cache-to: type=gha,scope=rescue-ai-batch,mode=max
           tags: |
             ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:latest
             ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:sha-${{ github.sha }}
 
   deploy:
     runs-on: ubuntu-latest
+    if: |
+      always() &&
+      (needs.build-online.result == 'success' || needs.build-online.result == 'skipped') &&
+      (needs.build-batch.result == 'success' || needs.build-batch.result == 'skipped')
     needs:
+      - changes
       - build-online
       - build-batch
     permissions:
@@ -100,8 +134,13 @@ jobs:
           script: |
             set -euo pipefail
 
-            ONLINE_IMAGE="ghcr.io/${{ github.repository_owner }}/rescue-ai-online:sha-${{ github.sha }}"
-            BATCH_IMAGE="ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:sha-${{ github.sha }}"
+            IMAGE_TAG="latest"
+            if [ "${{ needs.changes.outputs.images_changed }}" = "true" ]; then
+              IMAGE_TAG="sha-${{ github.sha }}"
+            fi
+
+            ONLINE_IMAGE="ghcr.io/${{ github.repository_owner }}/rescue-ai-online:${IMAGE_TAG}"
+            BATCH_IMAGE="ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:${IMAGE_TAG}"
             APP_DIR="$HOME/rescue-ai"
             AIRFLOW_DB_DSN="${{ secrets.AIRFLOW_DB_DSN }}"
             DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
@@ -136,7 +175,7 @@ jobs:
             AIRFLOW_ADMIN_USER=${{ secrets.AIRFLOW_ADMIN_USER }}
             AIRFLOW_ADMIN_PASSWORD=${{ secrets.AIRFLOW_ADMIN_PASSWORD }}
             AIRFLOW_ADMIN_EMAIL=${{ secrets.AIRFLOW_ADMIN_EMAIL }}
-            BATCH_IMAGE=ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:sha-${{ github.sha }}
+            BATCH_IMAGE=$BATCH_IMAGE
             ENVFILE
 
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
@@ -156,7 +195,13 @@ jobs:
               -p 8000:8000 \
               "$ONLINE_IMAGE"
 
+            # Run Airflow init in foreground: immediate logs and fast-fail.
             docker compose \
               -f "$APP_DIR/infra/docker-compose.platform.yml" \
               --env-file "$APP_DIR/infra/platform.env" \
-              up -d airflow-init airflow-webserver airflow-scheduler
+              run --rm airflow-init
+
+            docker compose \
+              -f "$APP_DIR/infra/docker-compose.platform.yml" \
+              --env-file "$APP_DIR/infra/platform.env" \
+              up -d airflow-webserver airflow-scheduler
