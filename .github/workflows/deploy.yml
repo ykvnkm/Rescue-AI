@@ -178,9 +178,50 @@ jobs:
               printf 'BATCH_IMAGE=%s\n' "$BATCH_IMAGE"
             } >> "$APP_DIR/infra/platform.env"
 
+            echo "=== Deploy diagnostics: host and docker ==="
+            date -u
+            uname -a
+            docker --version
+            docker compose version
+
+            echo "=== Deploy diagnostics: env keys and lengths ==="
+            awk -F= '{ v=substr($0, index($0, "=")+1); printf "%s %d\n", $1, length(v) }' "$APP_DIR/infra/platform.env" | sort
+
+            echo "=== Deploy diagnostics: unresolved placeholders in env file ==="
+            grep -n '\${[^}]*}' "$APP_DIR/infra/platform.env" || true
+
+            DB_HOST="$(awk -F'[@/:?]' '/^DB_DSN=/{print $4; exit}' "$APP_DIR/infra/platform.env")"
+            DB_PORT="$(awk -F'[@/:?]' '/^DB_DSN=/{print $5; exit}' "$APP_DIR/infra/platform.env")"
+            AIRFLOW_DB_HOST="$(awk -F'[@/:?]' '/^AIRFLOW_DB_DSN=/{print $4; exit}' "$APP_DIR/infra/platform.env")"
+            AIRFLOW_DB_PORT="$(awk -F'[@/:?]' '/^AIRFLOW_DB_DSN=/{print $5; exit}' "$APP_DIR/infra/platform.env")"
+            echo "DB host=$DB_HOST port=$DB_PORT"
+            echo "AIRFLOW_DB host=$AIRFLOW_DB_HOST port=$AIRFLOW_DB_PORT"
+
+            echo "=== Deploy diagnostics: DNS resolution ==="
+            getent ahosts "$DB_HOST" || true
+            getent ahosts "$AIRFLOW_DB_HOST" || true
+
+            echo "=== Deploy diagnostics: TCP reachability ==="
+            python3 -c "import socket; h='$DB_HOST'; p=int('${DB_PORT:-5432}'); print(f'TCP check DB_DSN {h}:{p}'); s=socket.create_connection((h,p),4); s.close(); print('TCP result DB_DSN: ok')"
+            python3 -c "import socket; h='$AIRFLOW_DB_HOST'; p=int('${AIRFLOW_DB_PORT:-5432}'); print(f'TCP check AIRFLOW_DB_DSN {h}:{p}'); s=socket.create_connection((h,p),4); s.close(); print('TCP result AIRFLOW_DB_DSN: ok')"
+
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
             docker pull "$ONLINE_IMAGE"
             docker pull "$BATCH_IMAGE"
+
+            echo "=== Deploy diagnostics: psycopg preflight DB_DSN ==="
+            docker run --rm \
+              --env-file "$APP_DIR/infra/platform.env" \
+              -e CHECK_DSN_KEY=DB_DSN \
+              "$ONLINE_IMAGE" \
+              python -c "import os, psycopg; k=os.environ['CHECK_DSN_KEY']; dsn=os.environ[k]; print(f'checking {k}'); conn=psycopg.connect(dsn, connect_timeout=10); cur=conn.cursor(); cur.execute('select 1'); print('result', cur.fetchone()); conn.close()"
+
+            echo "=== Deploy diagnostics: psycopg preflight AIRFLOW_DB_DSN ==="
+            docker run --rm \
+              --env-file "$APP_DIR/infra/platform.env" \
+              -e CHECK_DSN_KEY=AIRFLOW_DB_DSN \
+              "$ONLINE_IMAGE" \
+              python -c "import os, psycopg; k=os.environ['CHECK_DSN_KEY']; dsn=os.environ[k]; print(f'checking {k}'); conn=psycopg.connect(dsn, connect_timeout=10); cur=conn.cursor(); cur.execute('select 1'); print('result', cur.fetchone()); conn.close()"
 
             docker run --rm \
               --env-file "$APP_DIR/.env" \
@@ -201,6 +242,7 @@ jobs:
               --env-file "$APP_DIR/infra/platform.env" \
               up --no-deps --abort-on-container-exit --exit-code-from airflow-init airflow-init; then
               echo "airflow-init timed out or failed; dumping diagnostics"
+              docker ps -a || true
               docker compose \
                 -f "$APP_DIR/infra/docker-compose.platform.yml" \
                 --env-file "$APP_DIR/infra/platform.env" \
@@ -209,6 +251,10 @@ jobs:
                 -f "$APP_DIR/infra/docker-compose.platform.yml" \
                 --env-file "$APP_DIR/infra/platform.env" \
                 logs --no-color --tail=200 airflow-init || true
+              docker compose \
+                -f "$APP_DIR/infra/docker-compose.platform.yml" \
+                --env-file "$APP_DIR/infra/platform.env" \
+                config || true
               exit 1
             fi
 
