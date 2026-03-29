@@ -5,8 +5,9 @@ x-airflow-common: &airflow-common
     context: .
     dockerfile: airflow/Dockerfile
     network: host
-  image: rescue-airflow:local
-  user: "0:0"
+  image: rescue-ai-airflow:latest
+  group_add:
+    - "${DOCKER_GID}"
   env_file:
     - ${PLATFORM_ENV_FILE:-./platform.env}
   environment:

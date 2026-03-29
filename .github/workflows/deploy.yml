@@ -104,6 +104,7 @@ jobs:
             BATCH_IMAGE="ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:sha-${{ github.sha }}"
             APP_DIR="$HOME/rescue-ai"
             AIRFLOW_DB_DSN="${{ secrets.AIRFLOW_DB_DSN }}"
+            DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
             if [ -z "$AIRFLOW_DB_DSN" ]; then
               AIRFLOW_DB_DSN="${{ secrets.DB_DSN }}"
             fi
@@ -131,13 +132,14 @@ jobs:
             cp "$APP_DIR/.env" "$APP_DIR/infra/platform.env"
             cat >> "$APP_DIR/infra/platform.env" <<ENVFILE
             AIRFLOW_DB_DSN=$AIRFLOW_DB_DSN
+            DOCKER_GID=$DOCKER_GID
             AIRFLOW_ADMIN_USER=${{ secrets.AIRFLOW_ADMIN_USER }}
             AIRFLOW_ADMIN_PASSWORD=${{ secrets.AIRFLOW_ADMIN_PASSWORD }}
             AIRFLOW_ADMIN_EMAIL=${{ secrets.AIRFLOW_ADMIN_EMAIL }}
             BATCH_IMAGE=ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:sha-${{ github.sha }}
             ENVFILE
 
-            docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" -p "${{ secrets.GHCR_TOKEN }}"
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
             docker pull "$ONLINE_IMAGE"
             docker pull "$BATCH_IMAGE"
 
