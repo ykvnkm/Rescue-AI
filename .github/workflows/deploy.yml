@@ -190,20 +190,27 @@ jobs:
             echo "=== Deploy diagnostics: unresolved placeholders in env file ==="
             grep -n '\${[^}]*}' "$APP_DIR/infra/platform.env" || true
 
-            DB_HOST="$(awk -F'[@/:?]' '/^DB_DSN=/{print $4; exit}' "$APP_DIR/infra/platform.env")"
-            DB_PORT="$(awk -F'[@/:?]' '/^DB_DSN=/{print $5; exit}' "$APP_DIR/infra/platform.env")"
-            AIRFLOW_DB_HOST="$(awk -F'[@/:?]' '/^AIRFLOW_DB_DSN=/{print $4; exit}' "$APP_DIR/infra/platform.env")"
-            AIRFLOW_DB_PORT="$(awk -F'[@/:?]' '/^AIRFLOW_DB_DSN=/{print $5; exit}' "$APP_DIR/infra/platform.env")"
-            echo "DB host=$DB_HOST port=$DB_PORT"
-            echo "AIRFLOW_DB host=$AIRFLOW_DB_HOST port=$AIRFLOW_DB_PORT"
+            DB_DSN_RAW="$(sed -n 's/^DB_DSN=//p' "$APP_DIR/infra/platform.env" | head -n 1)"
+            AIRFLOW_DB_DSN_RAW="$(sed -n 's/^AIRFLOW_DB_DSN=//p' "$APP_DIR/infra/platform.env" | head -n 1)"
 
-            echo "=== Deploy diagnostics: DNS resolution ==="
-            getent ahosts "$DB_HOST" || true
-            getent ahosts "$AIRFLOW_DB_HOST" || true
-
-            echo "=== Deploy diagnostics: TCP reachability ==="
-            python3 -c "import socket; h='$DB_HOST'; p=int('${DB_PORT:-5432}'); print(f'TCP check DB_DSN {h}:{p}'); s=socket.create_connection((h,p),4); s.close(); print('TCP result DB_DSN: ok')"
-            python3 -c "import socket; h='$AIRFLOW_DB_HOST'; p=int('${AIRFLOW_DB_PORT:-5432}'); print(f'TCP check AIRFLOW_DB_DSN {h}:{p}'); s=socket.create_connection((h,p),4); s.close(); print('TCP result AIRFLOW_DB_DSN: ok')"
+            echo "=== Deploy diagnostics: DNS resolution + TCP reachability ==="
+            DB_DSN_RAW="$DB_DSN_RAW" AIRFLOW_DB_DSN_RAW="$AIRFLOW_DB_DSN_RAW" python3 -c "import os, socket; from urllib.parse import urlsplit
+def check(name, dsn):
+    parts = urlsplit(dsn)
+    host = parts.hostname
+    port = parts.port or 5432
+    if not host:
+        raise RuntimeError(f'{name}: cannot parse host from DSN')
+    print(f'{name} host={host} port={port}')
+    print(f'DNS check {name}:')
+    for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+        print(' ', item[4][0])
+    print(f'TCP check {name} {host}:{port}')
+    s = socket.create_connection((host, port), 4)
+    s.close()
+    print(f'TCP result {name}: ok')
+check('DB_DSN', os.environ['DB_DSN_RAW'])
+check('AIRFLOW_DB_DSN', os.environ['AIRFLOW_DB_DSN_RAW'])"
 
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
             docker pull "$ONLINE_IMAGE"
