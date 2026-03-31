@@ -23,6 +23,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 COPY configs ./configs
 COPY rescue_ai ./rescue_ai
 COPY scripts ./scripts
+COPY infra/postgres/init ./infra/postgres/init
 RUN mkdir -p /app/runtime
 
 FROM base AS online
