@@ -1535,6 +1535,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "boto3" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pydantic-settings" },
     { name = "pyyaml" },
     { name = "uvicorn", extra = ["standard"] },
@@ -1571,6 +1572,7 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'batch'", specifier = "==1.42.65" },
     { name = "fastapi", specifier = "==0.115.8" },
     { name = "flake8", marker = "extra == 'dev'", specifier = "==7.1.1" },
+    { name = "httpx", specifier = "==0.27.2" },
     { name = "httpx", marker = "extra == 'dev'", specifier = "==0.27.2" },
     { name = "isort", marker = "extra == 'dev'", specifier = "==5.13.2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.11.2" },

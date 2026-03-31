@@ -37,26 +37,23 @@ jobs:
         run: uv sync --extra dev --extra batch
 
       - name: Run black
-        run: uv run black --check rescue_ai tests scripts
+        run: uv run black --check rescue_ai tests scripts infra
 
       - name: Run isort
-        run: uv run isort --check-only rescue_ai tests scripts
+        run: uv run isort --check-only rescue_ai tests scripts infra
 
       - name: Run flake8
-        run: uv run flake8 rescue_ai tests scripts
+        run: uv run flake8 rescue_ai tests scripts infra
 
       - name: Run mypy
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run mypy rescue_ai tests scripts
+        run: uv run mypy rescue_ai tests scripts infra
 
       - name: Run pylint
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pylint rescue_ai tests scripts
-
-      - name: Validate batch DAG syntax
-        run: python -m py_compile infra/airflow/dags/rescue_batch_daily.py
+        run: uv run pylint rescue_ai tests scripts infra
 
   test:
     runs-on: ubuntu-latest

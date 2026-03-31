@@ -6,33 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ── 1. Detect if Docker images need rebuilding ────────────────
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      app: ${{ steps.filter.outputs.app }}
-      airflow: ${{ steps.filter.outputs.airflow }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            app:
-              - 'Dockerfile'
-              - 'pyproject.toml'
-              - 'uv.lock'
-              - 'rescue_ai/**'
-              - 'configs/**'
-              - 'scripts/**'
-            airflow:
-              - 'infra/airflow/**'
-
-  # ── 2. Build and push images to GHCR ──────────────────────────
   build-online:
     runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.app == 'true'
     permissions: { contents: read, packages: write }
     steps:
       - uses: actions/checkout@v4
@@ -51,12 +26,10 @@ jobs:
           cache-to: type=gha,scope=online,mode=max
           tags: |
             ghcr.io/${{ github.repository_owner }}/rescue-ai-online:latest
-            ghcr.io/${{ github.repository_owner }}/rescue-ai-online:sha-${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/rescue-ai-online:${{ github.sha }}
 
   build-batch:
     runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.app == 'true'
     permissions: { contents: read, packages: write }
     steps:
       - uses: actions/checkout@v4
@@ -75,39 +48,11 @@ jobs:
           cache-to: type=gha,scope=batch,mode=max
           tags: |
             ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:latest
-            ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:sha-${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:${{ github.sha }}
 
-  build-airflow:
-    runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.airflow == 'true'
-    permissions: { contents: read, packages: write }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: infra/airflow
-          push: true
-          cache-from: type=gha,scope=airflow
-          cache-to: type=gha,scope=airflow,mode=max
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/rescue-ai-airflow:latest
-            ghcr.io/${{ github.repository_owner }}/rescue-ai-airflow:sha-${{ github.sha }}
-
-  # ── 3. Deploy to remote server ────────────────────────────────
   deploy:
     runs-on: ubuntu-latest
-    needs: [changes, build-online, build-batch, build-airflow]
-    if: |
-      always() &&
-      !contains(needs.*.result, 'failure') &&
-      !contains(needs.*.result, 'cancelled')
+    needs: [build-online, build-batch]
     permissions: { contents: read, packages: read }
 
     steps:
@@ -137,16 +82,18 @@ jobs:
           RPI_RTSP_PORT: ${{ secrets.RPI_RTSP_PORT }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          AIRFLOW_DB_USER: ${{ secrets.AIRFLOW_DB_USER }}
+          AIRFLOW_DB_PASSWORD: ${{ secrets.AIRFLOW_DB_PASSWORD }}
           AIRFLOW_ADMIN_USER: ${{ secrets.AIRFLOW_ADMIN_USER }}
           AIRFLOW_ADMIN_PASSWORD: ${{ secrets.AIRFLOW_ADMIN_PASSWORD }}
           AIRFLOW_ADMIN_EMAIL: ${{ secrets.AIRFLOW_ADMIN_EMAIL }}
-          APP_CHANGED: ${{ needs.changes.outputs.app }}
           GIT_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: DB_DSN,ARTIFACTS_S3_ENDPOINT,ARTIFACTS_S3_REGION,ARTIFACTS_S3_ACCESS_KEY_ID,ARTIFACTS_S3_SECRET_ACCESS_KEY,ARTIFACTS_S3_BUCKET,RPI_BASE_URL,RPI_MISSIONS_DIR,RPI_RTSP_PORT,GHCR_TOKEN,GHCR_USERNAME,AIRFLOW_ADMIN_USER,AIRFLOW_ADMIN_PASSWORD,AIRFLOW_ADMIN_EMAIL,APP_CHANGED,GIT_SHA
+          envs: DB_DSN,ARTIFACTS_S3_ENDPOINT,ARTIFACTS_S3_REGION,ARTIFACTS_S3_ACCESS_KEY_ID,ARTIFACTS_S3_SECRET_ACCESS_KEY,ARTIFACTS_S3_BUCKET,RPI_BASE_URL,RPI_MISSIONS_DIR,RPI_RTSP_PORT,GHCR_TOKEN,GHCR_USERNAME,AIRFLOW_DB_USER,AIRFLOW_DB_PASSWORD,AIRFLOW_ADMIN_USER,AIRFLOW_ADMIN_PASSWORD,AIRFLOW_ADMIN_EMAIL,GIT_SHA
+          command_timeout: 10m
           script_stop: true
           script: |
             set -euo pipefail
@@ -154,22 +101,18 @@ jobs:
             APP_DIR="$HOME/rescue-ai"
             OWNER="ykvnkm"
 
-            # ── Resolve image tags ──
-            TAG="latest"
-            if [ "${APP_CHANGED}" = "true" ]; then
-              TAG="sha-${GIT_SHA}"
-            fi
-
-            export ONLINE_IMAGE="ghcr.io/${OWNER}/rescue-ai-online:${TAG}"
-            export BATCH_IMAGE="ghcr.io/${OWNER}/rescue-ai-batch:${TAG}"
-            export AIRFLOW_IMAGE="ghcr.io/${OWNER}/rescue-ai-airflow:latest"
+            export ONLINE_IMAGE="ghcr.io/${OWNER}/rescue-ai-online:${GIT_SHA}"
+            export BATCH_IMAGE="ghcr.io/${OWNER}/rescue-ai-batch:${GIT_SHA}"
             export DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
 
-            # ── Login to GHCR and pull images ──
+            # ── Login to GHCR and pull app images ──
             echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
             docker pull "${ONLINE_IMAGE}"
             docker pull "${BATCH_IMAGE}"
-            docker pull "${AIRFLOW_IMAGE}"
+
+            # ── Build Airflow image on server ──
+            export AIRFLOW_IMAGE="rescue-ai-airflow:latest"
+            docker build -t "${AIRFLOW_IMAGE}" "${APP_DIR}/infra/airflow"
 
             # ── Write .env for online service ──
             cat > "${APP_DIR}/.env" <<ENVEOF
@@ -191,10 +134,9 @@ jobs:
             sed -i 's/^[[:space:]]*//' "${APP_DIR}/.env"
 
             # ── Write platform.env for Airflow stack ──
-            # Used both for compose interpolation (--env-file) and container env (env_file:)
             cat > "${APP_DIR}/infra/platform.env" <<ENVEOF
-            AIRFLOW_DB_USER=airflow
-            AIRFLOW_DB_PASSWORD=airflow
+            AIRFLOW_DB_USER=${AIRFLOW_DB_USER}
+            AIRFLOW_DB_PASSWORD=${AIRFLOW_DB_PASSWORD}
             AIRFLOW_ADMIN_USER=${AIRFLOW_ADMIN_USER}
             AIRFLOW_ADMIN_PASSWORD=${AIRFLOW_ADMIN_PASSWORD}
             AIRFLOW_ADMIN_EMAIL=${AIRFLOW_ADMIN_EMAIL}
@@ -214,8 +156,6 @@ jobs:
               "${ONLINE_IMAGE}" \
               uv run python -m rescue_ai.interfaces.cli.init_remote_db
 
-            echo "App schema initialized"
-
             # ── Deploy online service ──
             docker rm -f rescue-ai-online 2>/dev/null || true
             docker run -d \
@@ -225,22 +165,12 @@ jobs:
               -p 8000:8000 \
               "${ONLINE_IMAGE}"
 
-            echo "Online service deployed: ${ONLINE_IMAGE}"
-
             # ── Deploy Airflow stack ──
-            # AIRFLOW_IMAGE, BATCH_IMAGE, DOCKER_GID are exported above —
-            # docker compose reads them from the shell environment.
             cd "${APP_DIR}/infra"
 
             docker compose --env-file platform.env \
               -f docker-compose.platform.yml \
-              pull --ignore-buildable 2>/dev/null || true
-
-            docker compose --env-file platform.env \
-              -f docker-compose.platform.yml \
               up -d airflow-webserver airflow-scheduler
-
-            echo "Airflow stack deployed"
 
             # ── Health check ──
             sleep 5
