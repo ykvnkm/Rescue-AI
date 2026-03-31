@@ -23,7 +23,7 @@ services:
       - airflow_db_data:/var/lib/postgresql/data
 
   airflow-init:
-    image: ${AIRFLOW_IMAGE}
+    image: ${BATCH_IMAGE}
     depends_on:
       airflow-db:
         condition: service_healthy
@@ -42,7 +42,7 @@ services:
     restart: "no"
 
   airflow-webserver:
-    image: ${AIRFLOW_IMAGE}
+    image: ${BATCH_IMAGE}
     restart: unless-stopped
     depends_on:
       airflow-db:
@@ -58,8 +58,6 @@ services:
     env_file:
       - platform.env
     volumes:
-      - ./airflow/dags:/opt/airflow/dags:ro
-      - ./airflow/plugins:/opt/airflow/plugins:ro
       - airflow_logs:/opt/airflow/logs
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:
@@ -69,7 +67,7 @@ services:
     command: webserver
 
   airflow-scheduler:
-    image: ${AIRFLOW_IMAGE}
+    image: ${BATCH_IMAGE}
     restart: unless-stopped
     depends_on:
       airflow-db:
@@ -83,8 +81,6 @@ services:
     env_file:
       - platform.env
     volumes:
-      - ./airflow/dags:/opt/airflow/dags:ro
-      - ./airflow/plugins:/opt/airflow/plugins:ro
       - airflow_logs:/opt/airflow/logs
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:

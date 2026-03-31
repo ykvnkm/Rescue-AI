@@ -55,13 +55,25 @@ def _stage_command(stage: str, mission_id: str) -> str:
     return " ".join(parts)
 
 
+def _parse_mission_from_left(left: str) -> str | None:
+    """Extract mission id from the path segment left of the images/ token."""
+    left = left.rstrip("/")
+    if not left:
+        return None
+    candidate = left.split("/")[-1]
+    mission_id = (
+        candidate.split("=", 1)[1] if candidate.startswith("mission=") else candidate
+    )
+    return mission_id.strip() or None
+
+
 def _extract_mission_id_from_key(key: str, *, ds: str, root_prefix: str) -> str | None:
     """Extract mission id from S3 key for both supported mission layouts."""
     normalized_root = root_prefix.strip("/")
     relative_key = key
     root_with_sep = f"{normalized_root}/" if normalized_root else ""
     if root_with_sep and key.startswith(root_with_sep):
-        relative_key = key[len(root_with_sep) :]
+        relative_key = key.removeprefix(root_with_sep)
 
     lower_key = relative_key.lower()
     if "/images/" not in lower_key:
@@ -69,33 +81,10 @@ def _extract_mission_id_from_key(key: str, *, ds: str, root_prefix: str) -> str 
     if not lower_key.endswith(_ALLOWED_FRAME_EXTENSIONS):
         return None
 
-    partitioned_token = f"/ds={ds}/images/"
-    partitioned_index = relative_key.find(partitioned_token)
-    if partitioned_index >= 0:
-        left = relative_key[:partitioned_index].rstrip("/")
-        if not left:
-            return None
-        candidate = left.split("/")[-1]
-        mission_id = (
-            candidate.split("=", 1)[1]
-            if candidate.startswith("mission=")
-            else candidate
-        )
-        return mission_id.strip() or None
-
-    legacy_token = f"/{ds}/images/"
-    legacy_index = relative_key.find(legacy_token)
-    if legacy_index >= 0:
-        left = relative_key[:legacy_index].rstrip("/")
-        if not left:
-            return None
-        candidate = left.split("/")[-1]
-        mission_id = (
-            candidate.split("=", 1)[1]
-            if candidate.startswith("mission=")
-            else candidate
-        )
-        return mission_id.strip() or None
+    for token in (f"/ds={ds}/images/", f"/{ds}/images/"):
+        index = relative_key.find(token)
+        if index >= 0:
+            return _parse_mission_from_left(relative_key[:index])
     return None
 
 
@@ -134,9 +123,7 @@ def discover_missions(ds: str) -> list[str]:
             key = item.get("Key")
             if not isinstance(key, str):
                 continue
-            mission_id = _extract_mission_id_from_key(
-                key, ds=ds, root_prefix=prefix
-            )
+            mission_id = _extract_mission_id_from_key(key, ds=ds, root_prefix=prefix)
             if mission_id:
                 found.add(mission_id)
     return sorted(found)
@@ -156,22 +143,22 @@ with DAG(
     },
     tags=["rescue-ai", "ml-pipeline", "batch", "backfill"],
 ) as dag:
-    _docker_defaults: dict[str, Any] = dict(
-        image=BATCH_IMAGE,
-        docker_url="unix://var/run/docker.sock",
-        api_version="auto",
-        force_pull=True,
-        auto_remove="success",
-        mount_tmp_dir=False,
-        mounts=[
+    _docker_defaults: dict[str, Any] = {
+        "image": BATCH_IMAGE,
+        "docker_url": "unix://var/run/docker.sock",
+        "api_version": "auto",
+        "force_pull": True,
+        "auto_remove": "success",
+        "mount_tmp_dir": False,
+        "mounts": [
             Mount(
                 source="airflow_shared_data",
                 target="/opt/airflow/data",
                 type="volume",
             )
         ],
-        environment=_COMMON_ENV,
-    )
+        "environment": _COMMON_ENV,
+    }
 
     @task_group(group_id="mission_pipeline")
     def mission_pipeline(mission_id: str) -> None:
@@ -199,6 +186,8 @@ with DAG(
             **_docker_defaults,
         )
 
-        data >> train >> validate >> inference
+        data.set_downstream(train)
+        train.set_downstream(validate)
+        validate.set_downstream(inference)
 
     mission_pipeline.expand(mission_id=discover_missions(ds=DS_TEMPLATE))

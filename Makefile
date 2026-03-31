@@ -19,16 +19,15 @@ install:
 	uv sync --extra dev --extra batch
 
 format:
-	$(UV) black rescue_ai tests scripts
-	$(UV) isort rescue_ai tests scripts
+	$(UV) black rescue_ai tests scripts infra
+	$(UV) isort rescue_ai tests scripts infra
 
 lint:
-	$(UV) black --check rescue_ai tests scripts
-	$(UV) isort --check-only rescue_ai tests scripts
-	$(UV) flake8 rescue_ai tests scripts
-	$(UV) mypy rescue_ai tests scripts
-	$(UV) pylint rescue_ai tests scripts
-	python -m py_compile infra/airflow/dags/rescue_batch_daily.py
+	$(UV) black --check rescue_ai tests scripts infra
+	$(UV) isort --check-only rescue_ai tests scripts infra
+	$(UV) flake8 rescue_ai tests scripts infra
+	$(UV) mypy rescue_ai tests scripts infra
+	$(UV) pylint rescue_ai tests scripts infra
 
 test:
 	$(UV) pytest tests --cov=rescue_ai --cov-fail-under=70

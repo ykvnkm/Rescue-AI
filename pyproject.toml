@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
   "boto3==1.42.65",
   "fastapi==0.115.8",
+  "httpx==0.27.2",
   "pydantic-settings==2.7.1",
   "uvicorn[standard]==0.30.6",
   "PyYAML==6.0.2",
@@ -22,6 +23,10 @@ dev = [
   "mypy==1.11.2",
   "types-PyYAML==6.0.12.20250915",
   "pylint==3.3.1",
+  "apache-airflow==2.9.3",
+  "apache-airflow-providers-docker==3.11.0",
+  "docker>=7.0.0",
+  "pendulum>=3.0.0",
 ]
 inference = [
   "ultralytics==8.3.57",
