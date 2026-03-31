@@ -56,18 +56,6 @@ jobs:
     permissions: { contents: read, packages: read }
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Upload infra files to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          source: "infra/docker-compose.platform.yml,infra/airflow"
-          target: ~/rescue-ai
-          strip_components: 0
-
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -105,14 +93,108 @@ jobs:
             export BATCH_IMAGE="ghcr.io/${OWNER}/rescue-ai-batch:${GIT_SHA}"
             export DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
 
+            mkdir -p "${APP_DIR}/infra"
+
+            cat > "${APP_DIR}/infra/docker-compose.platform.yml" <<'YAMLEOF'
+            name: rescue-platform
+
+            x-airflow-common: &airflow-common
+              environment: &airflow-env
+                AIRFLOW__CORE__EXECUTOR: LocalExecutor
+                AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/airflow
+                AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+
+            services:
+              airflow-db:
+                image: postgres:16
+                restart: unless-stopped
+                environment:
+                  POSTGRES_USER: ${AIRFLOW_DB_USER}
+                  POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+                  POSTGRES_DB: airflow
+                healthcheck:
+                  test: ["CMD-SHELL", "pg_isready -U ${AIRFLOW_DB_USER} -d airflow"]
+                  interval: 5s
+                  timeout: 5s
+                  retries: 10
+                volumes:
+                  - airflow_db_data:/var/lib/postgresql/data
+
+              airflow-init:
+                image: ${BATCH_IMAGE}
+                depends_on:
+                  airflow-db:
+                    condition: service_healthy
+                <<: *airflow-common
+                env_file:
+                  - platform.env
+                command: >-
+                  bash -c "airflow db migrate
+                  && airflow users create
+                  --username $${AIRFLOW_ADMIN_USER}
+                  --firstname Platform
+                  --lastname Admin
+                  --role Admin
+                  --email $${AIRFLOW_ADMIN_EMAIL}
+                  --password $${AIRFLOW_ADMIN_PASSWORD}"
+                restart: "no"
+
+              airflow-webserver:
+                image: ${BATCH_IMAGE}
+                restart: unless-stopped
+                depends_on:
+                  airflow-db:
+                    condition: service_healthy
+                  airflow-init:
+                    condition: service_completed_successfully
+                <<: *airflow-common
+                environment:
+                  <<: *airflow-env
+                  AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
+                  AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+                  BATCH_IMAGE: ${BATCH_IMAGE}
+                env_file:
+                  - platform.env
+                volumes:
+                  - airflow_logs:/opt/airflow/logs
+                  - /var/run/docker.sock:/var/run/docker.sock
+                group_add:
+                  - "${DOCKER_GID}"
+                ports:
+                  - "8080:8080"
+                command: webserver
+
+              airflow-scheduler:
+                image: ${BATCH_IMAGE}
+                restart: unless-stopped
+                depends_on:
+                  airflow-db:
+                    condition: service_healthy
+                  airflow-init:
+                    condition: service_completed_successfully
+                <<: *airflow-common
+                environment:
+                  <<: *airflow-env
+                  BATCH_IMAGE: ${BATCH_IMAGE}
+                env_file:
+                  - platform.env
+                volumes:
+                  - airflow_logs:/opt/airflow/logs
+                  - /var/run/docker.sock:/var/run/docker.sock
+                group_add:
+                  - "${DOCKER_GID}"
+                command: scheduler
+
+            volumes:
+              airflow_db_data:
+              airflow_logs:
+            YAMLEOF
+            sed -i 's/^            //' "${APP_DIR}/infra/docker-compose.platform.yml"
+
             # ── Login to GHCR and pull app images ──
             echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
             docker pull "${ONLINE_IMAGE}"
             docker pull "${BATCH_IMAGE}"
-
-            # ── Build Airflow image on server ──
-            export AIRFLOW_IMAGE="rescue-ai-airflow:latest"
-            docker build -t "${AIRFLOW_IMAGE}" "${APP_DIR}/infra/airflow"
 
             # ── Write .env for online service ──
             cat > "${APP_DIR}/.env" <<ENVEOF
