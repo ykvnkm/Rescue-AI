@@ -2,62 +2,53 @@ name: deploy
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 jobs:
+  # ── 1. Detect if Docker images need rebuilding ────────────────
   changes:
     runs-on: ubuntu-latest
     outputs:
-      images_changed: ${{ steps.filter.outputs.images }}
+      app: ${{ steps.filter.outputs.app }}
+      airflow: ${{ steps.filter.outputs.airflow }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Detect image-impacting changes
-        id: filter
+      - uses: actions/checkout@v4
+      - id: filter
         uses: dorny/paths-filter@v3
         with:
           filters: |
-            images:
+            app:
               - 'Dockerfile'
               - 'pyproject.toml'
               - 'uv.lock'
               - 'rescue_ai/**'
               - 'configs/**'
               - 'scripts/**'
+            airflow:
+              - 'infra/airflow/**'
 
+  # ── 2. Build and push images to GHCR ──────────────────────────
   build-online:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.images_changed == 'true'
-    permissions:
-      contents: read
-      packages: write
-
+    if: needs.changes.outputs.app == 'true'
+    permissions: { contents: read, packages: write }
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push online image
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
           context: .
           target: online
           push: true
-          cache-from: type=gha,scope=rescue-ai-online
-          cache-to: type=gha,scope=rescue-ai-online,mode=max
+          cache-from: type=gha,scope=online
+          cache-to: type=gha,scope=online,mode=max
           tags: |
             ghcr.io/${{ github.repository_owner }}/rescue-ai-online:latest
             ghcr.io/${{ github.repository_owner }}/rescue-ai-online:sha-${{ github.sha }}
@@ -65,56 +56,64 @@ jobs:
   build-batch:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.images_changed == 'true'
-    permissions:
-      contents: read
-      packages: write
-
+    if: needs.changes.outputs.app == 'true'
+    permissions: { contents: read, packages: write }
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push batch image
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
           context: .
           target: batch
           push: true
-          cache-from: type=gha,scope=rescue-ai-batch
-          cache-to: type=gha,scope=rescue-ai-batch,mode=max
+          cache-from: type=gha,scope=batch
+          cache-to: type=gha,scope=batch,mode=max
           tags: |
             ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:latest
             ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:sha-${{ github.sha }}
 
+  build-airflow:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.airflow == 'true'
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: infra/airflow
+          push: true
+          cache-from: type=gha,scope=airflow
+          cache-to: type=gha,scope=airflow,mode=max
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/rescue-ai-airflow:latest
+            ghcr.io/${{ github.repository_owner }}/rescue-ai-airflow:sha-${{ github.sha }}
+
+  # ── 3. Deploy to remote server ────────────────────────────────
   deploy:
     runs-on: ubuntu-latest
+    needs: [changes, build-online, build-batch, build-airflow]
     if: |
       always() &&
-      (needs.build-online.result == 'success' || needs.build-online.result == 'skipped') &&
-      (needs.build-batch.result == 'success' || needs.build-batch.result == 'skipped')
-    needs:
-      - changes
-      - build-online
-      - build-batch
-    permissions:
-      contents: read
-      packages: read
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    permissions: { contents: read, packages: read }
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Upload Airflow infra to server
+      - name: Upload infra files to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -124,153 +123,127 @@ jobs:
           target: ~/rescue-ai
           strip_components: 0
 
-      - name: Deploy online + Airflow DAG stack via SSH
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          DB_DSN: ${{ secrets.DB_DSN }}
+          ARTIFACTS_S3_ENDPOINT: ${{ secrets.ARTIFACTS_S3_ENDPOINT }}
+          ARTIFACTS_S3_REGION: ${{ secrets.ARTIFACTS_S3_REGION }}
+          ARTIFACTS_S3_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_S3_ACCESS_KEY_ID }}
+          ARTIFACTS_S3_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_S3_SECRET_ACCESS_KEY }}
+          ARTIFACTS_S3_BUCKET: ${{ secrets.ARTIFACTS_S3_BUCKET }}
+          RPI_BASE_URL: ${{ secrets.RPI_BASE_URL }}
+          RPI_MISSIONS_DIR: ${{ secrets.RPI_MISSIONS_DIR }}
+          RPI_RTSP_PORT: ${{ secrets.RPI_RTSP_PORT }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          AIRFLOW_ADMIN_USER: ${{ secrets.AIRFLOW_ADMIN_USER }}
+          AIRFLOW_ADMIN_PASSWORD: ${{ secrets.AIRFLOW_ADMIN_PASSWORD }}
+          AIRFLOW_ADMIN_EMAIL: ${{ secrets.AIRFLOW_ADMIN_EMAIL }}
+          APP_CHANGED: ${{ needs.changes.outputs.app }}
+          GIT_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          envs: DB_DSN,ARTIFACTS_S3_ENDPOINT,ARTIFACTS_S3_REGION,ARTIFACTS_S3_ACCESS_KEY_ID,ARTIFACTS_S3_SECRET_ACCESS_KEY,ARTIFACTS_S3_BUCKET,RPI_BASE_URL,RPI_MISSIONS_DIR,RPI_RTSP_PORT,GHCR_TOKEN,GHCR_USERNAME,AIRFLOW_ADMIN_USER,AIRFLOW_ADMIN_PASSWORD,AIRFLOW_ADMIN_EMAIL,APP_CHANGED,GIT_SHA
           script_stop: true
           script: |
             set -euo pipefail
 
-            IMAGE_TAG="latest"
-            if [ "${{ needs.changes.outputs.images_changed }}" = "true" ]; then
-              IMAGE_TAG="sha-${{ github.sha }}"
-            fi
-
-            ONLINE_IMAGE="ghcr.io/${{ github.repository_owner }}/rescue-ai-online:${IMAGE_TAG}"
-            BATCH_IMAGE="ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:${IMAGE_TAG}"
             APP_DIR="$HOME/rescue-ai"
-            AIRFLOW_DB_DSN="${{ secrets.AIRFLOW_DB_DSN }}"
-            DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
-            if [ -z "$AIRFLOW_DB_DSN" ]; then
-              AIRFLOW_DB_DSN="${{ secrets.DB_DSN }}"
+            OWNER="ykvnkm"
+
+            # ── Resolve image tags ──
+            TAG="latest"
+            if [ "${APP_CHANGED}" = "true" ]; then
+              TAG="sha-${GIT_SHA}"
             fi
-            mkdir -p "$APP_DIR"
-            mkdir -p "$APP_DIR/infra"
 
-            {
-              printf 'APP_HOST=%s\n' '0.0.0.0'
-              printf 'APP_PORT=%s\n' '8000'
-              printf 'APP_POSTGRES_READY_TIMEOUT_SEC=%s\n' '30'
-              printf 'DB_DSN=%s\n' '${{ secrets.DB_DSN }}'
-              printf 'ARTIFACTS_S3_ENDPOINT=%s\n' '${{ secrets.ARTIFACTS_S3_ENDPOINT }}'
-              printf 'ARTIFACTS_S3_REGION=%s\n' '${{ secrets.ARTIFACTS_S3_REGION }}'
-              printf 'ARTIFACTS_S3_ACCESS_KEY_ID=%s\n' '${{ secrets.ARTIFACTS_S3_ACCESS_KEY_ID }}'
-              printf 'ARTIFACTS_S3_SECRET_ACCESS_KEY=%s\n' '${{ secrets.ARTIFACTS_S3_SECRET_ACCESS_KEY }}'
-              printf 'ARTIFACTS_S3_BUCKET=%s\n' '${{ secrets.ARTIFACTS_S3_BUCKET }}'
-              printf 'ARTIFACTS_S3_PREFIX=%s\n' 'missions'
-              printf 'RPI_BASE_URL=%s\n' '${{ secrets.RPI_BASE_URL }}'
-              printf 'RPI_MISSIONS_DIR=%s\n' '${{ secrets.RPI_MISSIONS_DIR }}'
-              printf 'RPI_RTSP_PORT=%s\n' '${{ secrets.RPI_RTSP_PORT }}'
-              printf 'RPI_RTSP_PATH_PREFIX=%s\n' 'live'
-              printf 'RPI_TIMEOUT_SEC=%s\n' '10'
-            } > "$APP_DIR/.env"
+            export ONLINE_IMAGE="ghcr.io/${OWNER}/rescue-ai-online:${TAG}"
+            export BATCH_IMAGE="ghcr.io/${OWNER}/rescue-ai-batch:${TAG}"
+            export AIRFLOW_IMAGE="ghcr.io/${OWNER}/rescue-ai-airflow:latest"
+            export DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
 
-            cp "$APP_DIR/.env" "$APP_DIR/infra/platform.env"
-            {
-              printf 'AIRFLOW_DB_DSN=%s\n' "$AIRFLOW_DB_DSN"
-              printf 'DOCKER_GID=%s\n' "$DOCKER_GID"
-              printf 'AIRFLOW_ADMIN_USER=%s\n' '${{ secrets.AIRFLOW_ADMIN_USER }}'
-              printf 'AIRFLOW_ADMIN_PASSWORD=%s\n' '${{ secrets.AIRFLOW_ADMIN_PASSWORD }}'
-              printf 'AIRFLOW_ADMIN_EMAIL=%s\n' '${{ secrets.AIRFLOW_ADMIN_EMAIL }}'
-              printf 'BATCH_IMAGE=%s\n' "$BATCH_IMAGE"
-            } >> "$APP_DIR/infra/platform.env"
+            # ── Login to GHCR and pull images ──
+            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+            docker pull "${ONLINE_IMAGE}"
+            docker pull "${BATCH_IMAGE}"
+            docker pull "${AIRFLOW_IMAGE}"
 
-            echo "=== Deploy diagnostics: host and docker ==="
-            date -u
-            uname -a
-            docker --version
-            docker compose version
+            # ── Write .env for online service ──
+            cat > "${APP_DIR}/.env" <<ENVEOF
+            APP_HOST=0.0.0.0
+            APP_PORT=8000
+            DB_DSN=${DB_DSN}
+            ARTIFACTS_S3_ENDPOINT=${ARTIFACTS_S3_ENDPOINT}
+            ARTIFACTS_S3_REGION=${ARTIFACTS_S3_REGION}
+            ARTIFACTS_S3_ACCESS_KEY_ID=${ARTIFACTS_S3_ACCESS_KEY_ID}
+            ARTIFACTS_S3_SECRET_ACCESS_KEY=${ARTIFACTS_S3_SECRET_ACCESS_KEY}
+            ARTIFACTS_S3_BUCKET=${ARTIFACTS_S3_BUCKET}
+            ARTIFACTS_S3_PREFIX=missions
+            RPI_BASE_URL=${RPI_BASE_URL}
+            RPI_MISSIONS_DIR=${RPI_MISSIONS_DIR}
+            RPI_RTSP_PORT=${RPI_RTSP_PORT}
+            RPI_RTSP_PATH_PREFIX=live
+            RPI_TIMEOUT_SEC=10
+            ENVEOF
+            sed -i 's/^[[:space:]]*//' "${APP_DIR}/.env"
 
-            echo "=== Deploy diagnostics: env keys and lengths ==="
-            awk -F= '{ v=substr($0, index($0, "=")+1); printf "%s %d\n", $1, length(v) }' "$APP_DIR/infra/platform.env" | sort
+            # ── Write platform.env for Airflow stack ──
+            # Used both for compose interpolation (--env-file) and container env (env_file:)
+            cat > "${APP_DIR}/infra/platform.env" <<ENVEOF
+            AIRFLOW_DB_USER=airflow
+            AIRFLOW_DB_PASSWORD=airflow
+            AIRFLOW_ADMIN_USER=${AIRFLOW_ADMIN_USER}
+            AIRFLOW_ADMIN_PASSWORD=${AIRFLOW_ADMIN_PASSWORD}
+            AIRFLOW_ADMIN_EMAIL=${AIRFLOW_ADMIN_EMAIL}
+            DB_DSN=${DB_DSN}
+            ARTIFACTS_S3_ENDPOINT=${ARTIFACTS_S3_ENDPOINT}
+            ARTIFACTS_S3_REGION=${ARTIFACTS_S3_REGION}
+            ARTIFACTS_S3_ACCESS_KEY_ID=${ARTIFACTS_S3_ACCESS_KEY_ID}
+            ARTIFACTS_S3_SECRET_ACCESS_KEY=${ARTIFACTS_S3_SECRET_ACCESS_KEY}
+            ARTIFACTS_S3_BUCKET=${ARTIFACTS_S3_BUCKET}
+            ARTIFACTS_S3_PREFIX=missions
+            ENVEOF
+            sed -i 's/^[[:space:]]*//' "${APP_DIR}/infra/platform.env"
 
-            echo "=== Deploy diagnostics: unresolved placeholders in env file ==="
-            grep -n '\${[^}]*}' "$APP_DIR/infra/platform.env" || true
-
-            DB_DSN_RAW="$(sed -n 's/^DB_DSN=//p' "$APP_DIR/infra/platform.env" | head -n 1)"
-            AIRFLOW_DB_DSN_RAW="$(sed -n 's/^AIRFLOW_DB_DSN=//p' "$APP_DIR/infra/platform.env" | head -n 1)"
-
-            echo "=== Deploy diagnostics: DNS resolution + TCP reachability ==="
-            DB_DSN_RAW="$DB_DSN_RAW" AIRFLOW_DB_DSN_RAW="$AIRFLOW_DB_DSN_RAW" python3 -c "import os, socket; from urllib.parse import urlsplit
-def check(name, dsn):
-    parts = urlsplit(dsn)
-    host = parts.hostname
-    port = parts.port or 5432
-    if not host:
-        raise RuntimeError(f'{name}: cannot parse host from DSN')
-    print(f'{name} host={host} port={port}')
-    print(f'DNS check {name}:')
-    for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
-        print(' ', item[4][0])
-    print(f'TCP check {name} {host}:{port}')
-    s = socket.create_connection((host, port), 4)
-    s.close()
-    print(f'TCP result {name}: ok')
-check('DB_DSN', os.environ['DB_DSN_RAW'])
-check('AIRFLOW_DB_DSN', os.environ['AIRFLOW_DB_DSN_RAW'])"
-
-            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
-            docker pull "$ONLINE_IMAGE"
-            docker pull "$BATCH_IMAGE"
-
-            echo "=== Deploy diagnostics: psycopg preflight DB_DSN ==="
+            # ── Initialize app schema in Supabase (idempotent) ──
             docker run --rm \
-              --env-file "$APP_DIR/infra/platform.env" \
-              -e CHECK_DSN_KEY=DB_DSN \
-              "$ONLINE_IMAGE" \
-              python -c "import os, psycopg; k=os.environ['CHECK_DSN_KEY']; dsn=os.environ[k]; print(f'checking {k}'); conn=psycopg.connect(dsn, connect_timeout=10); cur=conn.cursor(); cur.execute('select 1'); print('result', cur.fetchone()); conn.close()"
+              --env-file "${APP_DIR}/.env" \
+              "${ONLINE_IMAGE}" \
+              uv run python -m rescue_ai.interfaces.cli.init_remote_db
 
-            echo "=== Deploy diagnostics: psycopg preflight AIRFLOW_DB_DSN ==="
-            docker run --rm \
-              --env-file "$APP_DIR/infra/platform.env" \
-              -e CHECK_DSN_KEY=AIRFLOW_DB_DSN \
-              "$ONLINE_IMAGE" \
-              python -c "import os, psycopg; k=os.environ['CHECK_DSN_KEY']; dsn=os.environ[k]; print(f'checking {k}'); conn=psycopg.connect(dsn, connect_timeout=10); cur=conn.cursor(); cur.execute('select 1'); print('result', cur.fetchone()); conn.close()"
+            echo "App schema initialized"
 
-            docker run --rm \
-              --env-file "$APP_DIR/.env" \
-              "$ONLINE_IMAGE" \
-              python -c "import os, psycopg; dsn=os.environ['DB_DSN']; conn=psycopg.connect(dsn); cur=conn.cursor(); cur.execute('CREATE SCHEMA IF NOT EXISTS app'); cur.execute('CREATE SCHEMA IF NOT EXISTS airflow'); conn.commit(); conn.close()"
-
-            docker rm -f rescue-ai-online || true
+            # ── Deploy online service ──
+            docker rm -f rescue-ai-online 2>/dev/null || true
             docker run -d \
               --name rescue-ai-online \
               --restart unless-stopped \
-              --env-file "$APP_DIR/.env" \
+              --env-file "${APP_DIR}/.env" \
               -p 8000:8000 \
-              "$ONLINE_IMAGE"
+              "${ONLINE_IMAGE}"
 
-            # Run Airflow init in foreground: immediate logs and fast-fail.
-            if ! timeout 300 docker compose \
-              -f "$APP_DIR/infra/docker-compose.platform.yml" \
-              --env-file "$APP_DIR/infra/platform.env" \
-              up --no-deps --abort-on-container-exit --exit-code-from airflow-init airflow-init; then
-              echo "airflow-init timed out or failed; dumping diagnostics"
-              docker ps -a || true
-              docker compose \
-                -f "$APP_DIR/infra/docker-compose.platform.yml" \
-                --env-file "$APP_DIR/infra/platform.env" \
-                ps || true
-              docker compose \
-                -f "$APP_DIR/infra/docker-compose.platform.yml" \
-                --env-file "$APP_DIR/infra/platform.env" \
-                logs --no-color --tail=200 airflow-init || true
-              docker compose \
-                -f "$APP_DIR/infra/docker-compose.platform.yml" \
-                --env-file "$APP_DIR/infra/platform.env" \
-                config || true
-              exit 1
-            fi
+            echo "Online service deployed: ${ONLINE_IMAGE}"
 
-            docker compose \
-              -f "$APP_DIR/infra/docker-compose.platform.yml" \
-              --env-file "$APP_DIR/infra/platform.env" \
-              rm -f airflow-init >/dev/null 2>&1 || true
+            # ── Deploy Airflow stack ──
+            # AIRFLOW_IMAGE, BATCH_IMAGE, DOCKER_GID are exported above —
+            # docker compose reads them from the shell environment.
+            cd "${APP_DIR}/infra"
 
-            docker compose \
-              -f "$APP_DIR/infra/docker-compose.platform.yml" \
-              --env-file "$APP_DIR/infra/platform.env" \
+            docker compose --env-file platform.env \
+              -f docker-compose.platform.yml \
+              pull --ignore-buildable 2>/dev/null || true
+
+            docker compose --env-file platform.env \
+              -f docker-compose.platform.yml \
               up -d airflow-webserver airflow-scheduler
+
+            echo "Airflow stack deployed"
+
+            # ── Health check ──
+            sleep 5
+            curl -sf http://127.0.0.1:8000/health || echo "WARNING: online health check failed"
+
+            echo "Deploy complete"
