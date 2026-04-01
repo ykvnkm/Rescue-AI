@@ -228,6 +228,8 @@ jobs:
             ARTIFACTS_S3_SECRET_ACCESS_KEY=${ARTIFACTS_S3_SECRET_ACCESS_KEY}
             ARTIFACTS_S3_BUCKET=${ARTIFACTS_S3_BUCKET}
             ARTIFACTS_S3_PREFIX=missions
+            BATCH_IMAGE=${BATCH_IMAGE}
+            DOCKER_GID=${DOCKER_GID}
             ENVEOF
             sed -i 's/^[[:space:]]*//' "${APP_DIR}/infra/platform.env"
 
