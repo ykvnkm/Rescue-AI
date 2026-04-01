@@ -54,8 +54,7 @@ def test_prepare_postgres_waits_with_dsn(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(online_main, "wait_for_postgres", _fake_wait)
     online_main._prepare_postgres_backend()
 
-    assert "postgresql://user:pass@localhost:5432/db" in str(called["dsn"])
-    assert "_search_path=app" in str(called["dsn"])
+    assert called["dsn"] == "postgresql://user:pass@localhost:5432/db"
     assert called["timeout_sec"] == get_settings().api.postgres_ready_timeout_sec
 
 

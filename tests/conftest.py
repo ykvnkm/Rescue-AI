@@ -19,7 +19,7 @@ def _load_app_schema_sql() -> str:
 
 
 @pytest.fixture(scope="session")
-def pg_dsn() -> Iterator[str]:
+def pg_dsn() -> Iterator[tuple[str, str]]:
     """Session-scoped Postgres DSN with an isolated test schema.
 
     Reads ``TEST_POSTGRES_DSN`` from environment.  If absent the fixture
@@ -32,8 +32,6 @@ def pg_dsn() -> Iterator[str]:
 
     psycopg = pytest.importorskip("psycopg")
 
-    from rescue_ai.infrastructure.postgres_connection import dsn_with_search_path
-
     schema = f"test_{uuid4().hex[:8]}"
 
     with psycopg.connect(raw_dsn) as conn:
@@ -41,15 +39,15 @@ def pg_dsn() -> Iterator[str]:
         with conn.cursor() as cur:
             cur.execute(f'CREATE SCHEMA "{schema}"')
 
-    schema_dsn = dsn_with_search_path(raw_dsn, schema)
     schema_sql = _load_app_schema_sql()
 
-    with psycopg.connect(schema_dsn) as conn:
+    with psycopg.connect(raw_dsn) as conn:
         with conn.cursor() as cur:
+            cur.execute(f'SET search_path TO "{schema}"')
             cur.execute(schema_sql)
         conn.commit()
 
-    yield schema_dsn
+    yield raw_dsn, schema
 
     with psycopg.connect(raw_dsn) as conn:
         conn.autocommit = True
@@ -58,10 +56,11 @@ def pg_dsn() -> Iterator[str]:
 
 
 @pytest.fixture()
-def pg_db(pg_dsn: str):  # noqa: ANN201
+def pg_db(pg_dsn: tuple[str, str]):  # noqa: ANN201
     """Function-scoped PostgresDatabase that truncates tables after each test."""
     from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
 
-    db = PostgresDatabase(dsn=pg_dsn)
+    dsn, schema = pg_dsn
+    db = PostgresDatabase(dsn=dsn, schema=schema)
     yield db
     db.truncate_all()

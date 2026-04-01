@@ -18,10 +18,7 @@ from rescue_ai.domain.ports import (
 from rescue_ai.domain.value_objects import AlertRuleConfig
 from rescue_ai.infrastructure.artifact_storage import build_s3_storage
 from rescue_ai.infrastructure.contract_loader import load_alert_rules_and_metadata
-from rescue_ai.infrastructure.postgres_connection import (
-    dsn_with_search_path,
-    wait_for_postgres,
-)
+from rescue_ai.infrastructure.postgres_connection import wait_for_postgres
 from rescue_ai.infrastructure.rpi_client import RpiClient
 from rescue_ai.interfaces.api.dependencies import ApiRuntime, set_runtime
 
@@ -185,8 +182,7 @@ def _prepare_postgres_backend() -> None:
     dsn = settings.database.dsn
     if not dsn:
         raise RuntimeError("DB_DSN is required")
-    app_dsn = dsn_with_search_path(dsn, "app")
-    wait_for_postgres(app_dsn, timeout_sec=settings.api.postgres_ready_timeout_sec)
+    wait_for_postgres(dsn, timeout_sec=settings.api.postgres_ready_timeout_sec)
 
 
 def _build_repositories(
@@ -210,9 +206,8 @@ def _build_repositories(
     dsn = settings.database.dsn.strip()
     if not dsn:
         raise ValueError("DB_DSN is required")
-    app_dsn = dsn_with_search_path(dsn, "app")
 
-    postgres_db = PostgresDatabase(dsn=app_dsn)
+    postgres_db = PostgresDatabase(dsn=dsn, schema="app")
     episode_settings = EpisodeProjectionSettings(
         gt_gap_end_sec=alert_rules.gt_gap_end_sec,
         match_tolerance_sec=alert_rules.match_tolerance_sec,
