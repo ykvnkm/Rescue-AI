@@ -39,7 +39,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --python /app/.venv/bin/python \
     apache-airflow==2.9.3 \
-    apache-airflow-providers-docker==3.11.0
+    apache-airflow-providers-docker==3.11.0 \
+    psycopg2-binary==2.9.10
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV AIRFLOW_HOME="/opt/airflow"
