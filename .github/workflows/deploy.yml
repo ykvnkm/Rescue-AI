@@ -244,8 +244,8 @@ jobs:
             docker run -d \
               --name rescue-ai-online \
               --restart unless-stopped \
+              --network host \
               --env-file "${APP_DIR}/.env" \
-              -p 8000:8000 \
               "${ONLINE_IMAGE}"
 
             # ── Deploy Airflow stack ──
