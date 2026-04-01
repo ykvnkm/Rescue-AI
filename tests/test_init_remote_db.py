@@ -71,8 +71,9 @@ def test_init_remote_db_executes_sql(monkeypatch, tmp_path: Path) -> None:
 
     class _PsycopgModule:
         @staticmethod
-        def connect(dsn: str):
+        def connect(dsn: str, **kwargs):
             state["dsn"] = dsn
+            state["connect_kwargs"] = kwargs
             return _Connection(state)
 
     class _Settings:
@@ -99,6 +100,7 @@ def test_init_remote_db_executes_sql(monkeypatch, tmp_path: Path) -> None:
     init_remote_db.main()
 
     assert "postgresql://u:p@h:5432/db" in str(state["dsn"])
+    assert state["connect_kwargs"] == {"connect_timeout": 10}
     sql_calls = cast(list[str], state["sql_calls"])
     assert sql_calls[0] == "CREATE SCHEMA IF NOT EXISTS app"
     assert sql_calls[1] == "SET search_path TO app"
