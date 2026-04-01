@@ -57,7 +57,9 @@ def wait_for_postgres(
 
     while time.monotonic() < deadline:
         try:
-            with psycopg.connect(safe_dsn, connect_timeout=_CONNECT_TIMEOUT_SEC) as conn:
+            with psycopg.connect(
+                safe_dsn, connect_timeout=_CONNECT_TIMEOUT_SEC
+            ) as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("SELECT 1")
                     cursor.fetchone()

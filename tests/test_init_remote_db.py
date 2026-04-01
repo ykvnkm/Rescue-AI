@@ -35,7 +35,7 @@ def test_init_remote_db_executes_sql(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(init_remote_db, "_SQL_FILE", sql_path)
 
     class _Cursor:
-        def __init__(self, state: dict[str, str | bool | list[str]]) -> None:
+        def __init__(self, state: dict[str, object]) -> None:
             self._state = state
             calls = state.setdefault("sql_calls", [])
             self._calls = cast(list[str], calls)
@@ -51,7 +51,7 @@ def test_init_remote_db_executes_sql(monkeypatch, tmp_path: Path) -> None:
             self._calls.append(sql)
 
     class _Connection:
-        def __init__(self, state: dict[str, str | bool | list[str]]) -> None:
+        def __init__(self, state: dict[str, object]) -> None:
             self._state = state
 
         def __enter__(self):
@@ -67,7 +67,7 @@ def test_init_remote_db_executes_sql(monkeypatch, tmp_path: Path) -> None:
         def commit(self) -> None:
             self._state["committed"] = True
 
-    state: dict[str, str | bool | list[str]] = {}
+    state: dict[str, object] = {}
 
     class _PsycopgModule:
         @staticmethod
