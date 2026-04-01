@@ -5,26 +5,12 @@ from __future__ import annotations
 import importlib
 import time
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 _FATAL_SQLSTATES = {
     "28P01",  # invalid_password
     "28000",  # invalid_authorization_specification
     "3D000",  # invalid_catalog_name (database does not exist)
 }
-
-
-def dsn_with_search_path(dsn: str, schema: str) -> str:
-    """Append a search_path override to a Postgres DSN."""
-    parsed = urlparse(dsn)
-    query_items = parse_qsl(parsed.query, keep_blank_values=True)
-    options = [value for key, value in query_items if key == "options"]
-    merged_options = " ".join(
-        option for option in [*options, f"-csearch_path={schema}"] if option
-    )
-    filtered_items = [(key, value) for key, value in query_items if key != "options"]
-    filtered_items.append(("options", merged_options))
-    return urlunparse(parsed._replace(query=urlencode(filtered_items)))
 
 
 def wait_for_postgres(
@@ -68,7 +54,7 @@ def wait_for_postgres(
 class PostgresDatabase:
     """Thin wrapper around a psycopg DSN used by repository adapters."""
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, schema: str | None = None) -> None:
         try:
             psycopg = importlib.import_module("psycopg")
         except ImportError as exc:  # pragma: no cover
@@ -76,10 +62,14 @@ class PostgresDatabase:
 
         self._psycopg = psycopg
         self._dsn = dsn
+        self._schema = schema
 
     def connect(self) -> Any:
-        """Open a new connection to the database."""
-        return self._psycopg.connect(self._dsn)
+        """Open a new connection and apply search_path if configured."""
+        conn = self._psycopg.connect(self._dsn)
+        if self._schema:
+            conn.execute(f"SET search_path TO {self._schema}")
+        return conn
 
     def truncate_all(self) -> None:
         with self.connect() as conn:

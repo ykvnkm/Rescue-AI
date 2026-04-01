@@ -40,10 +40,7 @@ from rescue_ai.infrastructure.artifact_storage import (
 )
 from rescue_ai.infrastructure.contract_loader import load_stream_contract
 from rescue_ai.infrastructure.pilot_engine import PilotMissionEngine
-from rescue_ai.infrastructure.postgres_connection import (
-    PostgresDatabase,
-    dsn_with_search_path,
-)
+from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
 from rescue_ai.infrastructure.postgres_repositories import (
     EpisodeProjectionSettings,
     PostgresAlertRepository,
@@ -74,9 +71,8 @@ class PilotMissionEngineFactory:
         dsn = settings.database.dsn.strip()
         if not dsn:
             raise ValueError("DB_DSN is required")
-        app_dsn = dsn_with_search_path(dsn, "app")
 
-        postgres_db = PostgresDatabase(dsn=app_dsn)
+        postgres_db = PostgresDatabase(dsn=dsn, schema="app")
         episode_settings = EpisodeProjectionSettings(
             gt_gap_end_sec=alert_rules.gt_gap_end_sec,
             match_tolerance_sec=alert_rules.match_tolerance_sec,
@@ -144,9 +140,8 @@ def build_status_store() -> PostgresStatusStore:
     dsn = settings.database.dsn.strip()
     if not dsn:
         raise ValueError("DB_DSN is required")
-    app_dsn = dsn_with_search_path(dsn, "app")
 
-    return PostgresStatusStore(db=PostgresDatabase(dsn=app_dsn))
+    return PostgresStatusStore(db=PostgresDatabase(dsn=dsn, schema="app"))
 
 
 def build_artifact_store() -> S3ArtifactStorage:

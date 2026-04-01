@@ -30,18 +30,20 @@ def test_json_status_store_roundtrip() -> None:
 
 
 @pytest.mark.integration
-def test_postgres_status_store_roundtrip(pg_dsn: str) -> None:
+def test_postgres_status_store_roundtrip(pg_dsn: tuple[str, str]) -> None:
     psycopg = pytest.importorskip("psycopg")
     root = Path(__file__).resolve().parents[1]
     schema_path = root / "infra" / "postgres" / "init" / "010-app-schema.sql"
-    with psycopg.connect(pg_dsn) as conn:
+    dsn, schema = pg_dsn
+    with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
+            cur.execute(f'SET search_path TO "{schema}"')
             cur.execute(schema_path.read_text(encoding="utf-8"))
         conn.commit()
 
     from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
 
-    store = PostgresStatusStore(db=PostgresDatabase(dsn=pg_dsn))
+    store = PostgresStatusStore(db=PostgresDatabase(dsn=dsn, schema=schema))
     store.upsert(RunStatusRecord(run_key="test-key", status="running", reason="init"))
     record = store.get("test-key")
 
