@@ -15,16 +15,20 @@ _FATAL_SQLSTATES = {
 
 
 def dsn_with_search_path(dsn: str, schema: str) -> str:
-    """Append a search_path override to a Postgres DSN."""
+    """Return a DSN tagged with a schema for use by PostgresDatabase.
+
+    Does NOT embed ``options=-csearch_path=...`` into the DSN because
+    PgBouncer in transaction mode (Supabase pooler) silently hangs on
+    the ``options`` startup parameter.  Instead, the schema is stored as
+    a query-string hint ``_search_path=<schema>`` and applied via
+    ``SET search_path`` after each connection is opened — see
+    :pymethod:`PostgresDatabase.connect`.
+    """
     parsed = urlparse(dsn)
     query_items = parse_qsl(parsed.query, keep_blank_values=True)
-    options = [value for key, value in query_items if key == "options"]
-    merged_options = " ".join(
-        option for option in [*options, f"-csearch_path={schema}"] if option
-    )
-    filtered_items = [(key, value) for key, value in query_items if key != "options"]
-    filtered_items.append(("options", merged_options))
-    return urlunparse(parsed._replace(query=urlencode(filtered_items)))
+    filtered = [(k, v) for k, v in query_items if k != "_search_path"]
+    filtered.append(("_search_path", schema))
+    return urlunparse(parsed._replace(query=urlencode(filtered)))
 
 
 def wait_for_postgres(
@@ -35,13 +39,14 @@ def wait_for_postgres(
 ) -> None:
     """Poll the database until a simple SELECT succeeds."""
     psycopg = importlib.import_module("psycopg")
+    clean_dsn, _ = _strip_search_path(dsn)
 
     deadline = time.monotonic() + timeout_sec
     last_error: Exception | None = None
 
     while time.monotonic() < deadline:
         try:
-            with psycopg.connect(dsn) as conn:
+            with psycopg.connect(clean_dsn) as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("SELECT 1")
                     cursor.fetchone()
@@ -65,6 +70,21 @@ def wait_for_postgres(
     ) from last_error
 
 
+def _strip_search_path(dsn: str) -> tuple[str, str | None]:
+    """Remove ``_search_path`` hint from DSN, return (clean_dsn, schema)."""
+    parsed = urlparse(dsn)
+    query_items = parse_qsl(parsed.query, keep_blank_values=True)
+    schema: str | None = None
+    clean_items: list[tuple[str, str]] = []
+    for key, value in query_items:
+        if key == "_search_path":
+            schema = value
+        else:
+            clean_items.append((key, value))
+    clean_dsn = urlunparse(parsed._replace(query=urlencode(clean_items)))
+    return clean_dsn, schema
+
+
 class PostgresDatabase:
     """Thin wrapper around a psycopg DSN used by repository adapters."""
 
@@ -74,12 +94,17 @@ class PostgresDatabase:
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("psycopg is required for Postgres repositories") from exc
 
+        clean_dsn, schema = _strip_search_path(dsn)
         self._psycopg = psycopg
-        self._dsn = dsn
+        self._dsn = clean_dsn
+        self._schema = schema
 
     def connect(self) -> Any:
-        """Open a new connection to the database."""
-        return self._psycopg.connect(self._dsn)
+        """Open a new connection and apply search_path if configured."""
+        conn = self._psycopg.connect(self._dsn)
+        if self._schema:
+            conn.execute(f"SET search_path TO {self._schema}")
+        return conn
 
     def truncate_all(self) -> None:
         with self.connect() as conn:

@@ -3,6 +3,7 @@
 FROM python:3.12-slim AS common
 
 WORKDIR /app
+ENV UV_LINK_MODE=copy
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \

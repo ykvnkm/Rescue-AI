@@ -14,7 +14,6 @@ import logging
 from pathlib import Path
 
 from rescue_ai.config import get_settings
-from rescue_ai.infrastructure.postgres_connection import dsn_with_search_path
 
 _SQL_FILE = (
     Path(__file__).resolve().parents[3]
@@ -38,15 +37,14 @@ def main() -> None:
         raise RuntimeError(
             "DB_DSN is required. Set it in .env or as an environment variable."
         )
-    app_dsn = dsn_with_search_path(dsn, "app")
-
     psycopg = importlib.import_module("psycopg")
     sql = _SQL_FILE.read_text(encoding="utf-8")
 
     logger.info("Connecting to remote Postgres...")
-    with psycopg.connect(app_dsn) as conn:
+    with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute("CREATE SCHEMA IF NOT EXISTS app")
+            cur.execute("SET search_path TO app")
             cur.execute(sql)
         conn.commit()
 
