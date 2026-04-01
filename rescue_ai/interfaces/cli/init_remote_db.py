@@ -46,7 +46,11 @@ def main() -> None:
         with conn.cursor() as cur:
             cur.execute("CREATE SCHEMA IF NOT EXISTS app")
             cur.execute("SET search_path TO app")
-            cur.execute(sql)
+            for statement in sql.split(";"):
+                statement = statement.strip()
+                if not statement:
+                    continue
+                cur.execute(statement)
         conn.commit()
 
     logger.info("Remote schema initialized successfully ✓")
