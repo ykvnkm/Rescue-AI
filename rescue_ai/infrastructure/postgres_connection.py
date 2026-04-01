@@ -12,6 +12,7 @@ _FATAL_SQLSTATES = {
     "28000",  # invalid_authorization_specification
     "3D000",  # invalid_catalog_name (database does not exist)
 }
+_CONNECT_TIMEOUT_SEC = 10
 
 
 def _ensure_compat_dsn(dsn: str) -> str:
@@ -24,10 +25,20 @@ def _ensure_compat_dsn(dsn: str) -> str:
     """
     parsed = urlparse(dsn)
     params = parse_qs(parsed.query, keep_blank_values=True)
-    if "sslnegotiation" in params:
+
+    updated = False
+    if "sslnegotiation" not in params:
+        params["sslnegotiation"] = ["postgres"]
+        updated = True
+
+    if "connect_timeout" not in params:
+        params["connect_timeout"] = [str(_CONNECT_TIMEOUT_SEC)]
+        updated = True
+
+    if not updated:
         return dsn
-    separator = "&" if parsed.query else ""
-    new_query = parsed.query + separator + urlencode({"sslnegotiation": "postgres"})
+
+    new_query = urlencode(params, doseq=True)
     return urlunparse(parsed._replace(query=new_query))
 
 
@@ -46,7 +57,9 @@ def wait_for_postgres(
 
     while time.monotonic() < deadline:
         try:
-            with psycopg.connect(safe_dsn) as conn:
+            with psycopg.connect(
+                safe_dsn, connect_timeout=_CONNECT_TIMEOUT_SEC
+            ) as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("SELECT 1")
                     cursor.fetchone()
@@ -85,7 +98,7 @@ class PostgresDatabase:
 
     def connect(self) -> Any:
         """Open a new connection and apply search_path if configured."""
-        conn = self._psycopg.connect(self._dsn)
+        conn = self._psycopg.connect(self._dsn, connect_timeout=_CONNECT_TIMEOUT_SEC)
         if self._schema:
             conn.execute(f"SET search_path TO {self._schema}")
         return conn

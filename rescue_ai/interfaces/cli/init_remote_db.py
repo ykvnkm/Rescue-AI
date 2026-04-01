@@ -14,7 +14,10 @@ import logging
 from pathlib import Path
 
 from rescue_ai.config import get_settings
-from rescue_ai.infrastructure.postgres_connection import _ensure_compat_dsn
+from rescue_ai.infrastructure.postgres_connection import (
+    _CONNECT_TIMEOUT_SEC,
+    _ensure_compat_dsn,
+)
 
 _SQL_FILE = (
     Path(__file__).resolve().parents[3]
@@ -42,7 +45,10 @@ def main() -> None:
     sql = _SQL_FILE.read_text(encoding="utf-8")
 
     logger.info("Connecting to remote Postgres...")
-    with psycopg.connect(_ensure_compat_dsn(dsn)) as conn:
+    with psycopg.connect(
+        _ensure_compat_dsn(dsn),
+        connect_timeout=_CONNECT_TIMEOUT_SEC,
+    ) as conn:
         with conn.cursor() as cur:
             cur.execute("CREATE SCHEMA IF NOT EXISTS app")
             cur.execute("SET search_path TO app")
