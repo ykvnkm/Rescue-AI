@@ -250,10 +250,6 @@ jobs:
             # ── Deploy Airflow stack ──
             cd "${APP_DIR}/infra"
 
-            echo "=== docker-compose.platform.yml ==="
-            cat docker-compose.platform.yml
-            echo "=== end ==="
-
             docker compose --env-file platform.env \
               -f docker-compose.platform.yml \
               up -d airflow-webserver airflow-scheduler

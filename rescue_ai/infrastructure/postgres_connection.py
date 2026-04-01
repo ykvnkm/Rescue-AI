@@ -5,12 +5,30 @@ from __future__ import annotations
 import importlib
 import time
 from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 _FATAL_SQLSTATES = {
     "28P01",  # invalid_password
     "28000",  # invalid_authorization_specification
     "3D000",  # invalid_catalog_name (database does not exist)
 }
+
+
+def _ensure_compat_dsn(dsn: str) -> str:
+    """Ensure DSN uses legacy SSL negotiation for Supabase pooler compat.
+
+    psycopg 3.2+ defaults to ``sslnegotiation=direct`` which causes
+    silent hangs with Supabase Supavisor (both transaction and session
+    pooler modes).  This helper injects ``sslnegotiation=postgres`` when
+    the parameter is not already present.
+    """
+    parsed = urlparse(dsn)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    if "sslnegotiation" in params:
+        return dsn
+    separator = "&" if parsed.query else ""
+    new_query = parsed.query + separator + urlencode({"sslnegotiation": "postgres"})
+    return urlunparse(parsed._replace(query=new_query))
 
 
 def wait_for_postgres(
@@ -21,13 +39,14 @@ def wait_for_postgres(
 ) -> None:
     """Poll the database until a simple SELECT succeeds."""
     psycopg = importlib.import_module("psycopg")
+    safe_dsn = _ensure_compat_dsn(dsn)
 
     deadline = time.monotonic() + timeout_sec
     last_error: Exception | None = None
 
     while time.monotonic() < deadline:
         try:
-            with psycopg.connect(dsn) as conn:
+            with psycopg.connect(safe_dsn) as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("SELECT 1")
                     cursor.fetchone()
@@ -61,7 +80,7 @@ class PostgresDatabase:
             raise RuntimeError("psycopg is required for Postgres repositories") from exc
 
         self._psycopg = psycopg
-        self._dsn = dsn
+        self._dsn = _ensure_compat_dsn(dsn)
         self._schema = schema
 
     def connect(self) -> Any:
