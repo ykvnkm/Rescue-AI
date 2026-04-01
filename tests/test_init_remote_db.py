@@ -31,7 +31,7 @@ def test_init_remote_db_executes_sql(monkeypatch, tmp_path: Path) -> None:
     from rescue_ai.interfaces.cli import init_remote_db
 
     sql_path = tmp_path / "schema.sql"
-    sql_path.write_text("SELECT 1;", encoding="utf-8")
+    sql_path.write_text("SELECT 1; SELECT 2;", encoding="utf-8")
     monkeypatch.setattr(init_remote_db, "_SQL_FILE", sql_path)
 
     class _Cursor:
@@ -102,5 +102,6 @@ def test_init_remote_db_executes_sql(monkeypatch, tmp_path: Path) -> None:
     sql_calls = cast(list[str], state["sql_calls"])
     assert sql_calls[0] == "CREATE SCHEMA IF NOT EXISTS app"
     assert sql_calls[1] == "SET search_path TO app"
-    assert sql_calls[2] == "SELECT 1;"
+    assert sql_calls[2] == "SELECT 1"
+    assert sql_calls[3] == "SELECT 2"
     assert state["committed"] is True
