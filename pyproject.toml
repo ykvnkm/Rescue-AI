@@ -23,8 +23,6 @@ dev = [
   "mypy==1.11.2",
   "types-PyYAML==6.0.12.20250915",
   "pylint==3.3.1",
-  "apache-airflow==2.9.3",
-  "apache-airflow-providers-docker==3.11.0",
 ]
 inference = [
   "ultralytics==8.3.57",
@@ -35,6 +33,11 @@ postgres = [
 batch = [
   "boto3==1.42.65",
   "psycopg[binary]==3.2.3",
+]
+airflow = [
+  "apache-airflow==2.9.3",
+  "apache-airflow-providers-docker==3.11.0",
+  "psycopg2-binary==2.9.10",
 ]
 
 [tool.black]

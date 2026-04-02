@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import time
+from functools import lru_cache
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -15,19 +16,39 @@ _FATAL_SQLSTATES = {
 _CONNECT_TIMEOUT_SEC = 10
 
 
+@lru_cache(maxsize=1)
+def _supports_sslnegotiation() -> bool:
+    """Return whether current psycopg/libpq accepts sslnegotiation in DSN."""
+    try:
+        psycopg = importlib.import_module("psycopg")
+        conninfo = importlib.import_module("psycopg.conninfo")
+    except ImportError:  # pragma: no cover - optional dependency
+        return False
+
+    try:
+        conninfo.conninfo_to_dict(
+            "postgresql://user:secret@localhost:5432/rescue_ai?sslnegotiation=postgres"
+        )
+    except psycopg.ProgrammingError:  # pragma: no cover - depends on local libpq build
+        return False
+
+    return True
+
+
 def _ensure_compat_dsn(dsn: str) -> str:
     """Ensure DSN uses legacy SSL negotiation for Supabase pooler compat.
 
     psycopg 3.2+ defaults to ``sslnegotiation=direct`` which causes
     silent hangs with Supabase Supavisor (both transaction and session
     pooler modes).  This helper injects ``sslnegotiation=postgres`` when
-    the parameter is not already present.
+    the parameter is not already present and the local psycopg/libpq build
+    supports that option.
     """
     parsed = urlparse(dsn)
     params = parse_qs(parsed.query, keep_blank_values=True)
 
     updated = False
-    if "sslnegotiation" not in params:
+    if "sslnegotiation" not in params and _supports_sslnegotiation():
         params["sslnegotiation"] = ["postgres"]
         updated = True
 
