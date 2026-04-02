@@ -170,6 +170,15 @@ def start_mission(payload: MissionStartRequest) -> dict[str, object]:
             status_code=503,
             detail="Detector not available (model not loaded)",
         )
+    active_mission = service.get_active_mission()
+    if active_mission is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Active mission exists: {active_mission.mission_id} "
+                f"({active_mission.status})"
+            ),
+        )
     launch_tag = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
     mission = service.create_mission(
@@ -214,16 +223,25 @@ def complete_mission(mission_id: str) -> dict[str, object]:
 
     if service.get_mission(mission_id) is None:
         raise HTTPException(status_code=404, detail="Mission not found")
+    queued_alerts = service.list_alerts(mission_id=mission_id, status="queued")
+    if queued_alerts:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot complete mission with queued alerts: {len(queued_alerts)}",
+        )
 
     stopped_state = stream_controller.stop(mission_id)
     completed_frame_id = None
     if stopped_state is not None and stopped_state.processed_frames > 0:
         completed_frame_id = stopped_state.processed_frames - 1
 
-    mission = service.complete_mission(
-        mission_id=mission_id,
-        completed_frame_id=completed_frame_id,
-    )
+    try:
+        mission = service.complete_mission(
+            mission_id=mission_id,
+            completed_frame_id=completed_frame_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     if mission is None:
         raise HTTPException(status_code=404, detail="Mission not found")
 

@@ -63,6 +63,9 @@ class MissionRepository(Protocol):
     def get(self, mission_id: str) -> Mission | None:
         """Retrieve a mission by its identifier."""
 
+    def list(self, status: str | None = None) -> list[Mission]:
+        """List missions, optionally filtered by status."""
+
     def update_details(
         self,
         mission_id: str,

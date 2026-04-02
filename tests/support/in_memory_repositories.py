@@ -26,6 +26,12 @@ class InMemoryMissionRepository:
     def get(self, mission_id: str) -> Mission | None:
         return self._db.missions.get(mission_id)
 
+    def list(self, status: str | None = None) -> list[Mission]:
+        missions = list(self._db.missions.values())
+        if status is not None:
+            missions = [mission for mission in missions if mission.status == status]
+        return sorted(missions, key=lambda item: item.created_at)
+
     def update_details(
         self,
         mission_id: str,

@@ -91,6 +91,17 @@ def test_get_returns_none_for_unknown_id(pg_db: PostgresDatabase) -> None:
 
 
 @pytest.mark.integration
+def test_list_missions_with_status_filter(pg_db: PostgresDatabase) -> None:
+    repo = PostgresMissionRepository(pg_db)
+    repo.create(_mission("m-1", status="created"))
+    repo.create(_mission("m-2", status="running"))
+    repo.create(_mission("m-3", status="completed"))
+
+    running = repo.list(status="running")
+    assert [item.mission_id for item in running] == ["m-2"]
+
+
+@pytest.mark.integration
 def test_update_details(pg_db: PostgresDatabase) -> None:
     repo = PostgresMissionRepository(pg_db)
     repo.create(_mission())

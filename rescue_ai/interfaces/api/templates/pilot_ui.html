@@ -2,19 +2,21 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>Rescue Drone Station</title>
+  <title>Наземная станция мониторинга</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Sans:wght@400;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0a0f1f;
-      --panel: #10182b;
-      --panel-2: #0f1a30;
+      --bg: #070c17;
+      --panel: #0f1729;
+      --panel-2: #0d1626;
       --accent: #f97316;
       --accent-2: #fb923c;
       --ok: #22c55e;
       --bad: #ef4444;
+      --info: #38bdf8;
+      --hud: #22d3ee;
       --text: #e2e8f0;
       --muted: #94a3b8;
       --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
@@ -26,22 +28,27 @@
       margin: 0;
       padding: 0 24px 32px;
       background:
-        radial-gradient(circle at 15% 10%, rgba(249,115,22,0.18), transparent 40%),
-        radial-gradient(circle at 85% 0%, rgba(251,146,60,0.16), transparent 42%),
-        linear-gradient(180deg, rgba(15,23,42,0.9), rgba(10,15,31,0.95)),
-        repeating-linear-gradient(90deg, rgba(148,163,184,0.08) 0, rgba(148,163,184,0.08) 1px, transparent 1px, transparent 32px),
+        radial-gradient(circle at 12% 8%, rgba(34,211,238,0.14), transparent 38%),
+        radial-gradient(circle at 88% 0%, rgba(249,115,22,0.14), transparent 42%),
+        linear-gradient(180deg, rgba(11,18,33,0.95), rgba(7,12,23,0.98)),
+        repeating-linear-gradient(90deg, rgba(148,163,184,0.05) 0, rgba(148,163,184,0.05) 1px, transparent 1px, transparent 28px),
         var(--bg);
       color: var(--text);
       font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
     }
-    header { padding: 26px 0 14px; }
+    header {
+      padding: 22px 0 14px;
+      border-bottom: 1px solid rgba(148,163,184,0.14);
+      margin-bottom: 12px;
+    }
     h1 {
       margin: 0;
-      font-size: 30px;
+      font-size: 28px;
       font-weight: 700;
-      letter-spacing: -0.01em;
+      letter-spacing: 0.04em;
       font-family: 'Space Grotesk', sans-serif;
       text-align: center;
+      text-transform: uppercase;
     }
     .layout {
       display: grid;
@@ -50,20 +57,36 @@
       align-items: start;
     }
     .card {
-      background: linear-gradient(155deg, rgba(19,28,48,0.95), rgba(12,18,34,0.9));
+      background:
+        linear-gradient(155deg, rgba(15,23,41,0.96), rgba(10,16,29,0.94)),
+        repeating-linear-gradient(0deg, rgba(148,163,184,0.025) 0, rgba(148,163,184,0.025) 1px, transparent 1px, transparent 16px);
       border: 1px solid var(--outline);
       border-radius: var(--radius);
       padding: 16px;
       box-shadow: var(--shadow);
       backdrop-filter: blur(6px);
+      position: relative;
+    }
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      width: 34px;
+      height: 10px;
+      border-top: 1px solid rgba(34,211,238,0.45);
+      border-right: 1px solid rgba(34,211,238,0.45);
+      opacity: 0.7;
+      pointer-events: none;
     }
     .card h3 {
       margin: 0 0 12px;
-      font-size: 15px;
+      font-size: 13px;
       font-weight: 700;
-      letter-spacing: 0.01em;
+      letter-spacing: 0.08em;
       color: var(--muted);
       text-transform: uppercase;
+      font-family: 'JetBrains Mono', monospace;
     }
     .field { margin-bottom: 10px; }
     .field label {
@@ -74,12 +97,21 @@
     }
     select, input {
       width: 100%;
-      border: 1px solid rgba(148, 163, 184, 0.25);
-      background: rgba(15,23,42,0.7);
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      background:
+        linear-gradient(135deg, rgba(249,115,22,0.08), rgba(15,23,42,0.82)),
+        rgba(15,23,42,0.72);
       border-radius: 10px;
       color: var(--text);
       padding: 10px 12px;
       font-size: 14px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+      outline: none;
+      transition: border-color 0.16s ease, box-shadow 0.16s ease;
+    }
+    select:focus, input:focus {
+      border-color: rgba(251,146,60,0.78);
+      box-shadow: 0 0 0 3px rgba(249,115,22,0.18), inset 0 0 0 1px rgba(255,255,255,0.05);
     }
     .btn {
       width: 100%;
@@ -91,12 +123,25 @@
       font-weight: 700;
       cursor: pointer;
       margin-top: 8px;
-      box-shadow: 0 12px 30px rgba(249,115,22,0.35);
+      box-shadow: 0 6px 14px rgba(249,115,22,0.2);
+      border: 1px solid rgba(255,255,255,0.18);
+      transition: filter 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    .btn:hover {
+      filter: saturate(1.06);
+      border-color: rgba(255,255,255,0.28);
+      box-shadow: 0 0 0 1px rgba(251,146,60,0.2), 0 7px 16px rgba(249,115,22,0.24);
+    }
+    .btn:active { filter: brightness(0.98); }
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      box-shadow: none;
     }
     .btn.secondary {
-      background: rgba(15,23,42,0.8);
+      background: linear-gradient(130deg, rgba(15,23,42,0.9), rgba(2,8,23,0.76));
       color: var(--text);
-      border: 1px solid rgba(148, 163, 184, 0.2);
+      border: 1px solid rgba(148, 163, 184, 0.26);
       box-shadow: none;
     }
     .rpi-status-bar {
@@ -104,10 +149,15 @@
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      padding: 10px 12px;
-      border-radius: 12px;
-      border: 1px solid rgba(148,163,184,0.18);
-      background: rgba(0,0,0,0.22);
+      padding: 11px 12px;
+      border-radius: 13px;
+      border: 1px solid rgba(148,163,184,0.28);
+      background:
+        linear-gradient(135deg, rgba(249,115,22,0.12), rgba(15,23,42,0.84)),
+        rgba(2,8,23,0.72);
+      box-shadow:
+        inset 0 0 0 1px rgba(255,255,255,0.04),
+        0 10px 26px rgba(0,0,0,0.26);
       margin-bottom: 12px;
     }
     .rpi-status-bar .info {
@@ -118,24 +168,86 @@
       color: var(--muted);
     }
     .rpi-status-bar .info strong { font-size: 13px; }
+    .form-label {
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.02em;
+      margin-bottom: 6px;
+      display: block;
+      font-weight: 600;
+    }
+    .select-strong {
+      width: 100%;
+      padding: 11px 13px;
+      border-radius: 11px;
+      border: 1px solid rgba(255,255,255,0.22);
+      background:
+        linear-gradient(135deg, rgba(249,115,22,0.09), rgba(15,23,42,0.82)),
+        rgba(0,0,0,0.28);
+      color: var(--text);
+      font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+      outline: none;
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      transition: border-color 0.16s ease, box-shadow 0.16s ease;
+    }
+    .select-strong:focus {
+      border-color: rgba(251,146,60,0.8);
+      box-shadow: 0 0 0 3px rgba(249,115,22,0.2), inset 0 0 0 1px rgba(255,255,255,0.06);
+    }
     .rpi-check-btn {
       border: none;
       border-radius: 10px;
       padding: 8px 14px;
-      background: rgba(15,23,42,0.8);
-      color: var(--text);
-      border: 1px solid rgba(148, 163, 184, 0.2);
+      background: linear-gradient(120deg, #f97316, #fb923c);
+      color: #07121e;
+      border: 1px solid rgba(255, 255, 255, 0.18);
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 700;
       cursor: pointer;
       white-space: nowrap;
+      box-shadow: 0 5px 12px rgba(249,115,22,0.16);
+      transition: filter 0.18s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    .rpi-check-btn:hover {
+      filter: saturate(1.08);
+      border-color: rgba(255,255,255,0.28);
+      box-shadow: 0 0 0 1px rgba(251,146,60,0.18), 0 6px 14px rgba(249,115,22,0.2);
     }
     .status {
       margin-top: 10px;
-      color: var(--muted);
+      color: #cbd5e1;
       font-size: 12px;
       white-space: pre-wrap;
-      min-height: 32px;
+      min-height: 46px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(148,163,184,0.22);
+      background: linear-gradient(130deg, rgba(15,23,42,0.8), rgba(2,8,23,0.74));
+      font-family: 'JetBrains Mono', monospace;
+      line-height: 1.45;
+    }
+    .log-panel {
+      margin-top: 6px;
+      min-height: 96px;
+      max-height: 180px;
+      overflow: auto;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(148,163,184,0.22);
+      background:
+        linear-gradient(130deg, rgba(15,23,42,0.82), rgba(2,8,23,0.78)),
+        repeating-linear-gradient(0deg, rgba(148,163,184,0.04) 0, rgba(148,163,184,0.04) 1px, transparent 1px, transparent 14px);
+      color: #cbd5e1;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      line-height: 1.42;
+      white-space: pre-wrap;
     }
     .console {
       min-height: 730px;
@@ -148,7 +260,9 @@
       width: 100%;
       aspect-ratio: 16 / 9;
       min-height: 540px;
-      background: rgba(6, 11, 22, 0.9);
+      background:
+        radial-gradient(circle at center, rgba(15,23,42,0.35), rgba(2,6,15,0.9)),
+        rgba(6, 11, 22, 0.92);
       border-radius: 14px;
       border: 1px solid rgba(148, 163, 184, 0.2);
       display: flex;
@@ -156,6 +270,28 @@
       justify-content: center;
       overflow: hidden;
       cursor: grab;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+    }
+    .frame-wrap::before,
+    .frame-wrap::after {
+      content: '';
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      border-color: rgba(34,211,238,0.65);
+      border-style: solid;
+      pointer-events: none;
+      z-index: 2;
+    }
+    .frame-wrap::before {
+      top: 10px;
+      left: 10px;
+      border-width: 2px 0 0 2px;
+    }
+    .frame-wrap::after {
+      bottom: 10px;
+      right: 10px;
+      border-width: 0 2px 2px 0;
     }
     .frame-wrap.dragging { cursor: grabbing; }
     .zoom-content {
@@ -183,8 +319,11 @@
     }
     #emptyState {
       color: var(--muted);
-      font-size: 20px;
+      font-size: 18px;
+      line-height: 1.45;
+      max-width: 88%;
       text-align: center;
+      font-family: 'JetBrains Mono', monospace;
     }
     .meta-row {
       display: grid;
@@ -192,10 +331,24 @@
       gap: 8px;
     }
     .meta-item {
-      background: rgba(15,23,42,0.75);
-      border: 1px solid rgba(148,163,184,0.2);
+      background:
+        linear-gradient(135deg, rgba(14,22,40,0.84), rgba(9,14,26,0.84));
+      border: 1px solid rgba(148,163,184,0.24);
       border-radius: 12px;
       padding: 10px 12px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+      position: relative;
+    }
+    .meta-item::after {
+      content: '';
+      position: absolute;
+      right: 8px;
+      top: 8px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(34,211,238,0.7);
+      box-shadow: 0 0 10px rgba(34,211,238,0.45);
     }
     .meta-item .k {
       color: var(--muted);
@@ -205,9 +358,10 @@
     }
     .meta-item .v {
       font-size: 15px;
-      font-weight: 600;
-      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
       word-break: break-word;
+      letter-spacing: 0.02em;
     }
     .actions {
       display: grid;
@@ -218,22 +372,42 @@
     .action-btn {
       border: none;
       border-radius: 14px;
-      padding: 16px;
-      font-size: 22px;
-      font-weight: 700;
+      padding: 16px 14px;
+      font-size: 21px;
+      font-weight: 800;
+      letter-spacing: 0.01em;
       cursor: pointer;
       color: #08111f;
       font-family: 'Space Grotesk', sans-serif;
-      box-shadow: 0 14px 30px rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.22);
+      box-shadow: 0 7px 16px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.18);
+      transition: filter 0.18s ease, box-shadow 0.2s ease, border-color 0.2s ease;
     }
-    .action-btn.confirm { background: linear-gradient(120deg, #22c55e, #16a34a); }
-    .action-btn.reject { background: linear-gradient(120deg, #ef4444, #dc2626); color: #fff; }
+    .action-btn:hover {
+      filter: saturate(1.08);
+      border-color: rgba(255,255,255,0.3);
+    }
+    .action-btn:active { filter: brightness(0.98); }
+    .action-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+    .action-btn.confirm {
+      background: linear-gradient(120deg, #22c55e, #15803d);
+      box-shadow: 0 7px 16px rgba(34,197,94,0.18), inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+    .action-btn.reject {
+      background: linear-gradient(120deg, #ef4444, #b91c1c);
+      color: #fff;
+      box-shadow: 0 7px 16px rgba(239,68,68,0.18), inset 0 1px 0 rgba(255,255,255,0.16);
+    }
     .report-table {
       width: 100%;
       border-collapse: collapse;
       margin-top: 8px;
-      background: rgba(15,23,42,0.75);
-      border: 1px solid rgba(148,163,184,0.2);
+      background: rgba(12,18,34,0.8);
+      border: 1px solid rgba(148,163,184,0.26);
       border-radius: 12px;
       overflow: hidden;
     }
@@ -242,9 +416,27 @@
       padding: 10px 12px;
       font-size: 14px;
     }
+    .report-table tr:nth-child(odd) td { background: rgba(15,23,42,0.42); }
+    .report-table tr:hover td { background: rgba(51,65,85,0.32); }
     .report-table tr:last-child td { border-bottom: none; }
     .report-table td:first-child { color: var(--muted); width: 65%; }
     .report-table td:last-child { font-weight: 700; text-align: right; }
+    .hud-label {
+      display: block;
+      margin-top: -2px;
+      margin-bottom: 10px;
+      color: rgba(34,211,238,0.85);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .console-separator {
+      margin-top: 2px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(34,211,238,0.45), transparent);
+      opacity: 0.75;
+    }
     @media (max-width: 1100px) {
       .layout { grid-template-columns: 1fr; }
       .meta-row { grid-template-columns: 1fr 1fr; }
@@ -253,14 +445,15 @@
 </head>
 <body>
 <header>
-  <h1>Rescue Drone Station</h1>
+  <h1>Наземная станция мониторинга</h1>
 </header>
 
 <div class="layout">
   <aside>
     <!-- RPi connection status -->
     <div class="card" style="margin-bottom:14px;">
-      <h3>RaspberryPi</h3>
+      <h3>Канал Raspberry Pi</h3>
+      <span class="hud-label">Контроль канала</span>
       <div class="rpi-status-bar">
         <div class="info">
           <span>Канал: <strong id="rpiConnStatus" style="color:#fbbf24;">не проверено</strong></span>
@@ -270,8 +463,8 @@
       </div>
 
       <div class="field">
-        <label for="rpiMissionSelect">Выбор миссии (RPi)</label>
-        <select id="rpiMissionSelect">
+        <label class="form-label" for="rpiMissionSelect">Выбор миссии (RPi)</label>
+        <select id="rpiMissionSelect" class="select-strong">
           <option value="" selected disabled>Загрузка миссий...</option>
         </select>
       </div>
@@ -279,16 +472,20 @@
       <button class="btn" id="startBtn">Начать миссию</button>
       <button class="btn secondary" id="completeBtn">Закончить миссию</button>
       <button class="btn secondary" id="reportBtn">Отчет по миссии</button>
+    </div>
 
-      <div class="status" id="missionStatus"></div>
+    <div class="card">
+      <span class="hud-label" style="margin-bottom:8px;">Логи</span>
+      <div class="log-panel" id="missionStatus">Ожидание событий системы...</div>
     </div>
   </aside>
 
   <section class="card console">
+    <span class="hud-label">Операторская консоль</span>
     <div class="frame-wrap">
       <div id="emptyState">Ожидание алертов...</div>
       <div id="zoomContent" class="zoom-content">
-        <img id="alertFrame" alt="alert frame" />
+        <img id="alertFrame" alt="кадр алерта" />
         <div id="bboxLayer"></div>
       </div>
     </div>
@@ -303,7 +500,7 @@
         <span class="v" id="metaStatus">&mdash;</span>
       </div>
       <div class="meta-item">
-        <span class="k">Score</span>
+        <span class="k">Уверенность</span>
         <span class="v" id="metaScore">&mdash;</span>
       </div>
     </div>
@@ -328,6 +525,7 @@
         </tbody>
       </table>
     </div>
+
   </section>
 </div>
 
@@ -345,12 +543,19 @@ let panX = 0, panY = 0;
 let dragStartX = 0, dragStartY = 0;
 let dragActive = false;
 let lastRenderedAlertId = '';
+let lastStreamStatus = null;
 
 function nowSec() { return Date.now() / 1000; }
 function missionId() { return currentMissionId; }
 
 function setMissionStatus(text) {
   document.getElementById('missionStatus').textContent = text;
+}
+
+function setEmptyState(text) {
+  const empty = document.getElementById('emptyState');
+  empty.textContent = text;
+  empty.style.display = 'block';
 }
 
 function formatWallTime(iso) {
@@ -360,10 +565,10 @@ function formatWallTime(iso) {
   return dt.toLocaleString('ru-RU');
 }
 
-function resetAlertView() {
+function resetAlertView(emptyText = 'Ожидание алертов...') {
   currentAlert = null;
   lastRenderedAlertId = '';
-  document.getElementById('emptyState').style.display = 'block';
+  setEmptyState(emptyText);
   const frame = document.getElementById('alertFrame');
   frame.style.display = 'none';
   frame.removeAttribute('data-alert-id');
@@ -432,7 +637,7 @@ async function checkRpiConnection(showStatus) {
   if (rpi && rpi.connected) {
     rpiConnStatus.textContent = 'канал активен';
     rpiConnStatus.style.color = '#86efac';
-    if (showStatus) setMissionStatus('RPi: канал активен');
+    if (showStatus) setMissionStatus('Raspberry Pi: канал активен');
     return true;
   }
   rpiConnStatus.textContent = 'канал недоступен';
@@ -476,7 +681,7 @@ async function loadMissionCatalog(showStatus) {
 /* ---- Mission lifecycle ---- */
 async function startMission() {
   const rpiMissionId = missionSelect.value.trim();
-  if (!rpiMissionId) { setMissionStatus('Выберите миссию из каталога RPi'); return; }
+  if (!rpiMissionId) { setMissionStatus('Выберите миссию из каталога Raspberry Pi'); return; }
 
   setMissionStatus('Запуск потока...');
   const resp = await fetch('/missions/start', {
@@ -490,7 +695,9 @@ async function startMission() {
   currentMissionId = data.mission_id;
   reportLoadedMissionId = '';
   missionClosed = false;
+  lastStreamStatus = null;
   setMissionStatus(`Миссия запущена: ${data.mission_id}`);
+  resetAlertView('Поток запущен. Ожидаем первые алерты в очереди...');
   startAlertsPolling();
   startStreamPolling();
   await refreshAlerts();
@@ -507,10 +714,11 @@ async function completeMission() {
 Последний учтенный кадр: ${data.completed_frame_id ?? '\u2014'}
 Причина: ${reason}`);
   missionClosed = true;
+  lastStreamStatus = { running: false, end_reason: data.end_reason };
   if (data.report) fillReport(data.report); else await loadReport();
   stopAlertsPolling();
   stopStreamPolling();
-  resetAlertView();
+  resetAlertView(`Миссия завершена. Причина: ${reason}`);
 }
 
 /* ---- Bboxes ---- */
@@ -587,18 +795,44 @@ function renderAlert(alert, forceReload) {
 
 /* ---- Alert polling ---- */
 async function refreshAlerts() {
-  if (missionClosed || !missionId()) { if (!missionId()) resetAlertView(); return; }
+  if (missionClosed || !missionId()) {
+    if (!missionId()) {
+      resetAlertView('Миссия не запущена. Выберите миссию и нажмите «Начать миссию».');
+    }
+    return;
+  }
 
   const resp = await fetch(`/alerts?mission_id=${encodeURIComponent(missionId())}&status=queued`);
   if (resp.status === 404) {
     missionClosed = true; stopStreamPolling();
-    currentMissionId = ''; resetAlertView();
+    currentMissionId = '';
+    resetAlertView('Сессия недоступна. Запустите новую миссию.');
     setMissionStatus('Сессия недоступна. Запустите новую миссию.');
     return;
   }
-  if (!resp.ok) return;
+  if (!resp.ok) {
+    setEmptyState('Не удалось получить очередь алертов. Продолжаем попытки...');
+    return;
+  }
   const alerts = await resp.json();
-  if (!alerts.length) { resetAlertView(); return; }
+  if (!alerts.length) {
+    const s = lastStreamStatus;
+    if (!s) {
+      resetAlertView('Ожидание алертов... Проверяем состояние потока.');
+    } else if (s.error) {
+      resetAlertView(`Поток с ошибкой: ${s.error}`);
+    } else if (s.running) {
+      const processed = Number.isInteger(s.processed_frames) ? s.processed_frames : 0;
+      if (processed > 0) {
+        resetAlertView(`Очередь алертов пуста. Поток активен, обработано кадров: ${processed}.`);
+      } else {
+        resetAlertView('Поток активен. Ожидаем первые кадры и алерты.');
+      }
+    } else {
+      resetAlertView(`Миссия завершена. Причина: ${localizeEndReason(s.end_reason)}`);
+    }
+    return;
+  }
   const head = alerts[0];
   if (lastRenderedAlertId === head.alert_id) {
     currentAlert = head; drawBboxes(head); updateAlertMeta(head);
@@ -618,7 +852,9 @@ async function fetchStreamStatus() {
     return null;
   }
   if (!resp.ok) return null;
-  return resp.json();
+  const data = await resp.json();
+  lastStreamStatus = data;
+  return data;
 }
 
 function stopStreamPolling() { if (streamPollTimer) { clearInterval(streamPollTimer); streamPollTimer = null; } }
@@ -636,7 +872,7 @@ function localizeEndReason(reason) {
     detector_or_service_missing: 'детектор/сервис не инициализирован',
     loop_exception: 'ошибка в цикле обработки',
   };
-  return map[reason] || reason || '\u2014';
+  return map[reason] || reason || 'причина не передана';
 }
 
 function buildStreamStatusText(s) {
@@ -659,12 +895,18 @@ function startStreamPolling() {
   streamPollTimer = setInterval(async () => {
     const s = await fetchStreamStatus();
     if (!s) return;
-    if (s.error) { setMissionStatus(`Ошибка потока: ${s.error}`); stopStreamPolling(); return; }
+    if (s.error) {
+      setMissionStatus(`Ошибка потока: ${s.error}`);
+      setEmptyState(`Ошибка потока: ${s.error}`);
+      stopStreamPolling();
+      return;
+    }
     setMissionStatus(buildStreamStatusText(s));
     if (!s.running) {
       stopStreamPolling();
       stopAlertsPolling();
       missionClosed = true;
+      setEmptyState(`Миссия завершена. Причина: ${localizeEndReason(s.end_reason)}`);
     }
   }, 1500);
 }
@@ -682,14 +924,14 @@ async function reviewCurrent(action) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        reviewed_by: 'operator',
+        reviewed_by: 'оператор',
         reviewed_at_sec: reviewedAtSec,
-        decision_reason: action === 'confirm' ? 'manual confirm' : 'manual reject',
+        decision_reason: action === 'confirm' ? 'подтверждено оператором' : 'отклонено оператором',
       }),
     });
     if (!resp.ok) {
       const payload = await resp.json().catch(() => ({}));
-      setMissionStatus(payload.detail || `Ошибка review (${resp.status})`);
+      setMissionStatus(payload.detail || `Ошибка обработки решения (${resp.status})`);
       return;
     }
     await refreshAlerts();
