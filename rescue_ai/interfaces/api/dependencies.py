@@ -88,16 +88,9 @@ def _ensure_runtime() -> ApiRuntime:
     return _STATE.runtime
 
 
-def _clear_runtime() -> None:
-    _STATE.runtime = None
-
-
 def get_container() -> ApiRuntime:
     """Return initialized API runtime container."""
     return _ensure_runtime()
-
-
-get_container.cache_clear = _clear_runtime  # type: ignore[attr-defined]
 
 
 def get_pilot_service() -> PilotService:

@@ -64,7 +64,7 @@ services:
       - "${DOCKER_GID}"
     ports:
       - "8080:8080"
-    command: webserver
+    command: airflow webserver
 
   airflow-scheduler:
     image: ${BATCH_IMAGE}
@@ -85,7 +85,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:
       - "${DOCKER_GID}"
-    command: scheduler
+    command: airflow scheduler
 
 volumes:
   airflow_db_data:
