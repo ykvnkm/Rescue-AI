@@ -2,359 +2,732 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rescue AI Pilot Console</title>
+  <title>Rescue Drone Station</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0d1220;
-      --card: #111a2f;
-      --text: #dbe6ff;
-      --muted: #8ea2cc;
-      --accent: #36c2ff;
-      --ok: #1fbf75;
-      --warn: #ffb020;
+      --bg: #0a0f1f;
+      --panel: #10182b;
+      --panel-2: #0f1a30;
+      --accent: #f97316;
+      --accent-2: #fb923c;
+      --ok: #22c55e;
       --bad: #ef4444;
-      --border: rgba(142, 162, 204, 0.25);
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+      --radius: 18px;
+      --outline: rgba(148, 163, 184, 0.15);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
+      padding: 0 24px 32px;
       background:
-        radial-gradient(circle at 12% 8%, rgba(54,194,255,0.16), transparent 35%),
-        radial-gradient(circle at 85% 0%, rgba(31,191,117,0.12), transparent 35%),
+        radial-gradient(circle at 15% 10%, rgba(249,115,22,0.18), transparent 40%),
+        radial-gradient(circle at 85% 0%, rgba(251,146,60,0.16), transparent 42%),
+        linear-gradient(180deg, rgba(15,23,42,0.9), rgba(10,15,31,0.95)),
+        repeating-linear-gradient(90deg, rgba(148,163,184,0.08) 0, rgba(148,163,184,0.08) 1px, transparent 1px, transparent 32px),
         var(--bg);
       color: var(--text);
-      font: 15px/1.45 "Segoe UI", system-ui, sans-serif;
-      min-height: 100vh;
+      font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
     }
-    .wrap {
-      max-width: 980px;
-      margin: 0 auto;
-      padding: 24px 16px 40px;
-      display: grid;
-      gap: 14px;
-    }
-    .card {
-      background: linear-gradient(155deg, #111a2f, #0f1730);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 14px;
-    }
+    header { padding: 26px 0 14px; }
     h1 {
       margin: 0;
-      font-size: 28px;
-      letter-spacing: 0.01em;
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      font-family: 'Space Grotesk', sans-serif;
+      text-align: center;
     }
-    .subtitle { color: var(--muted); margin-top: 6px; }
-    .grid {
+    .layout {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      grid-template-columns: 320px 1fr;
+      gap: 18px;
+      align-items: start;
     }
-    .kpi {
-      background: rgba(8, 14, 28, 0.6);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 10px;
+    .card {
+      background: linear-gradient(155deg, rgba(19,28,48,0.95), rgba(12,18,34,0.9));
+      border: 1px solid var(--outline);
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(6px);
     }
-    .kpi .k { font-size: 12px; color: var(--muted); }
-    .kpi .v { font-size: 16px; font-weight: 700; margin-top: 4px; }
-    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-    input {
+    .card h3 {
+      margin: 0 0 12px;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .field { margin-bottom: 10px; }
+    .field label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    select, input {
       width: 100%;
-      border: 1px solid var(--border);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: rgba(15,23,42,0.7);
       border-radius: 10px;
-      background: rgba(8, 14, 28, 0.6);
       color: var(--text);
       padding: 10px 12px;
       font-size: 14px;
     }
-    .buttons { display: flex; gap: 10px; margin-top: 12px; }
-    button {
-      border: 0;
+    .btn {
+      width: 100%;
+      border: none;
       border-radius: 12px;
-      padding: 10px 14px;
+      padding: 12px 14px;
+      background: linear-gradient(120deg, var(--accent), var(--accent-2));
+      color: #07121e;
       font-weight: 700;
       cursor: pointer;
+      margin-top: 8px;
+      box-shadow: 0 12px 30px rgba(249,115,22,0.35);
     }
-    .primary { background: linear-gradient(120deg, var(--accent), #6fe3ff); color: #03131b; }
-    .secondary { background: rgba(8, 14, 28, 0.6); color: var(--text); border: 1px solid var(--border); }
-    .danger { background: linear-gradient(120deg, #ff6b6b, #ef4444); color: #fff; }
-    .status { white-space: pre-wrap; min-height: 36px; color: var(--muted); }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; }
-    .ok { background: rgba(31,191,117,0.2); color: #8af0be; }
-    .warn { background: rgba(255,176,32,0.2); color: #ffd58a; }
-    .bad { background: rgba(239,68,68,0.2); color: #ffc0c0; }
-    @media (max-width: 780px) {
-      .grid { grid-template-columns: 1fr; }
-      .buttons { flex-direction: column; }
+    .btn.secondary {
+      background: rgba(15,23,42,0.8);
+      color: var(--text);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      box-shadow: none;
+    }
+    .rpi-status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(148,163,184,0.18);
+      background: rgba(0,0,0,0.22);
+      margin-bottom: 12px;
+    }
+    .rpi-status-bar .info {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .rpi-status-bar .info strong { font-size: 13px; }
+    .rpi-check-btn {
+      border: none;
+      border-radius: 10px;
+      padding: 8px 14px;
+      background: rgba(15,23,42,0.8);
+      color: var(--text);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .status {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: pre-wrap;
+      min-height: 32px;
+    }
+    .console {
+      min-height: 730px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .frame-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      min-height: 540px;
+      background: rgba(6, 11, 22, 0.9);
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      cursor: grab;
+    }
+    .frame-wrap.dragging { cursor: grabbing; }
+    .zoom-content {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      transform-origin: 0 0;
+    }
+    #alertFrame {
+      width: 100%; height: 100%;
+      object-fit: contain;
+      display: none;
+    }
+    #bboxLayer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+    .bbox-item {
+      position: absolute;
+      border: 2px solid #00f5d4;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.65);
+      border-radius: 2px;
+      background: transparent;
+    }
+    #emptyState {
+      color: var(--muted);
+      font-size: 20px;
+      text-align: center;
+    }
+    .meta-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .meta-item {
+      background: rgba(15,23,42,0.75);
+      border: 1px solid rgba(148,163,184,0.2);
+      border-radius: 12px;
+      padding: 10px 12px;
+    }
+    .meta-item .k {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+      display: block;
+    }
+    .meta-item .v {
+      font-size: 15px;
+      font-weight: 600;
+      font-family: 'Space Grotesk', sans-serif;
+      word-break: break-word;
+    }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 4px;
+    }
+    .action-btn {
+      border: none;
+      border-radius: 14px;
+      padding: 16px;
+      font-size: 22px;
+      font-weight: 700;
+      cursor: pointer;
+      color: #08111f;
+      font-family: 'Space Grotesk', sans-serif;
+      box-shadow: 0 14px 30px rgba(0,0,0,0.35);
+    }
+    .action-btn.confirm { background: linear-gradient(120deg, #22c55e, #16a34a); }
+    .action-btn.reject { background: linear-gradient(120deg, #ef4444, #dc2626); color: #fff; }
+    .report-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      background: rgba(15,23,42,0.75);
+      border: 1px solid rgba(148,163,184,0.2);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .report-table td {
+      border-bottom: 1px solid rgba(148,163,184,0.15);
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+    .report-table tr:last-child td { border-bottom: none; }
+    .report-table td:first-child { color: var(--muted); width: 65%; }
+    .report-table td:last-child { font-weight: 700; text-align: right; }
+    @media (max-width: 1100px) {
+      .layout { grid-template-columns: 1fr; }
+      .meta-row { grid-template-columns: 1fr 1fr; }
     }
   </style>
 </head>
 <body>
-  <main class="wrap">
-    <section class="card">
-      <h1>Rescue AI Pilot Console</h1>
-      <div class="subtitle">RPi stream emulator: запуск миссии по ID папки внутри <span class="mono">RPI_MISSIONS_DIR</span>, realtime-поток через RTSP.</div>
-    </section>
+<header>
+  <h1>Rescue Drone Station</h1>
+</header>
 
-    <section class="card">
-      <div class="grid">
-        <div class="kpi">
-          <div class="k">Service /health</div>
-          <div class="v" id="healthV">—</div>
+<div class="layout">
+  <aside>
+    <!-- RPi connection status -->
+    <div class="card" style="margin-bottom:14px;">
+      <h3>RaspberryPi</h3>
+      <div class="rpi-status-bar">
+        <div class="info">
+          <span>Канал: <strong id="rpiConnStatus" style="color:#fbbf24;">не проверено</strong></span>
+          <span id="missionsMeta"></span>
         </div>
-        <div class="kpi">
-          <div class="k">Service /ready</div>
-          <div class="v" id="readyV">—</div>
-        </div>
-        <div class="kpi">
-          <div class="k">RPi Link /rpi/status</div>
-          <div class="v" id="rpiV">—</div>
-        </div>
-        <div class="kpi">
-          <div class="k">Current mission</div>
-          <div class="v mono" id="missionV">—</div>
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.14); background:rgba(0,0,0,0.22); margin-bottom:12px;">
-        <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-start; text-align:left;">
-          <div style="font-size:12px; color:var(--muted);">Состояние канала RaspberryPi</div>
-          <div style="font-size:13px; color:var(--text); text-align:left; width:100%;">
-            Статус: <strong id="rpiConnStatus" style="color:#fbbf24;">не проверено</strong>
-          </div>
-          <div id="missionsMeta" style="font-size:12px; color:var(--muted); text-align:left; width:100%;"></div>
-        </div>
-        <button class="secondary" id="checkRpiBtn" type="button">Проверить канал</button>
+        <button class="rpi-check-btn" id="checkRpiBtn">Проверить</button>
       </div>
 
-      <label for="rpiMissionSelect">Выбор миссии (RaspberryPi)</label>
-      <select id="rpiMissionSelect" style="width:100%; border:1px solid var(--border); border-radius:10px; background:rgba(8, 14, 28, 0.6); color:var(--text); padding:10px 12px; font-size:14px;">
-        <option value="" selected disabled>Загрузка миссий...</option>
-      </select>
-      <div class="subtitle">Если миссия не отображается, нажми «Проверить канал».</div>
-      <div class="buttons">
-        <button class="primary" id="startBtn">Start stream</button>
-        <button class="danger" id="stopBtn">Stop stream</button>
-        <button class="secondary" id="refreshBtn">Refresh status</button>
+      <div class="field">
+        <label for="rpiMissionSelect">Выбор миссии (RPi)</label>
+        <select id="rpiMissionSelect">
+          <option value="" selected disabled>Загрузка миссий...</option>
+        </select>
       </div>
-      <div class="status" id="statusBox"></div>
-    </section>
 
-    <section class="card">
-      <div class="kpi">
-        <div class="k">Stream details</div>
-        <div class="v mono" id="streamDetails">—</div>
+      <button class="btn" id="startBtn">Начать миссию</button>
+      <button class="btn secondary" id="completeBtn">Закончить миссию</button>
+      <button class="btn secondary" id="reportBtn">Отчет по миссии</button>
+
+      <div class="status" id="missionStatus"></div>
+    </div>
+  </aside>
+
+  <section class="card console">
+    <div class="frame-wrap">
+      <div id="emptyState">Ожидание алертов...</div>
+      <div id="zoomContent" class="zoom-content">
+        <img id="alertFrame" alt="alert frame" />
+        <div id="bboxLayer"></div>
       </div>
-    </section>
-  </main>
+    </div>
+
+    <div class="meta-row">
+      <div class="meta-item">
+        <span class="k">Время алерта</span>
+        <span class="v" id="metaTime">&mdash;</span>
+      </div>
+      <div class="meta-item">
+        <span class="k">Статус</span>
+        <span class="v" id="metaStatus">&mdash;</span>
+      </div>
+      <div class="meta-item">
+        <span class="k">Score</span>
+        <span class="v" id="metaScore">&mdash;</span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="action-btn confirm" onclick="reviewCurrent('confirm')">Подтвердить</button>
+      <button class="action-btn reject" onclick="reviewCurrent('reject')">Отклонить</button>
+    </div>
+
+    <div class="card" style="padding:12px; margin-top:4px;">
+      <h3 style="margin-bottom:8px;">Отчет по миссии</h3>
+      <table class="report-table">
+        <tbody>
+          <tr><td>Всего эпизодов</td><td id="rEpisodesTotal">&mdash;</td></tr>
+          <tr><td>Найдено эпизодов</td><td id="rEpisodesFound">&mdash;</td></tr>
+          <tr><td>Полнота по эпизодам</td><td id="rRecall">&mdash;</td></tr>
+          <tr><td>Время до первого подтверждения (с)</td><td id="rTtfc">&mdash;</td></tr>
+          <tr><td>Всего алертов</td><td id="rAlertsTotal">&mdash;</td></tr>
+          <tr><td>Подтверждено</td><td id="rConfirmed">&mdash;</td></tr>
+          <tr><td>Отклонено</td><td id="rRejected">&mdash;</td></tr>
+          <tr><td>Ложных тревог в минуту</td><td id="rFpMin">&mdash;</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
 
 <script>
-const statusBox = document.getElementById('statusBox');
-const missionV = document.getElementById('missionV');
-const streamDetails = document.getElementById('streamDetails');
-const missionsMeta = document.getElementById('missionsMeta');
-const rpiConnStatus = document.getElementById('rpiConnStatus');
-const missionSelect = document.getElementById('rpiMissionSelect');
-const checkRpiBtn = document.getElementById('checkRpiBtn');
+const alertSeenAt = new Map();
+let currentAlert = null;
 let currentMissionId = '';
-let pollTimer = null;
+let streamPollTimer = null;
+let alertsPollTimer = null;
+let reportLoadedMissionId = '';
+let missionClosed = false;
+let reviewInFlight = false;
+let zoomScale = 1;
+let panX = 0, panY = 0;
+let dragStartX = 0, dragStartY = 0;
+let dragActive = false;
+let lastRenderedAlertId = '';
 
-function setStatus(text) {
-  statusBox.textContent = text;
+function nowSec() { return Date.now() / 1000; }
+function missionId() { return currentMissionId; }
+
+function setMissionStatus(text) {
+  document.getElementById('missionStatus').textContent = text;
 }
 
-function badge(label, cls) {
-  return `<span class="badge ${cls}">${label}</span>`;
+function formatWallTime(iso) {
+  if (!iso) return '\u2014';
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return iso;
+  return dt.toLocaleString('ru-RU');
 }
 
-async function loadSystemStatus() {
-  const health = await fetch('/health').then((r) => r.ok ? r.json() : null).catch(() => null);
-  document.getElementById('healthV').innerHTML = health ? badge('ok', 'ok') : badge('error', 'bad');
-
-  const readyResp = await fetch('/ready').catch(() => null);
-  if (readyResp && readyResp.ok) {
-    document.getElementById('readyV').innerHTML = badge('ready', 'ok');
-  } else {
-    document.getElementById('readyV').innerHTML = badge('not ready', 'warn');
-  }
-
-  const rpi = await fetch('/rpi/status').then((r) => r.ok ? r.json() : null).catch(() => null);
-  if (rpi && rpi.connected) {
-    document.getElementById('rpiV').innerHTML = `${badge('connected', 'ok')} <span class="mono">${rpi.base_url}</span>`;
-  } else if (rpi) {
-    document.getElementById('rpiV').innerHTML = `${badge('disconnected', 'bad')} <span class="mono">${rpi.base_url || '-'}</span>`;
-  } else {
-    document.getElementById('rpiV').innerHTML = badge('unavailable', 'bad');
-  }
+function resetAlertView() {
+  currentAlert = null;
+  lastRenderedAlertId = '';
+  document.getElementById('emptyState').style.display = 'block';
+  const frame = document.getElementById('alertFrame');
+  frame.style.display = 'none';
+  frame.removeAttribute('data-alert-id');
+  document.getElementById('bboxLayer').innerHTML = '';
+  document.getElementById('metaTime').textContent = '\u2014';
+  document.getElementById('metaStatus').textContent = '\u2014';
+  document.getElementById('metaScore').textContent = '\u2014';
+  resetZoomPan();
 }
 
-async function checkRpiConnection(showStatus = true) {
-  const rpi = await fetch('/rpi/status').then((r) => r.ok ? r.json() : null).catch(() => null);
+/* ---- zoom / pan ---- */
+function applyViewportTransform() {
+  document.getElementById('zoomContent').style.transform =
+    `translate3d(${panX}px,${panY}px,0) scale(${zoomScale})`;
+}
+function clampPan() {
+  const fw = document.querySelector('.frame-wrap');
+  const zc = document.getElementById('zoomContent');
+  if (!fw || !zc) return;
+  const vw = fw.clientWidth, vh = fw.clientHeight;
+  const sw = zc.clientWidth * zoomScale, sh = zc.clientHeight * zoomScale;
+  panX = Math.max(Math.min(0, vw - sw), Math.min(0, panX));
+  panY = Math.max(Math.min(0, vh - sh), Math.min(0, panY));
+}
+function resetZoomPan() { zoomScale = 1; panX = 0; panY = 0; applyViewportTransform(); }
+
+function setupMouseZoomAndPan() {
+  const fw = document.querySelector('.frame-wrap');
+  if (!fw) return;
+  fw.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const prev = zoomScale;
+    const intensity = e.ctrlKey ? 0.012 : 0.009;
+    const next = Math.max(1, Math.min(12, +(prev * Math.exp(-e.deltaY * intensity)).toFixed(4)));
+    if (next === prev) return;
+    const rect = fw.getBoundingClientRect();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    const wx = (cx - panX) / prev, wy = (cy - panY) / prev;
+    zoomScale = next;
+    panX = cx - wx * zoomScale;
+    panY = cy - wy * zoomScale;
+    clampPan(); applyViewportTransform();
+  }, { passive: false });
+  fw.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || zoomScale <= 1) return;
+    dragActive = true; fw.classList.add('dragging');
+    dragStartX = e.clientX - panX; dragStartY = e.clientY - panY;
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragActive) return;
+    panX = e.clientX - dragStartX; panY = e.clientY - dragStartY;
+    clampPan(); applyViewportTransform();
+  });
+  window.addEventListener('mouseup', () => { dragActive = false; document.querySelector('.frame-wrap')?.classList.remove('dragging'); });
+  fw.addEventListener('dblclick', resetZoomPan);
+  window.addEventListener('resize', () => { clampPan(); applyViewportTransform(); });
+}
+
+/* ---- RPi channel check & mission catalog ---- */
+const rpiConnStatus = document.getElementById('rpiConnStatus');
+const missionsMeta = document.getElementById('missionsMeta');
+const missionSelect = document.getElementById('rpiMissionSelect');
+
+async function checkRpiConnection(showStatus) {
+  const rpi = await fetch('/rpi/status').then(r => r.ok ? r.json() : null).catch(() => null);
   if (rpi && rpi.connected) {
     rpiConnStatus.textContent = 'канал активен';
     rpiConnStatus.style.color = '#86efac';
-    if (showStatus) {
-      setStatus('Подключение к RaspberryPi установлено.');
-    }
+    if (showStatus) setMissionStatus('RPi: канал активен');
     return true;
   }
   rpiConnStatus.textContent = 'канал недоступен';
   rpiConnStatus.style.color = '#fca5a5';
-  if (showStatus) {
-    const reason = rpi && rpi.detail ? rpi.detail : 'RaspberryPi недоступен';
-    setStatus(reason);
-  }
+  if (showStatus) setMissionStatus(rpi && rpi.detail ? rpi.detail : 'RPi недоступен');
   return false;
 }
 
 function renderMissionOptions(missions) {
   missionSelect.innerHTML = '';
-  const placeholder = document.createElement('option');
-  placeholder.value = '';
-  placeholder.disabled = true;
-  placeholder.selected = true;
-  placeholder.textContent = missions.length ? 'Выберите миссию' : 'Миссии не найдены';
-  missionSelect.appendChild(placeholder);
-
-  for (const mission of missions) {
-    const option = document.createElement('option');
-    option.value = mission.mission_id;
-    option.textContent = mission.name ? `${mission.mission_id} — ${mission.name}` : mission.mission_id;
-    missionSelect.appendChild(option);
+  const ph = document.createElement('option');
+  ph.value = ''; ph.disabled = true; ph.selected = true;
+  ph.textContent = missions.length ? 'Выберите миссию' : 'Миссии не найдены';
+  missionSelect.appendChild(ph);
+  for (const m of missions) {
+    const o = document.createElement('option');
+    o.value = m.mission_id;
+    o.textContent = m.name ? `${m.mission_id} \u2014 ${m.name}` : m.mission_id;
+    missionSelect.appendChild(o);
   }
-  missionsMeta.textContent = missions.length
-    ? `Доступно миссий на RPi: ${missions.length}`
-    : 'Каталог пустой.';
+  missionsMeta.textContent = missions.length ? `Миссий: ${missions.length}` : 'Каталог пуст';
 }
 
-async function loadMissionCatalog(showStatus = false) {
-  const connected = await checkRpiConnection(showStatus);
-  if (!connected) {
-    missionsMeta.textContent = 'Каталог недоступен: нет связи с RaspberryPi.';
-    missionSelect.innerHTML = '<option value="" selected disabled>Миссии недоступны</option>';
+async function loadMissionCatalog(showStatus) {
+  const ok = await checkRpiConnection(showStatus);
+  if (!ok) {
+    missionsMeta.textContent = 'Каталог недоступен';
+    missionSelect.innerHTML = '<option value="" selected disabled>Недоступно</option>';
     return;
   }
-
   const resp = await fetch('/rpi/missions').catch(() => null);
   if (!resp || !resp.ok) {
-    missionsMeta.textContent = 'Не удалось загрузить каталог миссий.';
-    if (showStatus) {
-      setStatus('Ошибка загрузки каталога миссий.');
-    }
-    missionSelect.innerHTML = '<option value="" selected disabled>Ошибка загрузки</option>';
+    missionsMeta.textContent = 'Ошибка загрузки каталога';
+    missionSelect.innerHTML = '<option value="" selected disabled>Ошибка</option>';
     return;
   }
-
   const data = await resp.json().catch(() => ({ missions: [] }));
-  const missions = Array.isArray(data.missions) ? data.missions : [];
-  renderMissionOptions(missions);
-  if (showStatus) {
-    setStatus(`Каталог миссий загружен: ${missions.length}.`);
-  }
+  renderMissionOptions(Array.isArray(data.missions) ? data.missions : []);
 }
 
+/* ---- Mission lifecycle ---- */
 async function startMission() {
   const rpiMissionId = missionSelect.value.trim();
-  if (!rpiMissionId) {
-    setStatus('Выбери миссию из каталога RaspberryPi.');
-    return;
-  }
+  if (!rpiMissionId) { setMissionStatus('Выберите миссию из каталога RPi'); return; }
 
-  setStatus('Запуск потока...');
-  const resp = await fetch('/predict/start', {
+  setMissionStatus('Запуск потока...');
+  const resp = await fetch('/missions/start', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rpi_mission_id: rpiMissionId }),
   });
   const data = await resp.json().catch(() => ({}));
-
-  if (!resp.ok) {
-    setStatus(`Start failed (${resp.status}): ${data.detail || 'unknown error'}`);
-    return;
-  }
+  if (!resp.ok) { setMissionStatus(data.detail || 'Ошибка запуска'); return; }
 
   currentMissionId = data.mission_id;
-  missionV.textContent = `${data.mission_id} (source=${data.source_name})`;
-  renderStream(data.stream);
-  setStatus(`Поток запущен. mission_id=${data.mission_id}`);
-  startPolling();
+  reportLoadedMissionId = '';
+  missionClosed = false;
+  setMissionStatus(`Миссия запущена: ${data.mission_id}`);
+  startAlertsPolling();
+  startStreamPolling();
+  await refreshAlerts();
 }
 
-async function stopMission() {
-  if (!currentMissionId) {
-    setStatus('Нет активной mission_id.');
-    return;
-  }
-  const resp = await fetch(`/predict/${currentMissionId}/stop`, { method: 'POST' });
+async function completeMission() {
+  if (!missionId()) return;
+  const resp = await fetch(`/missions/${missionId()}/complete`, { method: 'POST' });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    setStatus(`Stop failed (${resp.status}): ${data.detail || 'unknown error'}`);
+  if (!resp.ok) { setMissionStatus(data.detail || 'Ошибка завершения'); return; }
+
+  const reason = localizeEndReason(data.end_reason);
+  setMissionStatus(`Миссия завершена.
+Последний учтенный кадр: ${data.completed_frame_id ?? '\u2014'}
+Причина: ${reason}`);
+  missionClosed = true;
+  if (data.report) fillReport(data.report); else await loadReport();
+  stopAlertsPolling();
+  stopStreamPolling();
+  resetAlertView();
+}
+
+/* ---- Bboxes ---- */
+function normalizeBboxToPixels(raw, imgW, imgH) {
+  const v = raw.map(Number);
+  if (v.some(Number.isNaN)) return null;
+  let [x1,y1,x2,y2] = v;
+  if (Math.max(Math.abs(x1),Math.abs(y1),Math.abs(x2),Math.abs(y2)) <= 1.5) {
+    x1 *= imgW; x2 *= imgW; y1 *= imgH; y2 *= imgH;
+  }
+  x1 = Math.max(0, Math.min(x1, imgW));
+  y1 = Math.max(0, Math.min(y1, imgH));
+  x2 = Math.max(0, Math.min(x2, imgW));
+  y2 = Math.max(0, Math.min(y2, imgH));
+  return (x2 > x1 && y2 > y1) ? [x1,y1,x2,y2] : null;
+}
+
+function drawBboxes(alert) {
+  const frame = document.getElementById('alertFrame');
+  const layer = document.getElementById('bboxLayer');
+  layer.innerHTML = '';
+  const bboxes = (alert.bboxes && alert.bboxes.length) ? alert.bboxes : [alert.bbox];
+  if (!frame.naturalWidth || !frame.naturalHeight || !bboxes.length) return;
+
+  const fW = frame.clientWidth, fH = frame.clientHeight;
+  const imgA = frame.naturalWidth / frame.naturalHeight;
+  const fA = fW / fH;
+  const rW = imgA > fA ? fW : fH * imgA;
+  const rH = imgA > fA ? fW / imgA : fH;
+  const oX = (fW - rW) / 2, oY = (fH - rH) / 2;
+  const sX = rW / frame.naturalWidth, sY = rH / frame.naturalHeight;
+
+  for (const raw of bboxes) {
+    if (!raw || raw.length !== 4) continue;
+    const p = normalizeBboxToPixels(raw, frame.naturalWidth, frame.naturalHeight);
+    if (!p) continue;
+    const pad = 8;
+    const l = Math.max(oX + p[0]*sX - pad, 0);
+    const t = Math.max(oY + p[1]*sY - pad, 0);
+    const r = Math.min(oX + p[2]*sX + pad, fW);
+    const b = Math.min(oY + p[3]*sY + pad, fH);
+    const box = document.createElement('div');
+    box.className = 'bbox-item';
+    box.style.cssText = `left:${l}px;top:${t}px;width:${Math.max(r-l,3)}px;height:${Math.max(b-t,3)}px`;
+    layer.appendChild(box);
+  }
+}
+
+function updateAlertMeta(alert) {
+  document.getElementById('metaTime').textContent = formatWallTime(alert.alert_time_iso);
+  document.getElementById('metaStatus').textContent = alert.status;
+  document.getElementById('metaScore').textContent = String(alert.score ?? '\u2014');
+}
+
+function renderAlert(alert, forceReload) {
+  currentAlert = alert;
+  if (!alertSeenAt.has(alert.alert_id)) alertSeenAt.set(alert.alert_id, nowSec());
+
+  document.getElementById('emptyState').style.display = 'none';
+  const frame = document.getElementById('alertFrame');
+  frame.style.display = 'block';
+  const url = `/alerts/${alert.alert_id}/frame`;
+  if (forceReload || frame.dataset.alertId !== alert.alert_id) {
+    frame.onload = () => drawBboxes(alert);
+    frame.src = url;
+    frame.dataset.alertId = alert.alert_id;
+    resetZoomPan();
+  } else {
+    drawBboxes(alert);
+  }
+  updateAlertMeta(alert);
+  lastRenderedAlertId = alert.alert_id;
+}
+
+/* ---- Alert polling ---- */
+async function refreshAlerts() {
+  if (missionClosed || !missionId()) { if (!missionId()) resetAlertView(); return; }
+
+  const resp = await fetch(`/alerts?mission_id=${encodeURIComponent(missionId())}&status=queued`);
+  if (resp.status === 404) {
+    missionClosed = true; stopStreamPolling();
+    currentMissionId = ''; resetAlertView();
+    setMissionStatus('Сессия недоступна. Запустите новую миссию.');
     return;
   }
-  renderStream(data.stream);
-  setStatus(`Поток остановлен. status=${data.status}`);
-  stopPolling();
-}
-
-function renderStream(stream) {
-  if (!stream) {
-    streamDetails.textContent = 'stream state unavailable';
+  if (!resp.ok) return;
+  const alerts = await resp.json();
+  if (!alerts.length) { resetAlertView(); return; }
+  const head = alerts[0];
+  if (lastRenderedAlertId === head.alert_id) {
+    currentAlert = head; drawBboxes(head); updateAlertMeta(head);
     return;
   }
-  const parts = [
-    `running=${String(stream.running)}`,
-    `session_id=${stream.session_id || '-'}`,
-    `rtsp_url=${stream.rtsp_url || '-'}`,
-    `rpi_mission_id=${stream.rpi_mission_id || '-'}`,
-    `error=${stream.error || '-'}`,
-  ];
-  streamDetails.textContent = parts.join('\n');
+  renderAlert(head, true);
 }
 
-async function pollMission() {
-  if (!currentMissionId) return;
-  const resp = await fetch(`/predict/${currentMissionId}`);
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    setStatus(`Status failed (${resp.status}): ${data.detail || 'unknown error'}`);
-    return;
+/* ---- Stream status polling ---- */
+async function fetchStreamStatus() {
+  if (!missionId()) return null;
+  const resp = await fetch(`/missions/${missionId()}/stream/status`);
+  if (resp.status === 404) {
+    missionClosed = true; stopStreamPolling();
+    currentMissionId = ''; resetAlertView();
+    setMissionStatus('Сессия недоступна. Запустите новую миссию.');
+    return null;
   }
-  renderStream(data.stream);
-  if (data.status) {
-    setStatus(`mission=${data.mission_id}, status=${data.status}`);
+  if (!resp.ok) return null;
+  return resp.json();
+}
+
+function stopStreamPolling() { if (streamPollTimer) { clearInterval(streamPollTimer); streamPollTimer = null; } }
+function stopAlertsPolling() { if (alertsPollTimer) { clearInterval(alertsPollTimer); alertsPollTimer = null; } }
+function startAlertsPolling() {
+  stopAlertsPolling();
+  alertsPollTimer = setInterval(refreshAlerts, 1200);
+}
+
+function localizeEndReason(reason) {
+  const map = {
+    source_finished: 'источник завершил выдачу кадров (конец миссии)',
+    stop_requested: 'остановлено оператором',
+    capture_open_failed: 'не удалось открыть поток',
+    detector_or_service_missing: 'детектор/сервис не инициализирован',
+    loop_exception: 'ошибка в цикле обработки',
+  };
+  return map[reason] || reason || '\u2014';
+}
+
+function buildStreamStatusText(s) {
+  const backend = (s.capture_backend || '\u2014').toUpperCase();
+  const processed = Number.isInteger(s.processed_frames) ? s.processed_frames : 0;
+  const total = Number.isInteger(s.source_frames_total) ? s.source_frames_total : null;
+  const progress = total !== null ? `${processed}/${total}` : `${processed}`;
+  const alerts = Number.isInteger(s.alerts_created) ? s.alerts_created : 0;
+  const reason = s.running ? '\u2014' : localizeEndReason(s.end_reason);
+  const title = s.running ? 'Миссия: поток активен' : 'Миссия: поток остановлен';
+  return `${title}
+Поток: ${backend}
+Обработано кадров: ${progress}
+Алертов: ${alerts}
+Миссия завершена: ${reason}`;
+}
+
+function startStreamPolling() {
+  stopStreamPolling();
+  streamPollTimer = setInterval(async () => {
+    const s = await fetchStreamStatus();
+    if (!s) return;
+    if (s.error) { setMissionStatus(`Ошибка потока: ${s.error}`); stopStreamPolling(); return; }
+    setMissionStatus(buildStreamStatusText(s));
+    if (!s.running) {
+      stopStreamPolling();
+      stopAlertsPolling();
+      missionClosed = true;
+    }
+  }, 1500);
+}
+
+/* ---- Review ---- */
+async function reviewCurrent(action) {
+  if (!currentAlert || reviewInFlight) return;
+  reviewInFlight = true;
+  const seen = alertSeenAt.get(currentAlert.alert_id) || nowSec();
+  const reaction = Math.max(nowSec() - seen, 0);
+  const reviewedAtSec = +(+currentAlert.ts_sec + reaction).toFixed(3);
+
+  try {
+    const resp = await fetch(`/alerts/${currentAlert.alert_id}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reviewed_by: 'operator',
+        reviewed_at_sec: reviewedAtSec,
+        decision_reason: action === 'confirm' ? 'manual confirm' : 'manual reject',
+      }),
+    });
+    if (!resp.ok) {
+      const payload = await resp.json().catch(() => ({}));
+      setMissionStatus(payload.detail || `Ошибка review (${resp.status})`);
+      return;
+    }
+    await refreshAlerts();
+  } finally {
+    reviewInFlight = false;
   }
 }
 
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
+/* ---- Report ---- */
+function setReportRow(id, val) { document.getElementById(id).textContent = val ?? '\u2014'; }
+
+function fillReport(r) {
+  setReportRow('rEpisodesTotal', r.episodes_total);
+  setReportRow('rEpisodesFound', r.episodes_found);
+  setReportRow('rRecall', r.recall_event);
+  setReportRow('rTtfc', r.ttfc_sec);
+  setReportRow('rAlertsTotal', r.alerts_total);
+  setReportRow('rConfirmed', r.alerts_confirmed);
+  setReportRow('rRejected', r.alerts_rejected);
+  setReportRow('rFpMin', r.fp_per_minute);
 }
 
-function startPolling() {
-  stopPolling();
-  pollTimer = setInterval(pollMission, 1500);
+async function loadReport() {
+  if (!missionId()) return;
+  const resp = await fetch(`/missions/${missionId()}/report`);
+  if (!resp.ok) return;
+  fillReport(await resp.json());
 }
 
+/* ---- Wire up buttons ---- */
 document.getElementById('startBtn').addEventListener('click', startMission);
-document.getElementById('stopBtn').addEventListener('click', stopMission);
-document.getElementById('refreshBtn').addEventListener('click', async () => {
-  await loadSystemStatus();
-  await loadMissionCatalog(true);
-  await pollMission();
-});
-checkRpiBtn.addEventListener('click', async () => {
-  await loadMissionCatalog(true);
-});
+document.getElementById('completeBtn').addEventListener('click', completeMission);
+document.getElementById('reportBtn').addEventListener('click', loadReport);
+document.getElementById('checkRpiBtn').addEventListener('click', () => loadMissionCatalog(true));
 
-loadSystemStatus();
-loadMissionCatalog();
+/* ---- Boot ---- */
+setupMouseZoomAndPan();
+loadMissionCatalog(false);
 </script>
 </body>
 </html>

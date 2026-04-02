@@ -49,7 +49,7 @@ def test_lazy_runtime_bootstrap_and_getters(monkeypatch) -> None:
     pilot = _FakePilotService()
     stream = _FakeStreamController()
 
-    module = SimpleNamespace(build_api_runtime=lambda: (pilot, stream, lambda: None))
+    module = SimpleNamespace(build_api_runtime=lambda: (pilot, stream, lambda: None, None))
     monkeypatch.setattr(dependencies.importlib, "import_module", lambda _: module)
 
     assert dependencies.get_container().pilot_service is pilot

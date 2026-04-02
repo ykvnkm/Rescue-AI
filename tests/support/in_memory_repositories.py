@@ -99,6 +99,8 @@ class InMemoryAlertRepository:
         if status not in self.allowed_target_statuses:
             raise ValueError("Invalid target status")
         if alert.status != AlertStatus.QUEUED:
+            if alert.status == status:
+                return alert
             raise ValueError("Alert already reviewed")
 
         alert.status = status

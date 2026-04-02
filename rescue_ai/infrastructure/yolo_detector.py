@@ -27,10 +27,9 @@ class YoloDetector:
         self._model_version = model_version
         self._model: Any | None = None
 
-    def detect(self, image_uri: str) -> list[Detection]:
+    def detect(self, image_uri: object) -> list[Detection]:
         """Run detection on a single frame and return normalized detections."""
-        frame_path = Path(image_uri)
-        results = self._predict_raw(frame_path)
+        results = self._predict_raw(image_uri)
         if not results:
             return []
 
@@ -45,10 +44,11 @@ class YoloDetector:
         """Return human-readable runtime name."""
         return "yolo"
 
-    def _predict_raw(self, frame_path: Path):
+    def _predict_raw(self, image_source: object):
         model = self._ensure_model()
+        source = self._resolve_predict_source(image_source)
         return model.predict(
-            source=str(frame_path),
+            source=source,
             conf=self._config.confidence_threshold,
             iou=self._config.nms_iou,
             imgsz=self._config.imgsz,
@@ -56,6 +56,34 @@ class YoloDetector:
             device=self._config.device,
             verbose=False,
         )
+
+    def _resolve_predict_source(self, image_source: object) -> object:
+        if isinstance(image_source, Path):
+            return str(image_source)
+        if isinstance(image_source, str):
+            return image_source
+
+        try:
+            import numpy as np
+        except ImportError:
+            raise TypeError("numpy is required for in-memory detection source")
+
+        if isinstance(image_source, np.ndarray):
+            return image_source
+
+        if isinstance(image_source, bytes):
+            try:
+                import cv2
+            except ImportError:
+                raise TypeError("opencv-python is required for bytes detection source")
+            frame = cv2.imdecode(
+                np.frombuffer(image_source, dtype=np.uint8), cv2.IMREAD_COLOR
+            )
+            if frame is None:
+                raise ValueError("Failed to decode JPEG bytes for detection")
+            return frame
+
+        raise TypeError(f"Unsupported image source type: {type(image_source)!r}")
 
     def warmup(self) -> None:
         self._ensure_model()

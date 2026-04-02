@@ -173,11 +173,13 @@ class PilotService:
             detections=detections,
         )
 
-        stored_image_uri = self._deps.artifact_storage.store_frame(
-            mission_id=frame_event.mission_id,
-            frame_id=frame_event.frame_id,
-            source_uri=frame_event.image_uri,
-        )
+        stored_image_uri = frame_event.image_uri
+        if alerts:
+            stored_image_uri = self._deps.artifact_storage.store_frame(
+                mission_id=frame_event.mission_id,
+                frame_id=frame_event.frame_id,
+                source_uri=frame_event.image_uri,
+            )
         frame_event.image_uri = stored_image_uri
         self._deps.frame_event_repository.add(frame_event)
 
@@ -244,9 +246,37 @@ class PilotService:
             report_data=report_data,
             alert_rules=self._alert_rules,
         )
+        gt_available = any(frame.gt_person_present for frame in report_data.frames)
+        report_stats["kpi_validity"] = (
+            {
+                "recall_event": "valid",
+                "episodes_total": "valid",
+                "episodes_found": "valid",
+                "ttfc_sec": "valid",
+                "false_alerts_total": "valid",
+                "fp_per_minute": "valid",
+            }
+            if gt_available
+            else {
+                "recall_event": "not_applicable",
+                "episodes_total": "not_applicable",
+                "episodes_found": "not_applicable",
+                "ttfc_sec": "not_applicable",
+                "false_alerts_total": "not_applicable",
+                "fp_per_minute": "not_applicable",
+            }
+        )
+        if not gt_available:
+            report_stats["episodes_total"] = None
+            report_stats["episodes_found"] = None
+            report_stats["recall_event"] = None
+            report_stats["ttfc_sec"] = None
+            report_stats["false_alerts_total"] = None
+            report_stats["fp_per_minute"] = None
 
         report = {
             "mission_id": mission_id,
+            "gt_available": gt_available,
             **report_stats,
             "generated_at": _utc_now_iso(),
         }

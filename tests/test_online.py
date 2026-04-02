@@ -69,7 +69,7 @@ def test_main_calls_uvicorn_run(
     monkeypatch.setattr(
         online_main,
         "build_api_runtime",
-        lambda: (MagicMock(), MagicMock(), lambda: None),
+        lambda: (MagicMock(), MagicMock(), lambda: None, None),
     )
     from rescue_ai.interfaces.cli.online import main
 

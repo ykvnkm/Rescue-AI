@@ -428,7 +428,19 @@ class PostgresAlertRepository:
                 existing = cursor.fetchone()
                 if existing is None:
                     return None
-                if _coerce_alert_status(existing[1]) != AlertStatus.QUEUED:
+                existing_status = _coerce_alert_status(existing[1])
+                if existing_status != AlertStatus.QUEUED:
+                    if existing_status == status:
+                        cursor.execute(
+                            f"""
+                            SELECT {ALERT_COLUMNS}
+                            FROM alerts
+                            WHERE alert_id = %s
+                            """,
+                            (alert_id,),
+                        )
+                        return_row = cursor.fetchone()
+                        return None if return_row is None else _alert_from_row(return_row)
                     raise ValueError("Alert already reviewed")
 
                 effective_reviewed_at = (
