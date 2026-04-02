@@ -81,6 +81,43 @@ class PredictResponse(BaseModel):
     count: int
 
 
+class ForceCompleteRequest(BaseModel):
+    """Emergency mission completion request."""
+
+    reviewed_by: str = "авто-обход"
+    decision_reason: str = "аварийное снятие зависшей очереди"
+
+
+def _resolve_queued_alerts_for_force_complete(
+    *,
+    service: Any,
+    mission_id: str,
+    payload: ForceCompleteRequest,
+) -> tuple[int, list[str]]:
+    queued_alerts = service.list_alerts(mission_id=mission_id, status="queued")
+    failed_alert_ids: list[str] = []
+    resolved_count = 0
+    for alert in queued_alerts:
+        review_payload = cast(
+            AlertReviewPayload,
+            {
+                "status": "reviewed_rejected",
+                "reviewed_by": payload.reviewed_by,
+                "reviewed_at_sec": alert.ts_sec,
+                "decision_reason": payload.decision_reason,
+            },
+        )
+        try:
+            reviewed = service.review_alert(alert.alert_id, review_payload)
+            if reviewed is None:
+                failed_alert_ids.append(alert.alert_id)
+            else:
+                resolved_count += 1
+        except ValueError:
+            failed_alert_ids.append(alert.alert_id)
+    return resolved_count, failed_alert_ids
+
+
 # ── System endpoints ───────────────────────────────────────────────
 
 
@@ -262,6 +299,82 @@ def complete_mission(mission_id: str) -> dict[str, object]:
             if stopped_state is None
             else stopped_state.error or stopped_state.end_reason
         ),
+        "report": report,
+    }
+
+
+@router.post("/missions/{mission_id}/force-complete", tags=["missions"])
+def force_complete_mission(
+    mission_id: str,
+    payload: ForceCompleteRequest = ForceCompleteRequest(),
+) -> dict[str, object]:
+    """Emergency path: resolve queued alerts and complete the mission."""
+    service = get_pilot_service()
+    stream_controller = get_stream_controller()
+
+    mission = service.get_mission(mission_id)
+    if mission is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    if mission.status == "completed":
+        return {
+            "mission_id": mission.mission_id,
+            "status": mission.status,
+            "completed_frame_id": mission.completed_frame_id,
+            "end_reason": "already_completed",
+            "resolved_queued_alerts": 0,
+            "failed_queued_alerts": [],
+            "report": service.get_mission_report(mission_id),
+        }
+
+    stopped_state = stream_controller.stop(mission_id)
+    completed_frame_id = None
+    if stopped_state is not None and stopped_state.processed_frames > 0:
+        completed_frame_id = stopped_state.processed_frames - 1
+
+    resolved_count, failed_alert_ids = _resolve_queued_alerts_for_force_complete(
+        service=service,
+        mission_id=mission_id,
+        payload=payload,
+    )
+
+    if failed_alert_ids:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Failed to resolve queued alerts before completion: "
+                f"{', '.join(failed_alert_ids)}"
+            ),
+        )
+
+    try:
+        completed = service.complete_mission(
+            mission_id=mission_id,
+            completed_frame_id=completed_frame_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if completed is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+
+    try:
+        report = service.get_mission_report(mission_id)
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Artifact/report storage error: {type(error).__name__}: {error}",
+        ) from error
+
+    return {
+        "mission_id": completed.mission_id,
+        "status": completed.status,
+        "completed_frame_id": completed.completed_frame_id,
+        "end_reason": (
+            None
+            if stopped_state is None
+            else stopped_state.error or stopped_state.end_reason
+        ),
+        "resolved_queued_alerts": resolved_count,
+        "failed_queued_alerts": failed_alert_ids,
         "report": report,
     }
 

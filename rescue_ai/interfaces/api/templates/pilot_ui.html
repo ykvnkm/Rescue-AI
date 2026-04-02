@@ -471,6 +471,7 @@
 
       <button class="btn" id="startBtn">Начать миссию</button>
       <button class="btn secondary" id="completeBtn">Закончить миссию</button>
+      <button class="btn secondary" id="forceCompleteBtn">Экстренно завершить</button>
       <button class="btn secondary" id="reportBtn">Отчет по миссии</button>
     </div>
 
@@ -577,6 +578,15 @@ function resetAlertView(emptyText = 'Ожидание алертов...') {
   document.getElementById('metaStatus').textContent = '\u2014';
   document.getElementById('metaScore').textContent = '\u2014';
   resetZoomPan();
+}
+
+function localizeAlertStatus(status) {
+  const map = {
+    queued: 'В очереди',
+    reviewed_confirmed: 'Подтвержден',
+    reviewed_rejected: 'Отклонен',
+  };
+  return map[status] || status || '\u2014';
 }
 
 /* ---- zoom / pan ---- */
@@ -707,7 +717,16 @@ async function completeMission() {
   if (!missionId()) return;
   const resp = await fetch(`/missions/${missionId()}/complete`, { method: 'POST' });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) { setMissionStatus(data.detail || 'Ошибка завершения'); return; }
+  if (!resp.ok) {
+    if (resp.status === 409 && String(data.detail || '').includes('queued alerts')) {
+      setMissionStatus(`Обычное завершение недоступно: есть алерты в очереди.
+Если подтверждение/отклонение зависло, используйте «Экстренно завершить».`);
+      setEmptyState('Завершение заблокировано из-за очереди алертов. Разберите очередь или используйте аварийный обход.');
+      return;
+    }
+    setMissionStatus(data.detail || 'Ошибка завершения');
+    return;
+  }
 
   const reason = localizeEndReason(data.end_reason);
   setMissionStatus(`Миссия завершена.
@@ -719,6 +738,43 @@ async function completeMission() {
   stopAlertsPolling();
   stopStreamPolling();
   resetAlertView(`Миссия завершена. Причина: ${reason}`);
+}
+
+async function forceCompleteMission() {
+  if (!missionId()) return;
+  const ok = window.confirm(
+    'Экстренно завершить миссию?\nВсе алерты в очереди будут автоматически отклонены.'
+  );
+  if (!ok) return;
+
+  setMissionStatus('Запущено экстренное завершение: снимаем зависшие алерты и закрываем миссию...');
+  const resp = await fetch(`/missions/${missionId()}/force-complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      reviewed_by: 'оператор-аварийный-режим',
+      decision_reason: 'аварийное снятие зависшей очереди оператором',
+    }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    setMissionStatus(data.detail || 'Ошибка экстренного завершения');
+    return;
+  }
+
+  const reason = localizeEndReason(data.end_reason);
+  const resolved = Number.isInteger(data.resolved_queued_alerts)
+    ? data.resolved_queued_alerts
+    : 0;
+  setMissionStatus(`Миссия экстренно завершена.
+Снято алертов из очереди: ${resolved}
+Причина: ${reason}`);
+  missionClosed = true;
+  lastStreamStatus = { running: false, end_reason: data.end_reason };
+  if (data.report) fillReport(data.report); else await loadReport();
+  stopAlertsPolling();
+  stopStreamPolling();
+  resetAlertView(`Миссия завершена в аварийном режиме. Причина: ${reason}`);
 }
 
 /* ---- Bboxes ---- */
@@ -769,7 +825,7 @@ function drawBboxes(alert) {
 
 function updateAlertMeta(alert) {
   document.getElementById('metaTime').textContent = formatWallTime(alert.alert_time_iso);
-  document.getElementById('metaStatus').textContent = alert.status;
+  document.getElementById('metaStatus').textContent = localizeAlertStatus(alert.status);
   document.getElementById('metaScore').textContent = String(alert.score ?? '\u2014');
 }
 
@@ -818,15 +874,15 @@ async function refreshAlerts() {
   if (!alerts.length) {
     const s = lastStreamStatus;
     if (!s) {
-      resetAlertView('Ожидание алертов... Проверяем состояние потока.');
+      resetAlertView('Ожидание алертов: идет проверка состояния потока.');
     } else if (s.error) {
       resetAlertView(`Поток с ошибкой: ${s.error}`);
     } else if (s.running) {
       const processed = Number.isInteger(s.processed_frames) ? s.processed_frames : 0;
       if (processed > 0) {
-        resetAlertView(`Очередь алертов пуста. Поток активен, обработано кадров: ${processed}.`);
+        resetAlertView(`Очередь алертов пуста: поток активен, обработано кадров: ${processed}.`);
       } else {
-        resetAlertView('Поток активен. Ожидаем первые кадры и алерты.');
+        resetAlertView('Поток активен: ожидаем первые кадры и алерты.');
       }
     } else {
       resetAlertView(`Миссия завершена. Причина: ${localizeEndReason(s.end_reason)}`);
@@ -867,6 +923,7 @@ function startAlertsPolling() {
 function localizeEndReason(reason) {
   const map = {
     source_finished: 'источник завершил выдачу кадров (конец миссии)',
+    source_finished_pending_alert_review: 'источник завершил выдачу кадров, ожидается разбор очереди алертов',
     stop_requested: 'остановлено оператором',
     capture_open_failed: 'не удалось открыть поток',
     detector_or_service_missing: 'детектор/сервис не инициализирован',
@@ -964,6 +1021,7 @@ async function loadReport() {
 /* ---- Wire up buttons ---- */
 document.getElementById('startBtn').addEventListener('click', startMission);
 document.getElementById('completeBtn').addEventListener('click', completeMission);
+document.getElementById('forceCompleteBtn').addEventListener('click', forceCompleteMission);
 document.getElementById('reportBtn').addEventListener('click', loadReport);
 document.getElementById('checkRpiBtn').addEventListener('click', () => loadMissionCatalog(true));
 

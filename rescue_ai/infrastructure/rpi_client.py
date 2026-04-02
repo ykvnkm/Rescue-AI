@@ -78,7 +78,6 @@ class RpiClient:
         self,
         mission_id: str,
         *,
-        loop: bool = False,
         target_fps: float = 6.0,
         timeout_sec: float = 15.0,
     ) -> RpiStreamSession:
@@ -91,7 +90,7 @@ class RpiClient:
                 "source": mission_path,
                 "mission_id": mission_id,
                 "realtime": True,
-                "loop": loop,
+                "loop": False,
                 "target_fps": target_fps,
             },
             timeout=timeout_sec,

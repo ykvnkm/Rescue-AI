@@ -434,6 +434,7 @@ class DetectionStreamController:
             state.running = False
             if state.end_reason is None and state.error is None:
                 state.end_reason = "source_finished"
+            self._finalize_mission_after_stream_end(ctx)
             for f in ctx.tmp_dir.glob("*.jpg"):
                 f.unlink(missing_ok=True)
             ctx.tmp_dir.rmdir()
@@ -442,6 +443,36 @@ class DetectionStreamController:
                 mission_id,
                 ctx.frame_id,
                 state.alerts_created,
+            )
+
+    def _finalize_mission_after_stream_end(self, ctx: _LoopContext) -> None:
+        """Try to auto-complete mission when source naturally finished."""
+        if self._pilot_service is None:
+            return
+        if ctx.state.end_reason != "source_finished":
+            return
+        completed_frame_id: int | None = (
+            ctx.state.processed_frames - 1 if ctx.state.processed_frames > 0 else None
+        )
+        try:
+            self._pilot_service.complete_mission(
+                mission_id=ctx.mission_id,
+                completed_frame_id=completed_frame_id,
+            )
+            logger.info(
+                "Mission auto-completed after source finish: mission=%s frame_id=%s",
+                ctx.mission_id,
+                completed_frame_id,
+            )
+        except AttributeError:
+            return
+        except ValueError as error:
+            # Usually means queued alerts exist; mission stays open for review.
+            ctx.state.end_reason = "source_finished_pending_alert_review"
+            logger.warning(
+                "Mission not auto-completed after source finish: mission=%s reason=%s",
+                ctx.mission_id,
+                error,
             )
 
     def _build_loop_context(
