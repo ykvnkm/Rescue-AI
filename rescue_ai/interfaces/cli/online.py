@@ -6,22 +6,27 @@ import logging
 import tempfile
 import threading
 import time
+from collections.abc import Callable, Iterator
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from importlib import import_module
 from pathlib import Path
-from typing import Callable
+from typing import Any
 
+import httpx
 import uvicorn
 
 from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.config import Settings, get_settings
 from rescue_ai.domain.entities import Detection, FrameEvent
+from rescue_ai.domain.ports import AlertRepository
+from rescue_ai.domain.ports import DetectorPort as DomainDetectorPort
 from rescue_ai.domain.ports import (
-    AlertRepository,
     FrameEventRepository,
     MissionRepository,
+    ReportMetadataPayload,
 )
-from rescue_ai.domain.value_objects import AlertRuleConfig
 from rescue_ai.infrastructure.artifact_storage import build_s3_storage
 from rescue_ai.infrastructure.contract_loader import load_stream_contract
 from rescue_ai.infrastructure.postgres_connection import wait_for_postgres
@@ -56,6 +61,38 @@ class RpiStreamState:
     error: str | None = None
 
 
+@dataclass
+class _GtTracker:
+    sequence: list[bool] | None
+    episode_id: int = 0
+    prev_present: bool = False
+
+    def evaluate(self, frame_id: int) -> tuple[bool, str | None]:
+        gt_present = bool(
+            self.sequence is not None
+            and frame_id < len(self.sequence)
+            and self.sequence[frame_id]
+        )
+        if gt_present and not self.prev_present:
+            self.episode_id += 1
+        self.prev_present = gt_present
+        return gt_present, (f"ep-{self.episode_id}" if gt_present else None)
+
+
+@dataclass
+class _LoopContext:
+    mission_id: str
+    state: RpiStreamState
+    stop_event: threading.Event
+    target_fps: float
+    frame_interval: float
+    gt_tracker: _GtTracker
+    capture: _FrameCapture
+    tmp_dir: Path
+    frame_id: int = 0
+    consecutive_read_failures: int = 0
+
+
 class _FrameCapture:
     """Base interface for frame capture backends."""
 
@@ -74,11 +111,12 @@ class _HttpFrameCapture(_FrameCapture):
 
     def __init__(self, stream_url: str) -> None:
         self._url = stream_url
-        self._response: object | None = None
+        self._client: httpx.Client | None = None
+        self._response: httpx.Response | None = None
+        self._stream_iter: Iterator[bytes] | None = None
         self._buffer = b""
         self._ok = False
         try:
-            import httpx
             # Try to connect with streaming to detect MJPEG
             self._client = httpx.Client(timeout=10.0)
             resp = self._client.send(
@@ -98,7 +136,7 @@ class _HttpFrameCapture(_FrameCapture):
                 self._content_type = ""
                 self._ok = True
                 self._stream_iter = None
-        except Exception as err:
+        except (httpx.HTTPError, RuntimeError, ValueError) as err:
             logger.warning("HTTP stream connect failed: %s", err)
             self._ok = False
 
@@ -111,15 +149,18 @@ class _HttpFrameCapture(_FrameCapture):
             if self._stream_iter is not None:
                 return self._read_mjpeg_frame()
             return self._read_single_frame()
-        except Exception as err:
+        except (httpx.HTTPError, RuntimeError, ValueError) as err:
             logger.warning("HTTP frame read error: %s", err)
             return None
 
     def _read_mjpeg_frame(self) -> bytes | None:
         """Parse JPEG frames from multipart MJPEG stream."""
+        stream_iter = self._stream_iter
+        if stream_iter is None:
+            return None
         while True:
             try:
-                chunk = next(self._stream_iter)
+                chunk = next(stream_iter)
             except StopIteration:
                 return None
             self._buffer += chunk
@@ -135,12 +176,15 @@ class _HttpFrameCapture(_FrameCapture):
                 continue
 
             # Extract complete JPEG
-            jpeg = self._buffer[start : end + 2]
-            self._buffer = self._buffer[end + 2 :]
+            end_idx = end + 2
+            jpeg = self._buffer[start:end_idx]
+            self._buffer = self._buffer[end_idx:]
             return jpeg
 
     def _read_single_frame(self) -> bytes | None:
         """Poll a single JPEG frame from the HTTP endpoint."""
+        if self._client is None:
+            return None
         resp = self._client.get(self._url, timeout=2.0)
         if resp.status_code == 200 and resp.content:
             return resp.content
@@ -148,14 +192,11 @@ class _HttpFrameCapture(_FrameCapture):
 
     def release(self) -> None:
         if self._response is not None:
-            try:
+            with suppress(Exception):
                 self._response.close()
-            except Exception:
-                pass
-        try:
-            self._client.close()
-        except Exception:
-            pass
+        if self._client is not None:
+            with suppress(Exception):
+                self._client.close()
 
 
 class _RtspFrameCapture(_FrameCapture):
@@ -163,9 +204,11 @@ class _RtspFrameCapture(_FrameCapture):
 
     def __init__(self, rtsp_url: str) -> None:
         import os
+
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
         try:
             import cv2
+
             self._cv2 = cv2
             self._cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
             if not self._cap.isOpened():
@@ -206,7 +249,7 @@ class DetectionStreamController:
         self,
         settings: Settings,
         pilot_service: PilotService | None = None,
-        detector: object | None = None,
+        detector: DomainDetectorPort | None = None,
     ) -> None:
         self._rpi_settings = settings.rpi
         self._sessions: dict[str, RpiStreamState] = {}
@@ -346,145 +389,193 @@ class DetectionStreamController:
             return
 
         target_fps = state.target_fps
-        frame_interval = 1.0 / target_fps if target_fps > 0 else 0.5
-        gt_sequence = self._load_gt_sequence(state.rpi_mission_id)
-        state.gt_sequence_total = len(gt_sequence) if gt_sequence is not None else None
-        current_gt_episode = 0
-        prev_gt_present = False
-        consecutive_read_failures = 0
-
-        # Decide capture method: try HTTP stream (more reliable), fallback RTSP
-        capture = self._open_capture(state)
-        if capture is None:
-            state.error = f"Cannot open stream (tried HTTP and RTSP)"
-            state.end_reason = "capture_open_failed"
-            state.running = False
-            return
-        state.capture_backend = (
-            "rtsp" if isinstance(capture, _RtspFrameCapture) else "http"
+        ctx = self._build_loop_context(
+            mission_id=mission_id,
+            state=state,
+            stop_event=stop_event,
+            target_fps=target_fps,
         )
-
-        frame_id = 0
-        tmp_dir = Path(tempfile.mkdtemp(prefix="rescue_frames_"))
+        if ctx is None:
+            return
 
         try:
             while not stop_event.is_set():
                 t0 = time.monotonic()
-
-                frame = capture.read_frame()
+                frame, should_stop = self._read_frame_with_recovery(ctx)
+                if should_stop:
+                    break
                 if frame is None:
-                    consecutive_read_failures += 1
-                    state.read_failures = consecutive_read_failures
-                    if stop_event.is_set():
-                        state.end_reason = "stop_requested"
-                        break
-                    if consecutive_read_failures >= 8:
-                        if isinstance(capture, _RtspFrameCapture):
-                            switched = self._switch_capture_to_http(
-                                current_capture=capture,
-                                state=state,
-                            )
-                            if switched is not None:
-                                capture = switched
-                                consecutive_read_failures = 0
-                                state.read_failures = 0
-                                continue
-                        if self._stream_finished_on_rpi(state):
-                            state.end_reason = "source_finished"
-                            logger.info(
-                                "RPi stream finished mission=%s after %d read failures",
-                                mission_id,
-                                consecutive_read_failures,
-                            )
-                            break
-                    retry_delay = 0.15 if isinstance(capture, _HttpFrameCapture) else 1.0
-                    logger.warning(
-                        "Frame read failed, retrying in %.2fs...",
-                        retry_delay,
-                    )
-                    time.sleep(retry_delay)
                     continue
-                consecutive_read_failures = 0
-                state.read_failures = 0
 
-                # Save frame to temp file for YoloDetector
-                frame_path = tmp_dir / f"frame_{frame_id:06d}.jpg"
-                self._save_frame(frame, frame_path)
-
-                ts_sec = frame_id / target_fps if target_fps > 0 else frame_id * 0.5
-                gt_present = bool(
-                    gt_sequence is not None
-                    and frame_id < len(gt_sequence)
-                    and gt_sequence[frame_id]
-                )
-                gt_episode_id: str | None = None
-                if gt_present and not prev_gt_present:
-                    current_gt_episode += 1
-                if gt_present:
-                    gt_episode_id = f"ep-{current_gt_episode}"
-                prev_gt_present = gt_present
-
-                # Run YOLO detection
-                try:
-                    detections: list[Detection] = self._detect_frame(
-                        frame=frame,
-                        fallback_path=frame_path,
-                    )
-                except Exception as det_err:
-                    logger.warning("Detection error frame=%d: %s", frame_id, det_err)
-                    state.detection_failures += 1
-                    detections = []
-
-                # Ingest frame + detections -> creates alerts
-                frame_event = FrameEvent(
-                    mission_id=mission_id,
-                    frame_id=frame_id,
-                    ts_sec=ts_sec,
-                    image_uri=str(frame_path),
-                    gt_person_present=gt_present,
-                    gt_episode_id=gt_episode_id,
-                )
-                try:
-                    alerts = self._pilot_service.ingest_frame_event(
-                        frame_event=frame_event,
-                        detections=detections,
-                    )
-                    state.alerts_created += len(alerts)
-                except Exception as ingest_err:
-                    logger.warning("Ingest error frame=%d: %s", frame_id, ingest_err)
-                    state.ingest_failures += 1
-                    state.error = (
-                        f"{type(ingest_err).__name__}: {ingest_err}"
-                    )
-
-                frame_id += 1
-                state.processed_frames = frame_id
+                self._process_frame(ctx, frame)
 
                 # Clean up previous frame file to save disk
-                if frame_id > 1:
-                    prev = tmp_dir / f"frame_{frame_id - 2:06d}.jpg"
+                if ctx.frame_id > 1:
+                    prev = ctx.tmp_dir / f"frame_{ctx.frame_id - 2:06d}.jpg"
                     prev.unlink(missing_ok=True)
 
                 # Throttle to target FPS
                 elapsed = time.monotonic() - t0
-                sleep_time = frame_interval - elapsed
+                sleep_time = ctx.frame_interval - elapsed
                 if sleep_time > 0:
                     stop_event.wait(timeout=sleep_time)
 
-        except Exception as loop_err:
+        except (RuntimeError, ValueError, TypeError, OSError) as loop_err:
             state.error = f"{type(loop_err).__name__}: {loop_err}"
             state.end_reason = "loop_exception"
             logger.exception("Detection loop crashed: %s", loop_err)
         finally:
-            capture.release()
+            with suppress(Exception):
+                ctx.capture.release()
             state.running = False
-            for f in tmp_dir.glob("*.jpg"):
+            for f in ctx.tmp_dir.glob("*.jpg"):
                 f.unlink(missing_ok=True)
-            tmp_dir.rmdir()
+            ctx.tmp_dir.rmdir()
             logger.info(
                 "Detection loop finished: mission=%s frames=%d alerts=%d",
-                mission_id, frame_id, state.alerts_created,
+                mission_id,
+                ctx.frame_id,
+                state.alerts_created,
             )
+
+    def _build_loop_context(
+        self,
+        *,
+        mission_id: str,
+        state: RpiStreamState,
+        stop_event: threading.Event,
+        target_fps: float,
+    ) -> _LoopContext | None:
+        frame_interval = 1.0 / target_fps if target_fps > 0 else 0.5
+        gt_sequence = self._load_gt_sequence(state.rpi_mission_id)
+        state.gt_sequence_total = len(gt_sequence) if gt_sequence is not None else None
+        capture = self._open_capture(state)
+        if capture is None:
+            state.error = "Cannot open stream (tried HTTP and RTSP)"
+            state.end_reason = "capture_open_failed"
+            state.running = False
+            return None
+        state.capture_backend = (
+            "rtsp" if isinstance(capture, _RtspFrameCapture) else "http"
+        )
+        return _LoopContext(
+            mission_id=mission_id,
+            state=state,
+            stop_event=stop_event,
+            target_fps=target_fps,
+            frame_interval=frame_interval,
+            gt_tracker=_GtTracker(sequence=gt_sequence),
+            capture=capture,
+            tmp_dir=Path(tempfile.mkdtemp(prefix="rescue_frames_")),
+        )
+
+    def _read_frame_with_recovery(
+        self,
+        ctx: _LoopContext,
+    ) -> tuple[object | None, bool]:
+        frame = ctx.capture.read_frame()
+        if frame is not None:
+            ctx.state.read_failures = 0
+            ctx.consecutive_read_failures = 0
+            return frame, False
+
+        ctx.consecutive_read_failures += 1
+        ctx.state.read_failures = ctx.consecutive_read_failures
+        if ctx.stop_event.is_set():
+            ctx.state.end_reason = "stop_requested"
+            return None, True
+
+        if ctx.consecutive_read_failures >= 8:
+            switched = self._try_switch_to_http(ctx)
+            if switched:
+                return None, False
+            if self._stream_finished_on_rpi(ctx.state):
+                ctx.state.end_reason = "source_finished"
+                logger.info(
+                    "RPi stream finished mission=%s after %d read failures",
+                    ctx.mission_id,
+                    ctx.consecutive_read_failures,
+                )
+                return None, True
+
+        retry_delay = 0.15 if isinstance(ctx.capture, _HttpFrameCapture) else 1.0
+        logger.warning("Frame read failed, retrying in %.2fs...", retry_delay)
+        time.sleep(retry_delay)
+        return None, False
+
+    def _try_switch_to_http(self, ctx: _LoopContext) -> bool:
+        if not isinstance(ctx.capture, _RtspFrameCapture):
+            return False
+        switched = self._switch_capture_to_http(
+            current_capture=ctx.capture,
+            state=ctx.state,
+        )
+        if switched is None:
+            return False
+        ctx.capture = switched
+        ctx.consecutive_read_failures = 0
+        ctx.state.read_failures = 0
+        return True
+
+    def _process_frame(self, ctx: _LoopContext, frame: object) -> None:
+        frame_path = ctx.tmp_dir / f"frame_{ctx.frame_id:06d}.jpg"
+        self._save_frame(frame, frame_path)
+        ts_sec = (
+            ctx.frame_id / ctx.target_fps if ctx.target_fps > 0 else ctx.frame_id * 0.5
+        )
+        gt_present, gt_episode_id = ctx.gt_tracker.evaluate(ctx.frame_id)
+        detections = self._detect_frame_or_empty(
+            frame=frame,
+            frame_path=frame_path,
+            frame_id=ctx.frame_id,
+            state=ctx.state,
+        )
+        frame_event = FrameEvent(
+            mission_id=ctx.mission_id,
+            frame_id=ctx.frame_id,
+            ts_sec=ts_sec,
+            image_uri=str(frame_path),
+            gt_person_present=gt_present,
+            gt_episode_id=gt_episode_id,
+        )
+        self._ingest_event(ctx=ctx, frame_event=frame_event, detections=detections)
+        ctx.frame_id += 1
+        ctx.state.processed_frames = ctx.frame_id
+
+    def _detect_frame_or_empty(
+        self,
+        *,
+        frame: object,
+        frame_path: Path,
+        frame_id: int,
+        state: RpiStreamState,
+    ) -> list[Detection]:
+        try:
+            return self._detect_frame(frame=frame, fallback_path=frame_path)
+        except (RuntimeError, ValueError, TypeError, OSError) as det_err:
+            logger.warning("Detection error frame=%d: %s", frame_id, det_err)
+            state.detection_failures += 1
+            return []
+
+    def _ingest_event(
+        self,
+        *,
+        ctx: _LoopContext,
+        frame_event: FrameEvent,
+        detections: list[Detection],
+    ) -> None:
+        if self._pilot_service is None:
+            raise RuntimeError("PilotService is not configured")
+        try:
+            alerts = self._pilot_service.ingest_frame_event(
+                frame_event=frame_event,
+                detections=detections,
+            )
+            ctx.state.alerts_created += len(alerts)
+        except (RuntimeError, ValueError, TypeError, OSError) as ingest_err:
+            logger.warning("Ingest error frame=%d: %s", ctx.frame_id, ingest_err)
+            ctx.state.ingest_failures += 1
+            ctx.state.error = f"{type(ingest_err).__name__}: {ingest_err}"
 
     def _stream_finished_on_rpi(self, state: RpiStreamState) -> bool:
         try:
@@ -518,10 +609,8 @@ class DetectionStreamController:
         http_capture = _HttpFrameCapture(state.stream_url)
         if not http_capture.is_open():
             return None
-        try:
+        with suppress(Exception):
             current_capture.release()
-        except Exception:
-            pass
         state.capture_backend = "http"
         return http_capture
 
@@ -546,13 +635,14 @@ class DetectionStreamController:
         frame: object,
         fallback_path: Path,
     ) -> list[Detection]:
-        detect_method = getattr(self._detector, "detect", None)
-        if detect_method is None:
-            raise RuntimeError("Detector has no detect() method")
+        detector = self._detector
+        if detector is None:
+            raise RuntimeError("Detector is not configured")
+        detector_any: Any = detector
         try:
-            return detect_method(frame)
+            return detector_any.detect(frame)
         except TypeError:
-            return detect_method(str(fallback_path))
+            return detector_any.detect(str(fallback_path))
 
     @staticmethod
     def _save_frame(frame: object, path: Path) -> None:
@@ -564,7 +654,8 @@ class DetectionStreamController:
         import numpy as np
 
         if isinstance(frame, np.ndarray):
-            import cv2
+            cv2 = import_module("cv2")
+
             cv2.imwrite(str(path), frame)
             return
         raise TypeError(f"Unexpected frame type: {type(frame)}")
@@ -574,25 +665,25 @@ class DetectionStreamController:
         # 1. RTSP primary path
         if state.rtsp_url:
             logger.info("Trying RTSP: %s", state.rtsp_url)
-            cap = _RtspFrameCapture(state.rtsp_url)
-            if cap.is_open():
+            rtsp_capture: _FrameCapture = _RtspFrameCapture(state.rtsp_url)
+            if rtsp_capture.is_open():
                 logger.info("RTSP stream opened successfully")
-                return cap
+                return rtsp_capture
             logger.warning("RTSP stream failed, trying HTTP fallback...")
 
         # 2. HTTP fallback (MJPEG or polling endpoint)
         if state.stream_url:
             logger.info("Trying HTTP stream: %s", state.stream_url)
-            cap = _HttpFrameCapture(state.stream_url)
-            if cap.is_open():
+            http_capture: _FrameCapture = _HttpFrameCapture(state.stream_url)
+            if http_capture.is_open():
                 logger.info("HTTP stream opened successfully")
-                return cap
+                return http_capture
             logger.warning("HTTP stream also failed")
 
         return None
 
 
-def _build_detector():
+def _build_detector() -> DomainDetectorPort | None:
     """Create YoloDetector from stream contract config (lazy, optional)."""
     try:
         from rescue_ai.infrastructure.yolo_detector import YoloDetector
@@ -602,16 +693,23 @@ def _build_detector():
             service_version=settings.app.service_version,
         )
         detector = YoloDetector(config=contract.inference)
-        logger.info("YoloDetector initialized (model_url=%s)", contract.inference.model_url)
+        logger.info(
+            "YoloDetector initialized (model_url=%s)", contract.inference.model_url
+        )
         return detector
-    except Exception as error:
-        logger.warning("YoloDetector not available: %s: %s", type(error).__name__, error)
+    except (ImportError, RuntimeError, ValueError, TypeError, OSError) as error:
+        logger.warning(
+            "YoloDetector not available: %s: %s", type(error).__name__, error
+        )
         return None
 
 
-def build_api_runtime() -> (
-    tuple[PilotService, DetectionStreamController, Callable[[], None], object | None]
-):
+def build_api_runtime() -> tuple[
+    PilotService,
+    DetectionStreamController,
+    Callable[[], None],
+    DomainDetectorPort | None,
+]:
     """Assemble API runtime dependencies (composition root)."""
     settings = get_settings()
     contract = load_stream_contract(
@@ -619,7 +717,7 @@ def build_api_runtime() -> (
     )
     alert_rules = contract.alert_rules
 
-    report_metadata = {
+    report_metadata: ReportMetadataPayload = {
         "config_name": contract.config_name,
         "config_hash": contract.config_hash,
         "config_path": contract.config_path,
@@ -630,10 +728,7 @@ def build_api_runtime() -> (
         report_metadata["model_sha256"] = contract.inference.model_sha256
 
     mission_repository, alert_repository, frame_repository, reset_hook = (
-        _build_repositories(
-            alert_rules=alert_rules,
-            settings=settings,
-        )
+        _build_repositories(settings=settings)
     )
 
     artifact_storage = build_s3_storage(settings.storage)
@@ -689,7 +784,6 @@ def _prepare_postgres_backend() -> None:
 
 def _build_repositories(
     *,
-    alert_rules: AlertRuleConfig,
     settings: Settings,
 ) -> tuple[
     MissionRepository,

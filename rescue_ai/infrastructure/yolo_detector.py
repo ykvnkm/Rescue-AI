@@ -65,8 +65,8 @@ class YoloDetector:
 
         try:
             import numpy as np
-        except ImportError:
-            raise TypeError("numpy is required for in-memory detection source")
+        except ImportError as exc:
+            raise TypeError("numpy is required for in-memory detection source") from exc
 
         if isinstance(image_source, np.ndarray):
             return image_source
@@ -74,8 +74,10 @@ class YoloDetector:
         if isinstance(image_source, bytes):
             try:
                 import cv2
-            except ImportError:
-                raise TypeError("opencv-python is required for bytes detection source")
+            except ImportError as exc:
+                raise TypeError(
+                    "opencv-python is required for bytes detection source"
+                ) from exc
             frame = cv2.imdecode(
                 np.frombuffer(image_source, dtype=np.uint8), cv2.IMREAD_COLOR
             )

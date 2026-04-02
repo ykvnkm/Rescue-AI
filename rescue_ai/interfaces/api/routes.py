@@ -136,11 +136,7 @@ def rpi_missions() -> dict[str, object]:
             status_code=503,
             detail=f"RPi catalog fetch failed: {type(error).__name__}: {error}",
         ) from error
-    return {
-        "missions": [
-            item for item in missions if item.get("mission_id", "")
-        ]
-    }
+    return {"missions": [item for item in missions if item.get("mission_id", "")]}
 
 
 @router.get("/favicon.ico", include_in_schema=False)
@@ -244,7 +240,9 @@ def complete_mission(mission_id: str) -> dict[str, object]:
         "status": mission.status,
         "completed_frame_id": mission.completed_frame_id,
         "end_reason": (
-            None if stopped_state is None else stopped_state.error or stopped_state.end_reason
+            None
+            if stopped_state is None
+            else stopped_state.error or stopped_state.end_reason
         ),
         "report": report,
     }

@@ -26,7 +26,7 @@ class StreamControllerPort(Protocol):
         target_fps: float,
     ) -> object: ...
 
-    def stop(self, mission_id: str) -> object | None: ...
+    def stop(self, mission_id: str) -> StreamStopState | None: ...
 
     def as_payload(self, mission_id: str) -> dict[str, object] | None: ...
 
@@ -39,6 +39,14 @@ class DetectorPort(Protocol):
     """Single-frame detector contract consumed by /predict endpoint."""
 
     def detect(self, image_uri: str) -> list[Detection]: ...
+
+
+class StreamStopState(Protocol):
+    """Subset of stream state used by API completion/status routes."""
+
+    processed_frames: int
+    error: str | None
+    end_reason: str | None
 
 
 @dataclass

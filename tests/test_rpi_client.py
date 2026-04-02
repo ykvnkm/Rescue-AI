@@ -87,6 +87,7 @@ def test_rpi_client_health_catalog_and_session_calls(monkeypatch) -> None:
 
 def test_load_gt_sequence_from_raw_file(monkeypatch) -> None:
     def _fake_get(url: str, timeout: float, params=None):
+        _ = timeout
         if url.endswith("/mission/catalog"):
             return _Response(
                 {
@@ -166,6 +167,6 @@ def test_build_gt_sequence_uses_numeric_filename_gaps_as_negatives() -> None:
     seq = _build_gt_sequence_from_coco(payload)
     assert seq is not None
     assert len(seq) == 10
-    assert seq[0] is True   # frame 2
-    assert seq[9] is True   # frame 11
+    assert seq[0] is True  # frame 2
+    assert seq[9] is True  # frame 11
     assert sum(1 for item in seq if item) == 2

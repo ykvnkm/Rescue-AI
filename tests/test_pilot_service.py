@@ -105,8 +105,8 @@ def test_ingest_frame_event_without_alert_skips_frame_upload() -> None:
         detections=[],
     )
 
-    assert alerts == []
-    assert artifacts.stored_frames == {}
+    assert not alerts
+    assert not artifacts.stored_frames
     assert db.mission_frames[mission.mission_id][0].image_uri == "file:///tmp/frame.jpg"
 
 

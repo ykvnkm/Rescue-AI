@@ -440,7 +440,9 @@ class PostgresAlertRepository:
                             (alert_id,),
                         )
                         return_row = cursor.fetchone()
-                        return None if return_row is None else _alert_from_row(return_row)
+                        return (
+                            None if return_row is None else _alert_from_row(return_row)
+                        )
                     raise ValueError("Alert already reviewed")
 
                 effective_reviewed_at = (

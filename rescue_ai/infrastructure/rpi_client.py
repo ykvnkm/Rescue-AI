@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-import re
 
 import httpx
 
@@ -78,7 +78,6 @@ class RpiClient:
         self,
         mission_id: str,
         *,
-        mode: str = "frames",
         loop: bool = False,
         target_fps: float = 6.0,
         timeout_sec: float = 15.0,
@@ -88,7 +87,7 @@ class RpiClient:
         response = httpx.post(
             f"{self._base_url}/source/start",
             json={
-                "mode": mode,
+                "mode": "frames",
                 "source": mission_path,
                 "mission_id": mission_id,
                 "realtime": True,
@@ -184,7 +183,9 @@ class RpiClient:
         return self._base_url
 
 
-def _build_gt_sequence_from_coco(payload: dict[str, object]) -> list[bool] | None:
+def _build_gt_sequence_from_coco(
+    payload: dict[str, object],
+) -> list[bool] | None:
     images_raw = payload.get("images")
     annotations_raw = payload.get("annotations")
     if not isinstance(images_raw, list) or not isinstance(annotations_raw, list):
@@ -194,83 +195,123 @@ def _build_gt_sequence_from_coco(payload: dict[str, object]) -> list[bool] | Non
     if not image_rows:
         return None
 
-    category_rows = payload.get("categories")
-    person_category_ids: set[int] = set()
-    if isinstance(category_rows, list):
-        for item in category_rows:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name", "")).strip().lower()
-            if name != "person":
-                continue
-            try:
-                person_category_ids.add(int(item.get("id")))
-            except (TypeError, ValueError):
-                continue
+    person_category_ids = _extract_person_category_ids(payload.get("categories"))
+    positive_image_ids = _extract_positive_image_ids(
+        annotations_raw,
+        person_category_ids,
+    )
+    numbered_sequence = _build_numbered_sequence(image_rows, positive_image_ids)
+    if numbered_sequence is not None:
+        return numbered_sequence
+    return _build_sorted_sequence(image_rows, positive_image_ids)
 
+
+def _extract_person_category_ids(category_rows: object) -> set[int]:
+    if not isinstance(category_rows, list):
+        return set()
+    person_category_ids: set[int] = set()
+    for item in category_rows:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip().lower()
+        if name != "person":
+            continue
+        category_id = _to_int(item.get("id"))
+        if category_id is not None:
+            person_category_ids.add(category_id)
+    return person_category_ids
+
+
+def _extract_positive_image_ids(
+    annotations_raw: list[object],
+    person_category_ids: set[int],
+) -> set[int]:
     positive_image_ids: set[int] = set()
     for item in annotations_raw:
         if not isinstance(item, dict):
             continue
-        try:
-            image_id = int(item.get("image_id"))
-        except (TypeError, ValueError):
+        image_id = _to_int(item.get("image_id"))
+        if image_id is None:
             continue
         if person_category_ids:
-            try:
-                category_id = int(item.get("category_id"))
-            except (TypeError, ValueError):
-                continue
+            category_id = _to_int(item.get("category_id"))
             if category_id not in person_category_ids:
                 continue
         positive_image_ids.add(image_id)
+    return positive_image_ids
 
+
+def _build_numbered_sequence(
+    image_rows: list[dict[object, object]],
+    positive_image_ids: set[int],
+) -> list[bool] | None:
     image_id_to_frame_num: dict[int, int] = {}
-    numeric_names = True
     for row in image_rows:
-        try:
-            image_id = int(row.get("id"))
-        except (TypeError, ValueError):
+        image_id = _to_int(row.get("id"))
+        if image_id is None:
             continue
-        name = str(row.get("file_name", ""))
-        stem = name.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-        match = re.search(r"(\d+)$", stem)
-        if match is None:
-            numeric_names = False
-            break
-        image_id_to_frame_num[image_id] = int(match.group(1))
-
-    if numeric_names and image_id_to_frame_num:
-        min_num = min(image_id_to_frame_num.values())
-        max_num = max(image_id_to_frame_num.values())
-        if max_num < min_num:
+        frame_num = _extract_frame_num(row)
+        if frame_num is None:
             return None
-        size = max_num - min_num + 1
-        sequence = [False] * size
-        positive_frame_nums = {
-            image_id_to_frame_num[image_id]
-            for image_id in positive_image_ids
-            if image_id in image_id_to_frame_num
-        }
-        for frame_num in positive_frame_nums:
-            idx = frame_num - min_num
-            if 0 <= idx < size:
-                sequence[idx] = True
-        return sequence
+        image_id_to_frame_num[image_id] = frame_num
 
+    if not image_id_to_frame_num:
+        return None
+    min_num = min(image_id_to_frame_num.values())
+    max_num = max(image_id_to_frame_num.values())
+    if max_num < min_num:
+        return None
+    size = max_num - min_num + 1
+    sequence = [False] * size
+    for image_id in positive_image_ids:
+        frame_num = image_id_to_frame_num.get(image_id)
+        if frame_num is None:
+            continue
+        idx = frame_num - min_num
+        if 0 <= idx < size:
+            sequence[idx] = True
+    return sequence
+
+
+def _extract_frame_num(row: dict[object, object]) -> int | None:
+    name = str(row.get("file_name", ""))
+    stem = name.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    match = re.search(r"(\d+)$", stem)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def _build_sorted_sequence(
+    image_rows: list[dict[object, object]],
+    positive_image_ids: set[int],
+) -> list[bool]:
     sorted_images = sorted(
         image_rows,
         key=lambda row: (
             str(row.get("file_name", "")),
-            int(row.get("id", 0)) if str(row.get("id", "")).isdigit() else 0,
+            _to_int(row.get("id")) or 0,
         ),
     )
     sequence: list[bool] = []
     for row in sorted_images:
-        try:
-            image_id = int(row.get("id"))
-        except (TypeError, ValueError):
-            sequence.append(False)
-            continue
-        sequence.append(image_id in positive_image_ids)
+        image_id = _to_int(row.get("id"))
+        sequence.append(
+            image_id in positive_image_ids if image_id is not None else False
+        )
     return sequence
+
+
+def _to_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, (str, bytes, bytearray)):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None

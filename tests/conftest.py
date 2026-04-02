@@ -1,7 +1,5 @@
 """Pytest configuration: Postgres fixtures and default env setup."""
 
-# pylint: disable=redefined-outer-name
-
 from __future__ import annotations
 
 import os
@@ -55,8 +53,7 @@ def pg_dsn() -> Iterator[tuple[str, str]]:
             cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
 
-@pytest.fixture()
-def pg_db(pg_dsn: tuple[str, str]):  # noqa: ANN201
+def _pg_db_fixture(pg_dsn: tuple[str, str]):  # noqa: ANN201
     """Function-scoped PostgresDatabase that truncates tables after each test."""
     from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
 
@@ -64,3 +61,6 @@ def pg_db(pg_dsn: tuple[str, str]):  # noqa: ANN201
     db = PostgresDatabase(dsn=dsn, schema=schema)
     yield db
     db.truncate_all()
+
+
+pg_db = pytest.fixture(name="pg_db")(_pg_db_fixture)
