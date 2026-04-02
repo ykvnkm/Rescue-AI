@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from rescue_ai.domain.entities import Detection
 from rescue_ai.interfaces.api.app import app
 
 client = TestClient(app)
@@ -58,6 +59,12 @@ class _FakePilotService:
 
 
 class _FakeStreamController:
+    class _StoppedState:
+        def __init__(self, processed_frames: int = 0) -> None:
+            self.processed_frames = processed_frames
+            self.error = None
+            self.end_reason = "source_finished"
+
     def check_rpi_health(self) -> dict[str, object]:
         return {"status": "ok"}
 
@@ -76,7 +83,7 @@ class _FakeStreamController:
 
     def stop(self, mission_id: str):
         _ = mission_id
-        return {"running": False}
+        return self._StoppedState(processed_frames=3)
 
 
 def test_health_ok() -> None:
@@ -124,22 +131,34 @@ def test_predict_flow_smoke(monkeypatch) -> None:
 
     pilot = _FakePilotService()
     stream = _FakeStreamController()
-    monkeypatch.setattr(routes, "get_pilot_service", lambda: pilot)
-    monkeypatch.setattr(routes, "get_stream_controller", lambda: stream)
+    detector = object()
+
+    def _get_pilot_service():
+        return pilot
+
+    def _get_stream_controller():
+        return stream
+
+    def _get_detector():
+        return detector
+
+    monkeypatch.setattr(routes, "get_pilot_service", _get_pilot_service)
+    monkeypatch.setattr(routes, "get_stream_controller", _get_stream_controller)
+    monkeypatch.setattr(routes, "get_detector", _get_detector)
 
     start = client.post(
-        "/predict/start",
+        "/missions/start",
         json={"rpi_mission_id": "demo-rpi-mission"},
     )
     assert start.status_code == 200
     assert start.json()["mission_id"] == "m-1"
     assert start.json()["status"] == "running"
 
-    status = client.get("/predict/m-1")
+    status = client.get("/missions/m-1/stream/status")
     assert status.status_code == 200
     assert status.json()["mission_id"] == "m-1"
 
-    stop = client.post("/predict/m-1/stop")
+    stop = client.post("/missions/m-1/complete")
     assert stop.status_code == 200
     assert stop.json()["status"] == "completed"
 
@@ -159,3 +178,55 @@ def test_rpi_missions_returns_catalog(monkeypatch) -> None:
         "demo-rpi-mission",
         "forest-2026-03-29",
     ]
+
+
+def test_predict_endpoint_success(monkeypatch) -> None:
+    from rescue_ai.interfaces.api import routes
+
+    class _Detector:
+        def detect(self, image_uri: str):
+            assert image_uri == "file:///tmp/image.jpg"
+            return [Detection((0.0, 1.0, 2.0, 3.0), 0.99, "person", "yolo", None)]
+
+    detector = _Detector()
+
+    def _get_detector():
+        return detector
+
+    monkeypatch.setattr(routes, "get_detector", _get_detector)
+
+    response = client.post("/predict", json={"image_uri": "file:///tmp/image.jpg"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["detections"][0]["label"] == "person"
+
+
+def test_predict_endpoint_without_detector_returns_503(monkeypatch) -> None:
+    from rescue_ai.interfaces.api import routes
+
+    monkeypatch.setattr(routes, "get_detector", lambda: None)
+    response = client.post("/predict", json={"image_uri": "file:///tmp/image.jpg"})
+
+    assert response.status_code == 503
+    assert "Detector not available" in response.json()["detail"]
+
+
+def test_predict_endpoint_detector_failure_returns_502(monkeypatch) -> None:
+    from rescue_ai.interfaces.api import routes
+
+    class _BrokenDetector:
+        def detect(self, image_uri: str):
+            _ = image_uri
+            raise RuntimeError("model crashed")
+
+    detector = _BrokenDetector()
+
+    def _get_detector():
+        return detector
+
+    monkeypatch.setattr(routes, "get_detector", _get_detector)
+    response = client.post("/predict", json={"image_uri": "file:///tmp/image.jpg"})
+
+    assert response.status_code == 502
+    assert "Detection failed" in response.json()["detail"]

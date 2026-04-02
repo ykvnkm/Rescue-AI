@@ -86,6 +86,30 @@ def test_ingest_frame_event_persists_stored_image_uri_for_frame_and_alert() -> N
     assert artifacts.stored_frames[(mission.mission_id, 1)] == expected_uri
 
 
+def test_ingest_frame_event_without_alert_skips_frame_upload() -> None:
+    artifacts = InMemoryArtifactStorage()
+    service, db = _build_pilot_service(artifact_storage=artifacts)
+    mission = service.create_mission(source_name="pilot", total_frames=1, fps=2.0)
+    started = service.start_mission(mission.mission_id)
+    assert started is not None
+
+    alerts = service.ingest_frame_event(
+        frame_event=FrameEvent(
+            mission_id=mission.mission_id,
+            frame_id=1,
+            ts_sec=0.0,
+            image_uri="file:///tmp/frame.jpg",
+            gt_person_present=False,
+            gt_episode_id=None,
+        ),
+        detections=[],
+    )
+
+    assert not alerts
+    assert not artifacts.stored_frames
+    assert db.mission_frames[mission.mission_id][0].image_uri == "file:///tmp/frame.jpg"
+
+
 def test_review_alert_cannot_be_applied_twice() -> None:
     service, _ = _build_pilot_service()
     mission = service.create_mission(source_name="pilot", total_frames=1, fps=2.0)
@@ -134,6 +158,73 @@ def test_review_alert_cannot_be_applied_twice() -> None:
         assert str(error) == "Alert already reviewed"
     else:  # pragma: no cover
         raise AssertionError("Expected repeated review to be rejected")
+
+
+def test_review_alert_same_status_is_idempotent() -> None:
+    service, _ = _build_pilot_service()
+    mission = service.create_mission(source_name="pilot", total_frames=1, fps=2.0)
+    service.start_mission(mission.mission_id)
+
+    alert = service.ingest_frame_event(
+        frame_event=FrameEvent(
+            mission_id=mission.mission_id,
+            frame_id=1,
+            ts_sec=0.0,
+            image_uri="file:///tmp/frame.jpg",
+            gt_person_present=True,
+            gt_episode_id="ep-1",
+        ),
+        detections=[
+            Detection(
+                bbox=(10.0, 20.0, 30.0, 40.0),
+                score=0.99,
+                label="person",
+                model_name="yolo8n",
+                explanation="strong-hit",
+            )
+        ],
+    )[0]
+
+    review: AlertReviewPayload = {
+        "status": AlertStatus.REVIEWED_CONFIRMED,
+        "reviewed_by": "operator-1",
+        "reviewed_at_sec": 1.0,
+        "decision_reason": "valid target",
+    }
+    first = service.review_alert(alert.alert_id, review)
+    second = service.review_alert(alert.alert_id, review)
+
+    assert first is not None
+    assert second is not None
+    assert second.status == AlertStatus.REVIEWED_CONFIRMED
+
+
+def test_mission_report_marks_gt_kpis_not_applicable_without_gt() -> None:
+    service, _ = _build_pilot_service()
+    mission = service.create_mission(source_name="pilot", total_frames=1, fps=2.0)
+    service.start_mission(mission.mission_id)
+    service.ingest_frame_event(
+        frame_event=FrameEvent(
+            mission_id=mission.mission_id,
+            frame_id=1,
+            ts_sec=0.0,
+            image_uri="file:///tmp/frame.jpg",
+            gt_person_present=False,
+            gt_episode_id=None,
+        ),
+        detections=[],
+    )
+    service.complete_mission(mission.mission_id, completed_frame_id=1)
+
+    report = service.get_mission_report(mission.mission_id)
+
+    assert report["gt_available"] is False
+    assert report["episodes_total"] is None
+    assert report["episodes_found"] is None
+    assert report["recall_event"] is None
+    assert report["ttfc_sec"] is None
+    assert report["false_alerts_total"] is None
+    assert report["fp_per_minute"] is None
 
 
 def test_create_mission_is_idempotent_for_same_source() -> None:

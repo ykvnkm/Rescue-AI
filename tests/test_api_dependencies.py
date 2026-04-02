@@ -28,9 +28,8 @@ class _FakeStreamController:
         _ = (mission_id, rpi_mission_id, target_fps)
         return {"started": True}
 
-    def stop(self, mission_id: str) -> object | None:
+    def stop(self, mission_id: str) -> None:
         _ = mission_id
-        return {"stopped": True}
 
     def as_payload(self, mission_id: str) -> dict[str, object] | None:
         _ = mission_id
@@ -49,7 +48,9 @@ def test_lazy_runtime_bootstrap_and_getters(monkeypatch) -> None:
     pilot = _FakePilotService()
     stream = _FakeStreamController()
 
-    module = SimpleNamespace(build_api_runtime=lambda: (pilot, stream, lambda: None))
+    module = SimpleNamespace(
+        build_api_runtime=lambda: (pilot, stream, lambda: None, None)
+    )
     monkeypatch.setattr(dependencies.importlib, "import_module", lambda _: module)
 
     assert dependencies.get_container().pilot_service is pilot
