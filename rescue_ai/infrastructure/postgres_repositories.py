@@ -211,6 +211,30 @@ class PostgresMissionRepository:
                 row = cursor.fetchone()
         return None if row is None else _mission_from_row(row)
 
+    def list(self, status: str | None = None) -> list[Mission]:
+        with self._db.connect() as conn:
+            with conn.cursor() as cursor:
+                if status is None:
+                    cursor.execute(
+                        f"""
+                        SELECT {MISSION_COLUMNS}
+                        FROM missions
+                        ORDER BY created_at
+                        """
+                    )
+                else:
+                    cursor.execute(
+                        f"""
+                        SELECT {MISSION_COLUMNS}
+                        FROM missions
+                        WHERE status = %s
+                        ORDER BY created_at
+                        """,
+                        (status,),
+                    )
+                rows = cursor.fetchall()
+        return [_mission_from_row(row) for row in rows]
+
     def update_details(
         self,
         mission_id: str,

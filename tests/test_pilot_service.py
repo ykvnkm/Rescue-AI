@@ -245,6 +245,58 @@ def test_create_mission_is_idempotent_for_same_source() -> None:
     assert second.fps == 8.0
 
 
+def test_start_mission_rejects_when_another_active_exists() -> None:
+    service, _ = _build_pilot_service()
+    first = service.create_mission(source_name="rpi:mission-1", total_frames=1, fps=2.0)
+    started = service.start_mission(first.mission_id)
+    assert started is not None
+    second = service.create_mission(
+        source_name="rpi:mission-2",
+        total_frames=1,
+        fps=2.0,
+    )
+
+    try:
+        service.start_mission(second.mission_id)
+    except ValueError as error:
+        assert "Another active mission exists" in str(error)
+    else:  # pragma: no cover
+        raise AssertionError("Expected start of second mission to be rejected")
+
+
+def test_complete_mission_rejects_queued_alerts() -> None:
+    service, _ = _build_pilot_service()
+    mission = service.create_mission(source_name="pilot", total_frames=1, fps=2.0)
+    service.start_mission(mission.mission_id)
+
+    service.ingest_frame_event(
+        frame_event=FrameEvent(
+            mission_id=mission.mission_id,
+            frame_id=1,
+            ts_sec=0.0,
+            image_uri="file:///tmp/frame.jpg",
+            gt_person_present=True,
+            gt_episode_id="ep-1",
+        ),
+        detections=[
+            Detection(
+                bbox=(10.0, 20.0, 30.0, 40.0),
+                score=0.99,
+                label="person",
+                model_name="yolo8n",
+                explanation="strong-hit",
+            )
+        ],
+    )
+
+    try:
+        service.complete_mission(mission.mission_id, completed_frame_id=1)
+    except ValueError as error:
+        assert "queued alerts" in str(error)
+    else:  # pragma: no cover
+        raise AssertionError("Expected completion to be rejected with queued alerts")
+
+
 def test_reingest_same_frame_keeps_single_alert_and_frame_event() -> None:
     service, db = _build_pilot_service()
     mission = service.create_mission(

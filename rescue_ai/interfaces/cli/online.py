@@ -316,6 +316,8 @@ class DetectionStreamController:
         # Signal background thread to stop
         stop_event = self._stop_events.get(mission_id)
         if stop_event is not None:
+            if state.end_reason is None:
+                state.end_reason = "stop_requested"
             stop_event.set()
 
         # Wait for thread to finish (with timeout)
@@ -332,6 +334,8 @@ class DetectionStreamController:
                 state.error = f"{type(error).__name__}: {error}"
 
         state.running = False
+        if state.end_reason is None:
+            state.end_reason = "stop_requested"
         return state
 
     def get_state(self, mission_id: str) -> RpiStreamState | None:
@@ -428,6 +432,8 @@ class DetectionStreamController:
             with suppress(Exception):
                 ctx.capture.release()
             state.running = False
+            if state.end_reason is None and state.error is None:
+                state.end_reason = "source_finished"
             for f in ctx.tmp_dir.glob("*.jpg"):
                 f.unlink(missing_ok=True)
             ctx.tmp_dir.rmdir()

@@ -135,7 +135,19 @@ class PilotService:
         )
 
     def start_mission(self, mission_id: str) -> Mission | None:
-        """Transition a mission to the running state."""
+        """Transition a mission to the running state with safety checks."""
+        mission = self._deps.mission_repository.get(mission_id)
+        if mission is None:
+            return None
+        if mission.status == "running":
+            return mission
+        if mission.status == "completed":
+            raise ValueError("Mission already completed")
+        active = self.get_active_mission(exclude_mission_id=mission_id)
+        if active is not None:
+            raise ValueError(
+                f"Another active mission exists: {active.mission_id} ({active.status})"
+            )
         return self._deps.mission_repository.update_status(
             mission_id=mission_id, status="running"
         )
@@ -146,6 +158,20 @@ class PilotService:
         completed_frame_id: int | None = None,
     ) -> Mission | None:
         """Mark a mission as completed, optionally recording the last frame."""
+        mission = self._deps.mission_repository.get(mission_id)
+        if mission is None:
+            return None
+        if mission.status == "completed":
+            return mission
+        if mission.status != "running":
+            raise ValueError("Mission is not running")
+        queued = self._deps.alert_repository.list(
+            mission_id=mission_id, status="queued"
+        )
+        if queued:
+            raise ValueError(
+                f"Cannot complete mission with queued alerts: {len(queued)}"
+            )
         return self._deps.mission_repository.update_status(
             mission_id=mission_id,
             status="completed",
@@ -194,6 +220,24 @@ class PilotService:
         status: str | None = None,
     ) -> list[Alert]:
         return self._deps.alert_repository.list(mission_id=mission_id, status=status)
+
+    def list_missions(self, status: str | None = None) -> list[Mission]:
+        return self._deps.mission_repository.list(status=status)
+
+    def get_active_mission(
+        self, exclude_mission_id: str | None = None
+    ) -> Mission | None:
+        active_statuses = {"created", "running"}
+        for mission in self._deps.mission_repository.list():
+            if mission.status not in active_statuses:
+                continue
+            if (
+                exclude_mission_id is not None
+                and mission.mission_id == exclude_mission_id
+            ):
+                continue
+            return mission
+        return None
 
     def get_alert(self, alert_id: str) -> Alert | None:
         return self._deps.alert_repository.get(alert_id)

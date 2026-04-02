@@ -24,6 +24,8 @@ class _FakeMission:
 class _FakePilotService:
     def __init__(self) -> None:
         self._mission = _FakeMission("m-1", "created", "rpi:demo", 6.0)
+        self._active_mission: _FakeMission | None = None
+        self._queued_alerts: list[object] = []
 
     def create_mission(self, source_name: str, total_frames: int, fps: float):
         _ = total_frames
@@ -34,6 +36,7 @@ class _FakePilotService:
         if mission_id != self._mission.mission_id:
             return None
         self._mission.status = "running"
+        self._active_mission = self._mission
         return self._mission
 
     def get_mission(self, mission_id: str):
@@ -45,7 +48,10 @@ class _FakePilotService:
         _ = completed_frame_id
         if mission_id != self._mission.mission_id:
             return None
+        if self._queued_alerts:
+            raise ValueError("Cannot complete mission with queued alerts")
         self._mission.status = "completed"
+        self._active_mission = None
         return self._mission
 
     def get_mission_report(self, mission_id: str):
@@ -55,6 +61,15 @@ class _FakePilotService:
 
     def ingest_frame_event(self, frame_event, detections):
         _ = (frame_event, detections)
+        return []
+
+    def get_active_mission(self):
+        return self._active_mission
+
+    def list_alerts(self, mission_id=None, status=None):
+        _ = mission_id
+        if status == "queued":
+            return list(self._queued_alerts)
         return []
 
 
@@ -163,6 +178,56 @@ def test_predict_flow_smoke(monkeypatch) -> None:
     assert stop.json()["status"] == "completed"
 
 
+def test_start_mission_rejected_when_active_exists(monkeypatch) -> None:
+    from rescue_ai.interfaces.api import routes
+
+    pilot = _FakePilotService()
+    pilot._active_mission = _FakeMission("m-prev", "running", "rpi:old", 2.0)
+    stream = _FakeStreamController()
+    detector = object()
+
+    def _get_pilot_service():
+        return pilot
+
+    def _get_stream_controller():
+        return stream
+
+    def _get_detector():
+        return detector
+
+    monkeypatch.setattr(routes, "get_pilot_service", _get_pilot_service)
+    monkeypatch.setattr(routes, "get_stream_controller", _get_stream_controller)
+    monkeypatch.setattr(routes, "get_detector", _get_detector)
+
+    response = client.post(
+        "/missions/start", json={"rpi_mission_id": "demo-rpi-mission"}
+    )
+    assert response.status_code == 409
+    assert "Active mission exists" in response.json()["detail"]
+
+
+def test_complete_mission_rejected_when_alerts_queued(monkeypatch) -> None:
+    from rescue_ai.interfaces.api import routes
+
+    pilot = _FakePilotService()
+    pilot._mission.status = "running"
+    pilot._queued_alerts = [object()]
+    stream = _FakeStreamController()
+
+    def _get_pilot_service():
+        return pilot
+
+    def _get_stream_controller():
+        return stream
+
+    monkeypatch.setattr(routes, "get_pilot_service", _get_pilot_service)
+    monkeypatch.setattr(routes, "get_stream_controller", _get_stream_controller)
+
+    response = client.post("/missions/m-1/complete")
+    assert response.status_code == 409
+    assert "queued alerts" in response.json()["detail"]
+
+
 def test_rpi_missions_returns_catalog(monkeypatch) -> None:
     from rescue_ai.interfaces.api import routes
 
@@ -205,7 +270,10 @@ def test_predict_endpoint_success(monkeypatch) -> None:
 def test_predict_endpoint_without_detector_returns_503(monkeypatch) -> None:
     from rescue_ai.interfaces.api import routes
 
-    monkeypatch.setattr(routes, "get_detector", lambda: None)
+    def _get_detector():
+        return None
+
+    monkeypatch.setattr(routes, "get_detector", _get_detector)
     response = client.post("/predict", json={"image_uri": "file:///tmp/image.jpg"})
 
     assert response.status_code == 503
