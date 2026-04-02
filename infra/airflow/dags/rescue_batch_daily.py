@@ -1,12 +1,12 @@
 """Airflow DAG for the Rescue-AI unified ML pipeline.
 
-For each partition date the DAG auto-discovers mission datasets in S3
-and runs four chained stages per mission:
+For each partition date:
+1) data/train/validate run on the global training scope
+   (all available history up to current ds);
+2) inference runs per discovered mission for current ds.
 
-    data >> train >> validate >> inference
-
-Each stage is idempotent — re-runs skip existing artifacts when output
-for the same mission/date key already exists.
+Each stage is idempotent: re-runs skip existing artifacts when output
+for the same key already exists.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ CODE_VERSION = "main"
 MODEL_VERSION = "yolov8n_baseline_multiscale"
 BATCH_IMAGE = os.environ.get("BATCH_IMAGE", "rescue-ai-batch:latest")
 DS_TEMPLATE = "{{ ds }}"
+GLOBAL_TRAINING_MISSION_ID = "__all_missions__"
 
 _ALLOWED_FRAME_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
@@ -131,7 +132,7 @@ def discover_missions(ds: str) -> list[str]:
 
 with DAG(
     dag_id=DAG_ID,
-    description="Rescue-AI ML pipeline: data → train → validate → inference",
+    description="Rescue-AI ML pipeline: global historical train + per-mission inference",
     start_date=datetime(2026, 3, 1),
     schedule="@daily",
     catchup=True,
@@ -160,34 +161,32 @@ with DAG(
         "environment": _COMMON_ENV,
     }
 
-    @task_group(group_id="mission_pipeline")
-    def mission_pipeline(mission_id: str) -> None:
-        data = DockerOperator(
-            task_id="stage_data",
-            command=_stage_command("data", mission_id),
-            **_docker_defaults,
-        )
+    stage_data = DockerOperator(
+        task_id="stage_data",
+        command=_stage_command("data", GLOBAL_TRAINING_MISSION_ID),
+        **_docker_defaults,
+    )
 
-        train = DockerOperator(
-            task_id="stage_train",
-            command=_stage_command("train", mission_id),
-            **_docker_defaults,
-        )
+    stage_train = DockerOperator(
+        task_id="stage_train",
+        command=_stage_command("train", GLOBAL_TRAINING_MISSION_ID),
+        **_docker_defaults,
+    )
 
-        validate = DockerOperator(
-            task_id="stage_validate",
-            command=_stage_command("validate", mission_id),
-            **_docker_defaults,
-        )
+    stage_validate = DockerOperator(
+        task_id="stage_validate",
+        command=_stage_command("validate", GLOBAL_TRAINING_MISSION_ID),
+        **_docker_defaults,
+    )
 
-        inference = DockerOperator(
+    @task_group(group_id="mission_inference")
+    def mission_inference(mission_id: str) -> None:
+        DockerOperator(
             task_id="stage_inference",
             command=_stage_command("inference", mission_id),
             **_docker_defaults,
         )
 
-        data.set_downstream(train)
-        train.set_downstream(validate)
-        validate.set_downstream(inference)
-
-    mission_pipeline.expand(mission_id=discover_missions(ds=DS_TEMPLATE))
+    discovered_missions = discover_missions(ds=DS_TEMPLATE)
+    stage_data >> stage_train >> stage_validate >> discovered_missions
+    mission_inference.expand(mission_id=discovered_missions)

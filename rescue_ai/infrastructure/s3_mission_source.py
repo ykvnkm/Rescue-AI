@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from tempfile import mkdtemp
 
@@ -10,6 +11,7 @@ from rescue_ai.infrastructure.annotation_index import build_annotation_index
 from rescue_ai.infrastructure.artifact_storage import S3ArtifactBackendSettings
 
 _ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+GLOBAL_MISSION_ID = "__all_missions__"
 
 
 class S3MissionSource:
@@ -41,6 +43,9 @@ class S3MissionSource:
 
     def load(self, mission_id: str, ds: str) -> MissionInput:
         """Load one mission/day dataset from S3 and stage to local temp files."""
+        if mission_id.strip() == GLOBAL_MISSION_ID:
+            return self._load_global(ds)
+
         source_key_root = self._resolve_source_root(mission_id=mission_id, ds=ds)
         frame_keys = self._list_frame_keys(f"{source_key_root}/images/")
         if not frame_keys:
@@ -116,6 +121,98 @@ class S3MissionSource:
             gt_available=gt_available,
         )
 
+    def _load_global(self, ds: str) -> MissionInput:
+        roots = self._discover_source_roots_up_to_ds(ds)
+        if not roots:
+            raise ValueError(
+                "No frame images found in "
+                f"s3://{self._bucket}/{self._source_prefix} up to ds={ds}"
+            )
+
+        aggregated: list[FrameRecord] = []
+        gt_available = True
+        for root in roots:
+            frame_keys = self._list_frame_keys(f"{root}/images/")
+            if not frame_keys:
+                continue
+            annotation_keys = self._list_json_keys(f"{root}/annotations/")
+
+            workspace_key = root.replace("/", "__")
+            mission_workspace = self._workspace / GLOBAL_MISSION_ID / ds / workspace_key
+            frames_dir = mission_workspace / "images"
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            self._download_objects(frame_keys, frames_dir)
+
+            annotations_dir = mission_workspace / "annotations"
+            if annotation_keys:
+                annotations_dir.mkdir(parents=True, exist_ok=True)
+                self._download_objects(annotation_keys, annotations_dir)
+
+            mission_input = self._build_mission_input(
+                source_key_root=root,
+                frames_dir=frames_dir,
+                annotations_dir=annotations_dir,
+                has_annotations=bool(annotation_keys),
+            )
+            gt_available = gt_available and mission_input.gt_available
+            aggregated.extend(mission_input.frames)
+
+        ordered = sorted(aggregated, key=lambda frame: str(frame.frame_path))
+        frames: list[FrameRecord] = []
+        for idx, frame in enumerate(ordered, start=1):
+            frames.append(
+                FrameRecord(
+                    frame_id=idx,
+                    ts_sec=(idx - 1) / self._fps,
+                    frame_path=frame.frame_path,
+                    image_uri=frame.image_uri,
+                    gt_person_present=frame.gt_person_present,
+                    is_corrupted=frame.is_corrupted,
+                )
+            )
+
+        return MissionInput(
+            source_uri=f"s3://{self._bucket}/{self._source_prefix}/ds<={ds}",
+            frames=frames,
+            gt_available=gt_available,
+        )
+
+    def _discover_source_roots_up_to_ds(self, ds: str) -> list[str]:
+        frame_keys = self._list_frame_keys(self._join(self._source_prefix))
+        roots: set[str] = set()
+        for key in frame_keys:
+            parsed = self._parse_source_root_with_ds(key)
+            if parsed is None:
+                continue
+            source_root, key_ds = parsed
+            if _date_not_after(key_ds, ds):
+                roots.add(source_root)
+        return sorted(roots)
+
+    def _parse_source_root_with_ds(self, key: str) -> tuple[str, str] | None:
+        if "/images/" not in key:
+            return None
+        source_root, _ = key.split("/images/", 1)
+        relative_root = source_root
+        source_prefix_with_sep = (
+            f"{self._source_prefix}/" if self._source_prefix else ""
+        )
+        if source_prefix_with_sep and source_root.startswith(source_prefix_with_sep):
+            relative_root = source_root.removeprefix(source_prefix_with_sep)
+
+        parts = [part for part in relative_root.split("/") if part]
+        if len(parts) < 2:
+            return None
+        last_part = parts[-1]
+        ds = (
+            last_part.split("=", 1)[1]
+            if last_part.startswith("ds=")
+            else last_part
+        )
+        if not _is_iso_date(ds):
+            return None
+        return source_root, ds
+
     def _resolve_source_root(self, mission_id: str, ds: str) -> str:
         candidates = [
             self._join(self._source_prefix, f"mission={mission_id}", f"ds={ds}"),
@@ -166,3 +263,15 @@ def _is_corrupted_image(frame_path: Path) -> bool:
         len(header) >= 12 and header.startswith(b"RIFF") and header[8:12] == b"WEBP"
     )
     return not any([is_jpeg, is_png, is_bmp, is_webp])
+
+
+def _is_iso_date(value: str) -> bool:
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _date_not_after(candidate: str, target: str) -> bool:
+    return date.fromisoformat(candidate) <= date.fromisoformat(target)
