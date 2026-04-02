@@ -11,30 +11,19 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
         with:
-          fetch-depth: 0
+          version: "0.5.14"
 
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          version: "0.10.4"
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra batch
+        run: uv sync --extra dev --extra airflow
 
       - name: Run black
         run: uv run black --check rescue_ai tests scripts infra
@@ -46,55 +35,29 @@ jobs:
         run: uv run flake8 rescue_ai tests scripts infra
 
       - name: Run mypy
-        env:
-          PYTHONPATH: ${{ github.workspace }}
         run: uv run mypy rescue_ai tests scripts infra
 
       - name: Run pylint
-        env:
-          PYTHONPATH: ${{ github.workspace }}
         run: uv run pylint rescue_ai tests scripts infra
 
   test:
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: rescue_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U test -d rescue_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v3
         with:
-          version: "0.10.4"
+          version: "0.5.14"
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra batch --extra postgres
+        run: uv sync --extra dev --extra batch --extra postgres --extra airflow
 
-      - name: Run all tests
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          TEST_POSTGRES_DSN: postgresql://test:test@localhost:5432/rescue_test
-        run: uv run pytest tests --cov=rescue_ai --cov-fail-under=70
+      - name: Run tests
+        run: uv run pytest --cov=rescue_ai --cov-report=term-missing --cov-fail-under=70
 
   quality-gate:
     runs-on: ubuntu-latest

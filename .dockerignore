@@ -9,3 +9,11 @@ __pycache__
 coverage.xml
 htmlcov
 tests
+docs
+runtime
+artifacts
+.env
+.idea
+.vscode
+infra/airflow/logs
+infra/airflow/data
