@@ -72,6 +72,14 @@ class _FakePilotService:
             return list(self._queued_alerts)
         return []
 
+    def review_alert(self, alert_id: str, updates):
+        _ = updates
+        for idx, item in enumerate(self._queued_alerts):
+            if getattr(item, "alert_id", "") == alert_id:
+                self._queued_alerts.pop(idx)
+                return item
+        return None
+
 
 class _FakeStreamController:
     class _StoppedState:
@@ -226,6 +234,33 @@ def test_complete_mission_rejected_when_alerts_queued(monkeypatch) -> None:
     response = client.post("/missions/m-1/complete")
     assert response.status_code == 409
     assert "queued alerts" in response.json()["detail"]
+
+
+def test_force_complete_resolves_queued_alerts(monkeypatch) -> None:
+    from rescue_ai.interfaces.api import routes
+
+    pilot = _FakePilotService()
+    pilot._mission.status = "running"
+    pilot._queued_alerts = [
+        type("Alert", (), {"alert_id": "a-1", "ts_sec": 1.0})(),
+        type("Alert", (), {"alert_id": "a-2", "ts_sec": 2.0})(),
+    ]
+    stream = _FakeStreamController()
+
+    def _get_pilot_service():
+        return pilot
+
+    def _get_stream_controller():
+        return stream
+
+    monkeypatch.setattr(routes, "get_pilot_service", _get_pilot_service)
+    monkeypatch.setattr(routes, "get_stream_controller", _get_stream_controller)
+
+    response = client.post("/missions/m-1/force-complete")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["resolved_queued_alerts"] == 2
 
 
 def test_rpi_missions_returns_catalog(monkeypatch) -> None:
