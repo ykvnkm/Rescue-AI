@@ -1,16 +1,24 @@
 name: deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
     branches: [main]
+    types: [completed]
   workflow_dispatch:
+
+env:
+  DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
   build-online:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -26,13 +34,16 @@ jobs:
           cache-to: type=gha,scope=online,mode=max
           tags: |
             ghcr.io/${{ github.repository_owner }}/rescue-ai-online:latest
-            ghcr.io/${{ github.repository_owner }}/rescue-ai-online:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/rescue-ai-online:${{ env.DEPLOY_SHA }}
 
   build-batch:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -48,7 +59,7 @@ jobs:
           cache-to: type=gha,scope=batch,mode=max
           tags: |
             ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:latest
-            ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:${{ env.DEPLOY_SHA }}
 
   deploy:
     runs-on: ubuntu-latest
@@ -75,14 +86,14 @@ jobs:
           AIRFLOW_ADMIN_USER: ${{ secrets.AIRFLOW_ADMIN_USER }}
           AIRFLOW_ADMIN_PASSWORD: ${{ secrets.AIRFLOW_ADMIN_PASSWORD }}
           AIRFLOW_ADMIN_EMAIL: ${{ secrets.AIRFLOW_ADMIN_EMAIL }}
-          GIT_SHA: ${{ github.sha }}
+          GIT_SHA: ${{ env.DEPLOY_SHA }}
           OWNER: ${{ github.repository_owner }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           envs: DB_DSN,ARTIFACTS_S3_ENDPOINT,ARTIFACTS_S3_REGION,ARTIFACTS_S3_ACCESS_KEY_ID,ARTIFACTS_S3_SECRET_ACCESS_KEY,ARTIFACTS_S3_BUCKET,RPI_BASE_URL,RPI_MISSIONS_DIR,RPI_RTSP_PORT,GHCR_TOKEN,GHCR_USERNAME,AIRFLOW_DB_USER,AIRFLOW_DB_PASSWORD,AIRFLOW_ADMIN_USER,AIRFLOW_ADMIN_PASSWORD,AIRFLOW_ADMIN_EMAIL,GIT_SHA,OWNER
-          command_timeout: 10m
+          command_timeout: 15m
           script: |
             set -euo pipefail
 
@@ -94,7 +105,7 @@ jobs:
 
             mkdir -p "${APP_DIR}/infra"
 
-            cat > "${APP_DIR}/infra/docker-compose.platform.yml" <<'YAMLEOF'
+            cat > "${APP_DIR}/infra/docker-compose.platform.yml" <<'COMPOSE'
             name: rescue-platform
 
             x-airflow-common: &airflow-common
@@ -187,13 +198,16 @@ jobs:
             volumes:
               airflow_db_data:
               airflow_logs:
-            YAMLEOF
+            COMPOSE
             sed -i 's/^            //' "${APP_DIR}/infra/docker-compose.platform.yml"
 
             # ── Login to GHCR and pull app images ──
             echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
-            docker pull "${ONLINE_IMAGE}"
-            docker pull "${BATCH_IMAGE}"
+            docker pull "${ONLINE_IMAGE}" &
+            pid1=$!
+            docker pull "${BATCH_IMAGE}" &
+            pid2=$!
+            wait "$pid1" "$pid2"
 
             # ── Write .env for online service ──
             cat > "${APP_DIR}/.env" <<ENVEOF
@@ -237,7 +251,7 @@ jobs:
             docker run --rm \
               --env-file "${APP_DIR}/.env" \
               "${ONLINE_IMAGE}" \
-              uv run python -m rescue_ai.interfaces.cli.init_remote_db
+              python -m rescue_ai.interfaces.cli.init_remote_db
 
             # ── Deploy online service ──
             docker rm -f rescue-ai-online 2>/dev/null || true

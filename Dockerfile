@@ -1,29 +1,16 @@
 # syntax=docker/dockerfile:1.7
 
-FROM python:3.12-slim AS build-base
+FROM python:3.12-slim AS builder-base
 WORKDIR /app
-
-ENV UV_LINK_MODE=copy \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    libgl1 \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN pip install --no-cache-dir uv
-
+ENV UV_LINK_MODE=copy
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock ./
 
-FROM build-base AS builder-online
+FROM builder-base AS builder-online
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --extra inference --extra postgres
 
-FROM build-base AS builder-batch
+FROM builder-base AS builder-batch
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --extra inference --extra batch --extra airflow
 

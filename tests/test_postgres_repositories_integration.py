@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
+from rescue_ai.domain.ports import AlertReviewPayload
 from rescue_ai.domain.value_objects import AlertStatus
 from rescue_ai.infrastructure.postgres_repositories import (
     PostgresAlertRepository,
@@ -14,59 +17,58 @@ from rescue_ai.infrastructure.postgres_repositories import (
 )
 
 
-def _mission(mid: str = "m-1", **kw: object) -> Mission:
-    defaults = {
-        "mission_id": mid,
-        "source_name": "dataset-a",
-        "status": "created",
-        "created_at": "2026-03-14T00:00:00+00:00",
-        "total_frames": 10,
-        "fps": 2.5,
-    }
-    defaults.update(kw)
-    return Mission(**defaults)  # type: ignore[arg-type]
+def _mission(
+    mid: str = "m-1",
+    status: str = "created",
+) -> Mission:
+    return Mission(
+        mission_id=mid,
+        source_name="dataset-a",
+        status=status,
+        created_at="2026-03-14T00:00:00+00:00",
+        total_frames=10,
+        fps=2.5,
+    )
 
 
-def _frame(mid: str = "m-1", fid: int = 1, **kw: object) -> FrameEvent:
-    defaults = {
-        "mission_id": mid,
-        "frame_id": fid,
-        "ts_sec": 0.5 * fid,
-        "image_uri": f"s3://bucket/frames/{fid}.jpg",
-        "gt_person_present": False,
-        "gt_episode_id": None,
-    }
-    defaults.update(kw)
-    return FrameEvent(**defaults)  # type: ignore[arg-type]
+def _frame(
+    mid: str = "m-1",
+    fid: int = 1,
+    ts_sec: float | None = None,
+) -> FrameEvent:
+    return FrameEvent(
+        mission_id=mid,
+        frame_id=fid,
+        ts_sec=ts_sec if ts_sec is not None else 0.5 * fid,
+        image_uri=f"s3://bucket/frames/{fid}.jpg",
+        gt_person_present=False,
+        gt_episode_id=None,
+    )
 
 
-def _detection(**kw: object) -> Detection:
-    defaults = {
-        "bbox": (10.0, 20.0, 30.0, 40.0),
-        "score": 0.95,
-        "label": "person",
-        "model_name": "yolo8n",
-        "explanation": "hit",
-    }
-    defaults.update(kw)
-    return Detection(**defaults)  # type: ignore[arg-type]
+def _detection() -> Detection:
+    return Detection(
+        bbox=(10.0, 20.0, 30.0, 40.0),
+        score=0.95,
+        label="person",
+        model_name="yolo8n",
+        explanation="hit",
+    )
 
 
-def _alert(aid: str = "a-1", mid: str = "m-1", fid: int = 1, **kw: object) -> Alert:
+def _alert(aid: str = "a-1", mid: str = "m-1", fid: int = 1) -> Alert:
     det = _detection()
-    defaults = {
-        "alert_id": aid,
-        "mission_id": mid,
-        "frame_id": fid,
-        "ts_sec": 0.5,
-        "image_uri": "s3://bucket/frames/1.jpg",
-        "people_detected": 1,
-        "primary_detection": det,
-        "detections": [det],
-        "status": "queued",
-    }
-    defaults.update(kw)
-    return Alert(**defaults)  # type: ignore[arg-type]
+    return Alert(
+        alert_id=aid,
+        mission_id=mid,
+        frame_id=fid,
+        ts_sec=0.5,
+        image_uri="s3://bucket/frames/1.jpg",
+        people_detected=1,
+        primary_detection=det,
+        detections=[det],
+        status=AlertStatus.QUEUED,
+    )
 
 
 # ── Mission Repository ──────────────────────────────────────────────────
@@ -262,16 +264,17 @@ def test_update_already_reviewed_raises(pg_db: PostgresDatabase) -> None:
 @pytest.mark.integration
 def test_update_invalid_status_raises(pg_db: PostgresDatabase) -> None:
     alerts = PostgresAlertRepository(pg_db)
+    bogus_payload = cast(
+        AlertReviewPayload,
+        {
+            "status": "bogus",
+            "reviewed_by": None,
+            "reviewed_at_sec": None,
+            "decision_reason": None,
+        },
+    )
     with pytest.raises(ValueError, match="Invalid target status"):
-        alerts.update_status(
-            "a-1",
-            {
-                "status": "bogus",  # type: ignore[typeddict-item]
-                "reviewed_by": None,
-                "reviewed_at_sec": None,
-                "decision_reason": None,
-            },
-        )
+        alerts.update_status("a-1", bogus_payload)
 
 
 @pytest.mark.integration

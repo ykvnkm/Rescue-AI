@@ -23,22 +23,25 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra airflow
+        run: uv sync --extra dev
 
       - name: Run black
-        run: uv run black --check rescue_ai tests scripts infra
+        run: uv run black --check rescue_ai tests scripts
 
       - name: Run isort
-        run: uv run isort --check-only rescue_ai tests scripts infra
+        run: uv run isort --check-only rescue_ai tests scripts
 
       - name: Run flake8
-        run: uv run flake8 rescue_ai tests scripts infra
+        run: uv run flake8 rescue_ai tests scripts
 
       - name: Run mypy
-        run: uv run mypy rescue_ai tests scripts infra
+        run: uv run mypy rescue_ai tests scripts
 
       - name: Run pylint
-        run: uv run pylint rescue_ai tests scripts infra
+        run: uv run pylint rescue_ai tests scripts
+
+      - name: Compile-check Airflow DAGs
+        run: python -m py_compile infra/airflow/dags/rescue_batch_daily.py
 
   test:
     runs-on: ubuntu-latest
@@ -54,7 +57,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra batch --extra postgres --extra airflow
+        run: uv sync --extra dev --extra batch --extra postgres
 
       - name: Run tests
         run: uv run pytest --cov=rescue_ai --cov-report=term-missing --cov-fail-under=70

@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
+
+if TYPE_CHECKING:
+    from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
 
 
 def _load_app_schema_sql() -> str:
@@ -53,7 +57,7 @@ def pg_dsn() -> Iterator[tuple[str, str]]:
             cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
 
-def _pg_db_fixture(pg_dsn: tuple[str, str]):  # noqa: ANN201
+def _pg_db_fixture(pg_dsn: tuple[str, str]) -> Generator[PostgresDatabase, None, None]:
     """Function-scoped PostgresDatabase that truncates tables after each test."""
     from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
 
