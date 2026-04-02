@@ -30,8 +30,8 @@ jobs:
           context: .
           target: online
           push: true
-          cache-from: type=gha,scope=online
-          cache-to: type=gha,scope=online,mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/rescue-ai-online:cache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/rescue-ai-online:cache,mode=max
           tags: |
             ghcr.io/${{ github.repository_owner }}/rescue-ai-online:latest
             ghcr.io/${{ github.repository_owner }}/rescue-ai-online:${{ env.DEPLOY_SHA }}
@@ -55,8 +55,8 @@ jobs:
           context: .
           target: batch
           push: true
-          cache-from: type=gha,scope=batch
-          cache-to: type=gha,scope=batch,mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:cache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:cache,mode=max
           tags: |
             ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:latest
             ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:${{ env.DEPLOY_SHA }}
