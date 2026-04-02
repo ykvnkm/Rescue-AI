@@ -25,11 +25,16 @@ def _supports_sslnegotiation() -> bool:
     except ImportError:  # pragma: no cover - optional dependency
         return False
 
+    conninfo_to_dict = getattr(conninfo, "conninfo_to_dict", None)
+    programming_error = getattr(psycopg, "ProgrammingError", None)
+    if conninfo_to_dict is None or programming_error is None:
+        return False
+
     try:
-        conninfo.conninfo_to_dict(
+        conninfo_to_dict(
             "postgresql://user:secret@localhost:5432/rescue_ai?sslnegotiation=postgres"
         )
-    except psycopg.ProgrammingError:  # pragma: no cover - depends on local libpq build
+    except programming_error:  # pragma: no cover - depends on local libpq build
         return False
 
     return True
