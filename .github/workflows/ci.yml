@@ -17,6 +17,7 @@ jobs:
       - uses: astral-sh/setup-uv@v3
         with:
           version: "0.5.14"
+          enable-cache: true
 
       - uses: actions/setup-python@v5
         with:
@@ -45,12 +46,29 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: rescue_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d rescue_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgresql://test:test@localhost:5432/rescue_test
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v3
         with:
           version: "0.5.14"
+          enable-cache: true
 
       - uses: actions/setup-python@v5
         with:
@@ -62,19 +80,32 @@ jobs:
       - name: Run tests
         run: uv run pytest --cov=rescue_ai --cov-report=term-missing --cov-fail-under=70
 
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   quality-gate:
     runs-on: ubuntu-latest
     needs:
       - lint
       - test
+      - secrets
     if: ${{ always() }}
 
     steps:
       - name: Validate upstream jobs
         run: |
           if [ "${{ needs.lint.result }}" != "success" ] || \
-             [ "${{ needs.test.result }}" != "success" ]; then
-            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}"
+             [ "${{ needs.test.result }}" != "success" ] || \
+             [ "${{ needs.secrets.result }}" != "success" ]; then
+            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}, secrets=${{ needs.secrets.result }}"
             exit 1
           fi
 
