@@ -470,6 +470,7 @@
       </div>
 
       <button class="btn" id="startBtn">Начать миссию</button>
+      <button class="btn secondary" id="stopStreamBtn">Остановить поток</button>
       <button class="btn secondary" id="completeBtn">Закончить миссию</button>
       <button class="btn secondary" id="forceCompleteBtn">Экстренно завершить</button>
       <button class="btn secondary" id="reportBtn">Отчет по миссии</button>
@@ -711,6 +712,25 @@ async function startMission() {
   startAlertsPolling();
   startStreamPolling();
   await refreshAlerts();
+}
+
+async function stopStream() {
+  if (!missionId()) return;
+  const resp = await fetch(`/missions/${missionId()}/stop-stream`, { method: 'POST' });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    setMissionStatus(data.detail || 'Ошибка остановки потока');
+    return;
+  }
+  stopStreamPolling();
+  const queued = data.queued_alerts || 0;
+  if (queued > 0) {
+    setMissionStatus(`Поток остановлен. Обработано кадров: ${data.processed_frames ?? '\u2014'}
+Алертов в очереди: ${queued}. Разберите очередь и нажмите «Закончить миссию».`);
+  } else {
+    setMissionStatus(`Поток остановлен. Обработано кадров: ${data.processed_frames ?? '\u2014'}
+Очередь алертов пуста. Можно завершать миссию.`);
+  }
 }
 
 async function completeMission() {
@@ -1027,6 +1047,7 @@ async function loadReport() {
 
 /* ---- Wire up buttons ---- */
 document.getElementById('startBtn').addEventListener('click', startMission);
+document.getElementById('stopStreamBtn').addEventListener('click', stopStream);
 document.getElementById('completeBtn').addEventListener('click', completeMission);
 document.getElementById('forceCompleteBtn').addEventListener('click', forceCompleteMission);
 document.getElementById('reportBtn').addEventListener('click', loadReport);

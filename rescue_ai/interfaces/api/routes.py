@@ -253,6 +253,32 @@ def start_mission(payload: MissionStartRequest) -> dict[str, object]:
     }
 
 
+@router.post("/missions/{mission_id}/stop-stream", tags=["missions"])
+def stop_mission_stream(mission_id: str) -> dict[str, object]:
+    """Stop the video stream but keep mission open for alert review."""
+    service = get_pilot_service()
+    stream_controller = get_stream_controller()
+
+    mission = service.get_mission(mission_id)
+    if mission is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    if mission.status != "running":
+        raise HTTPException(status_code=409, detail="Mission is not running")
+
+    stopped_state = stream_controller.stop(mission_id)
+    queued = service.list_alerts(mission_id=mission_id, status="queued")
+
+    return {
+        "mission_id": mission_id,
+        "status": mission.status,
+        "stream_stopped": True,
+        "queued_alerts": len(queued),
+        "processed_frames": (
+            stopped_state.processed_frames if stopped_state is not None else None
+        ),
+    }
+
+
 @router.post("/missions/{mission_id}/complete", tags=["missions"])
 def complete_mission(mission_id: str) -> dict[str, object]:
     service = get_pilot_service()
