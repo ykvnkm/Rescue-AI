@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v3
         with:
@@ -43,6 +45,11 @@ jobs:
 
       - name: Compile-check Airflow DAGs
         run: python -m py_compile infra/airflow/dags/rescue_batch_daily.py
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test:
     runs-on: ubuntu-latest
@@ -80,32 +87,19 @@ jobs:
       - name: Run tests
         run: uv run pytest --cov=rescue_ai --cov-report=term-missing --cov-fail-under=70
 
-  secrets:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   quality-gate:
     runs-on: ubuntu-latest
     needs:
       - lint
       - test
-      - secrets
     if: ${{ always() }}
 
     steps:
       - name: Validate upstream jobs
         run: |
           if [ "${{ needs.lint.result }}" != "success" ] || \
-             [ "${{ needs.test.result }}" != "success" ] || \
-             [ "${{ needs.secrets.result }}" != "success" ]; then
-            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}, secrets=${{ needs.secrets.result }}"
+             [ "${{ needs.test.result }}" != "success" ]; then
+            echo "Quality gate failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}"
             exit 1
           fi
 
