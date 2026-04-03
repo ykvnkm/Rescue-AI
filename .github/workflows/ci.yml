@@ -16,6 +16,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: astral-sh/setup-uv@v3
         with:
           version: "0.5.14"
@@ -45,11 +50,6 @@ jobs:
 
       - name: Compile-check Airflow DAGs
         run: python -m py_compile infra/airflow/dags/rescue_batch_daily.py
-
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test:
     runs-on: ubuntu-latest
