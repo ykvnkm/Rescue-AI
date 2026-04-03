@@ -91,6 +91,7 @@ class _LoopContext:
     tmp_dir: Path
     frame_id: int = 0
     consecutive_read_failures: int = 0
+    last_rpi_check: float = 0.0
 
 
 class _FrameCapture:
@@ -392,42 +393,19 @@ class DetectionStreamController:
             logger.error("Detection loop cannot run without detector and pilot_service")
             return
 
-        target_fps = state.target_fps
         ctx = self._build_loop_context(
             mission_id=mission_id,
             state=state,
             stop_event=stop_event,
-            target_fps=target_fps,
+            target_fps=state.target_fps,
         )
         if ctx is None:
             return
 
         try:
             while not stop_event.is_set():
-                total = state.source_frames_total
-                if total is not None and ctx.frame_id >= total:
-                    state.end_reason = "source_finished"
+                if not self._run_detection_iteration(ctx):
                     break
-
-                t0 = time.monotonic()
-                frame, should_stop = self._read_frame_with_recovery(ctx)
-                if should_stop:
-                    break
-                if frame is None:
-                    continue
-
-                self._process_frame(ctx, frame)
-
-                # Clean up previous frame file to save disk
-                if ctx.frame_id > 1:
-                    prev = ctx.tmp_dir / f"frame_{ctx.frame_id - 2:06d}.jpg"
-                    prev.unlink(missing_ok=True)
-
-                # Throttle to target FPS
-                elapsed = time.monotonic() - t0
-                sleep_time = ctx.frame_interval - elapsed
-                if sleep_time > 0:
-                    stop_event.wait(timeout=sleep_time)
 
         except (RuntimeError, ValueError, TypeError, OSError) as loop_err:
             state.error = f"{type(loop_err).__name__}: {loop_err}"
@@ -449,6 +427,51 @@ class DetectionStreamController:
                 ctx.frame_id,
                 state.alerts_created,
             )
+
+    def _run_detection_iteration(self, ctx: _LoopContext) -> bool:
+        if self._should_stop_before_read(ctx):
+            return False
+
+        started_at = time.monotonic()
+        frame, should_stop = self._read_frame_with_recovery(ctx)
+        if should_stop:
+            return False
+        if frame is None:
+            return True
+
+        self._process_frame(ctx, frame)
+        self._cleanup_previous_frame(ctx)
+        self._throttle_after_processing(ctx, started_at)
+        return True
+
+    def _should_stop_before_read(self, ctx: _LoopContext) -> bool:
+        now = time.monotonic()
+        if now - ctx.last_rpi_check >= 3.0:
+            ctx.last_rpi_check = now
+            if self._stream_finished_on_rpi(ctx.state):
+                ctx.state.end_reason = "source_finished"
+                return True
+
+        total = ctx.state.source_frames_total
+        if total is not None and ctx.frame_id >= total:
+            ctx.state.end_reason = "source_finished"
+            return True
+        return False
+
+    @staticmethod
+    def _cleanup_previous_frame(ctx: _LoopContext) -> None:
+        # Keep only the latest processed frame to reduce disk churn.
+        if ctx.frame_id <= 1:
+            return
+        prev = ctx.tmp_dir / f"frame_{ctx.frame_id - 2:06d}.jpg"
+        prev.unlink(missing_ok=True)
+
+    @staticmethod
+    def _throttle_after_processing(ctx: _LoopContext, started_at: float) -> None:
+        elapsed = time.monotonic() - started_at
+        sleep_time = ctx.frame_interval - elapsed
+        if sleep_time > 0:
+            ctx.stop_event.wait(timeout=sleep_time)
 
     def _finalize_mission_after_stream_end(self, ctx: _LoopContext) -> None:
         """Try to auto-complete mission when source naturally finished."""
@@ -625,7 +648,7 @@ class DetectionStreamController:
                 state.session_id,
                 timeout_sec=self._rpi_settings.timeout_sec,
             )
-        except (ValueError, RuntimeError, OSError):
+        except (httpx.HTTPError, ValueError, RuntimeError, OSError):
             return False
         state.last_stats = stats
         total_source_frames = stats.get("total_source_frames")

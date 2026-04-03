@@ -917,7 +917,7 @@ function stopStreamPolling() { if (streamPollTimer) { clearInterval(streamPollTi
 function stopAlertsPolling() { if (alertsPollTimer) { clearInterval(alertsPollTimer); alertsPollTimer = null; } }
 function startAlertsPolling() {
   stopAlertsPolling();
-  alertsPollTimer = setInterval(refreshAlerts, 1200);
+  alertsPollTimer = setInterval(refreshAlerts, 2000);
 }
 
 function localizeEndReason(reason) {
@@ -967,7 +967,7 @@ function startStreamPolling() {
         setEmptyState(`Миссия завершена. Причина: ${localizeEndReason(s.end_reason)}`);
       }
     }
-  }, 1500);
+  }, 3000);
 }
 
 /* ---- Review ---- */
