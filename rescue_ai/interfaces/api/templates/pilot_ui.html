@@ -933,7 +933,6 @@ function localizeEndReason(reason) {
 }
 
 function buildStreamStatusText(s) {
-  const backend = (s.capture_backend || '\u2014').toUpperCase();
   const processed = Number.isInteger(s.processed_frames) ? s.processed_frames : 0;
   const total = Number.isInteger(s.source_frames_total) ? s.source_frames_total : null;
   const progress = total !== null ? `${processed}/${total}` : `${processed}`;
@@ -941,7 +940,6 @@ function buildStreamStatusText(s) {
   const reason = s.running ? '\u2014' : localizeEndReason(s.end_reason);
   const title = s.running ? 'Миссия: поток активен' : 'Миссия: поток остановлен';
   return `${title}
-Поток: ${backend}
 Обработано кадров: ${progress}
 Алертов: ${alerts}
 Миссия завершена: ${reason}`;
@@ -961,9 +959,13 @@ function startStreamPolling() {
     setMissionStatus(buildStreamStatusText(s));
     if (!s.running) {
       stopStreamPolling();
-      stopAlertsPolling();
-      missionClosed = true;
-      setEmptyState(`Миссия завершена. Причина: ${localizeEndReason(s.end_reason)}`);
+      if (s.end_reason === 'source_finished_pending_alert_review') {
+        setEmptyState('Поток завершен. Обработайте оставшиеся алерты для завершения миссии.');
+      } else {
+        stopAlertsPolling();
+        missionClosed = true;
+        setEmptyState(`Миссия завершена. Причина: ${localizeEndReason(s.end_reason)}`);
+      }
     }
   }, 1500);
 }
@@ -1013,9 +1015,14 @@ function fillReport(r) {
 
 async function loadReport() {
   if (!missionId()) return;
+  setMissionStatus('Загрузка отчета...');
   const resp = await fetch(`/missions/${missionId()}/report`);
-  if (!resp.ok) return;
+  if (!resp.ok) {
+    setMissionStatus(`Ошибка загрузки отчета (${resp.status})`);
+    return;
+  }
   fillReport(await resp.json());
+  setMissionStatus('Отчет успешно загружен и сохранен.');
 }
 
 /* ---- Wire up buttons ---- */

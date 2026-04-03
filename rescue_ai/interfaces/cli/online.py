@@ -404,6 +404,11 @@ class DetectionStreamController:
 
         try:
             while not stop_event.is_set():
+                total = state.source_frames_total
+                if total is not None and ctx.frame_id >= total:
+                    state.end_reason = "source_finished"
+                    break
+
                 t0 = time.monotonic()
                 frame, should_stop = self._read_frame_with_recovery(ctx)
                 if should_stop:
