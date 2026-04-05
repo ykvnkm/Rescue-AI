@@ -42,15 +42,23 @@ class S3MissionSource:
     def load(self, mission_id: str, ds: str) -> MissionInput:
         """Load one mission/day dataset from S3 and stage to local temp files."""
         source_key_root = self._resolve_source_root(mission_id=mission_id, ds=ds)
-        frame_keys = self._list_frame_keys(f"{source_key_root}/images/")
-        if not frame_keys:
+        frames_subdir: str | None = None
+        frame_keys: list[str] = []
+        for candidate_subdir in ("frames", "images"):
+            keys = self._list_frame_keys(f"{source_key_root}/{candidate_subdir}/")
+            if keys:
+                frame_keys = keys
+                frames_subdir = candidate_subdir
+                break
+        if not frame_keys or frames_subdir is None:
             raise ValueError(
                 "No frame images found in "
-                f"s3://{self._bucket}/{source_key_root}/images/"
+                f"s3://{self._bucket}/{source_key_root}/ "
+                "(checked frames/ and images/ subdirectories)"
             )
 
         mission_workspace = self._workspace / mission_id / ds
-        frames_dir = mission_workspace / "images"
+        frames_dir = mission_workspace / frames_subdir
         frames_dir.mkdir(parents=True, exist_ok=True)
         self._download_objects(frame_keys, frames_dir)
 
@@ -62,9 +70,9 @@ class S3MissionSource:
 
         return self._build_mission_input(
             source_key_root=source_key_root,
+            frames_subdir=frames_subdir,
             frames_dir=frames_dir,
-            annotations_dir=annotations_dir,
-            has_annotations=bool(annotation_keys),
+            annotations_dir=annotations_dir if annotation_keys else None,
         )
 
     def describe_source(self) -> str:
@@ -75,16 +83,16 @@ class S3MissionSource:
         self,
         *,
         source_key_root: str,
+        frames_subdir: str,
         frames_dir: Path,
-        annotations_dir: Path,
-        has_annotations: bool,
+        annotations_dir: Path | None,
     ) -> MissionInput:
         gt_available = True
         annotation_index = None
         try:
             annotation_index = build_annotation_index(
                 frames_dir=frames_dir,
-                explicit_path=str(annotations_dir) if has_annotations else None,
+                explicit_path=str(annotations_dir) if annotations_dir else None,
             )
         except ValueError:
             gt_available = False
@@ -99,12 +107,16 @@ class S3MissionSource:
             gt_boxes = (
                 annotation_index.get_gt_boxes(frame_path) if annotation_index else []
             )
+            s3_uri = (
+                f"s3://{self._bucket}/{source_key_root}"
+                f"/{frames_subdir}/{frame_path.name}"
+            )
             frames.append(
                 FrameRecord(
                     frame_id=idx,
                     ts_sec=(idx - 1) / self._fps,
                     frame_path=frame_path,
-                    image_uri=str(frame_path),
+                    image_uri=s3_uri,
                     gt_person_present=bool(gt_boxes),
                     is_corrupted=_is_corrupted_image(frame_path),
                 )
@@ -118,8 +130,9 @@ class S3MissionSource:
 
     def _resolve_source_root(self, mission_id: str, ds: str) -> str:
         candidates = [
-            self._join(self._source_prefix, f"mission={mission_id}", f"ds={ds}"),
             self._join(self._source_prefix, mission_id, ds),
+            self._join(self._source_prefix, f"mission={mission_id}", f"ds={ds}"),
+            self._join(self._source_prefix, mission_id),
         ]
         for prefix in candidates:
             if self._list_keys(prefix=f"{prefix}/", max_keys=1):
