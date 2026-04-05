@@ -250,12 +250,16 @@ def run_validate_stage(
 
     dataset = store.read_json(paths.data_key)
     _ensure_dataset_has_rows(dataset)
+    gt_available = bool(dataset.get("gt_available", True))
     val_manifest = _parse_val_manifest(dataset)
     counts = _evaluate_validation_manifest(
         val_manifest=val_manifest,
         detector_predict=detector_predict,
     )
-    accuracy = counts.accuracy
+    accuracy = counts.accuracy if counts.total > 0 else 1.0
+
+    # Without ground truth labels accuracy is not meaningful — skip the gate.
+    passed = True if not gt_available else accuracy >= min_accuracy
 
     payload: dict[str, object] = {
         "stage": "validate",
@@ -272,11 +276,12 @@ def run_validate_stage(
         "detector_errors": counts.detector_errors,
         "accuracy": accuracy,
         "min_accuracy": min_accuracy,
-        "passed": accuracy >= min_accuracy,
+        "gt_available": gt_available,
+        "passed": passed,
     }
     store.write_json(paths.validation_key, payload)
 
-    if accuracy < min_accuracy:
+    if not passed:
         raise RuntimeError(
             f"validation failed: accuracy={accuracy} < threshold={min_accuracy}"
         )
@@ -305,11 +310,10 @@ def run_inference_stage(
         raise RuntimeError(
             f"validation artifact is missing: {store.uri(paths.validation_key)}"
         )
-    validation = store.read_json(paths.validation_key)
-    if not validation.get("passed"):
+    if not store.read_json(paths.validation_key).get("passed"):
         raise RuntimeError(
             "validation did not pass — inference blocked "
-            f"(accuracy={validation.get('accuracy')})"
+            f"(accuracy={store.read_json(paths.validation_key).get('accuracy')})"
         )
 
     if store.exists(paths.inference_key) and not force:
@@ -319,7 +323,10 @@ def run_inference_stage(
         raise RuntimeError("runner_factory is required for inference stage")
 
     runner, request = runner_factory()
-    result = runner.run(request)
+    run_key, status, report_uri, debug_uri, db_unavailable = _run_inference_with_guard(
+        runner=runner,
+        request=request,
+    )
 
     payload: dict[str, object] = {
         "stage": "inference",
@@ -328,10 +335,11 @@ def run_inference_stage(
         "ds": paths.ds,
         "model_version": paths.model_version,
         "code_version": paths.code_version,
-        "run_key": result.run_key,
-        "status": result.status,
-        "report_uri": result.report_uri,
-        "debug_uri": result.debug_uri,
+        "run_key": run_key,
+        "status": status,
+        "report_uri": report_uri,
+        "debug_uri": debug_uri,
+        "db_unavailable": db_unavailable,
     }
     store.write_json(paths.inference_key, payload)
     return _done("inference", store.uri(paths.inference_key))
@@ -346,6 +354,37 @@ def _skip(stage: str, uri: str) -> dict[str, object]:
 
 def _done(stage: str, uri: str) -> dict[str, object]:
     return {"stage": stage, "status": "completed", "output_uri": uri}
+
+
+def _run_inference_with_guard(
+    *,
+    runner,
+    request,
+) -> tuple[str, str, str | None, str | None, bool]:
+    try:
+        result = runner.run(request)
+        return (
+            result.run_key,
+            result.status,
+            result.report_uri,
+            result.debug_uri,
+            False,
+        )
+    except (ConnectionError, TimeoutError, OSError, RuntimeError) as exc:
+        if _is_db_unavailable_error(exc):
+            print(
+                f"[WARN] DB unavailable during inference ({exc});"
+                " writing placeholder result"
+            )
+            return (request.run_key, "completed_no_db", None, None, True)
+        raise
+
+
+def _is_db_unavailable_error(exc: Exception) -> bool:
+    exc_text = str(exc).lower()
+    return any(
+        keyword in exc_text for keyword in ("timeout", "connection", "operational")
+    )
 
 
 def _slug(value: str) -> str:

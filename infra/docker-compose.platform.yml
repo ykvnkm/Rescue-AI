@@ -60,6 +60,7 @@ services:
     volumes:
       - airflow_logs:/opt/airflow/logs
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./airflow/dags:/opt/airflow/dags
     group_add:
       - "${DOCKER_GID}"
     ports:
@@ -83,6 +84,7 @@ services:
     volumes:
       - airflow_logs:/opt/airflow/logs
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./airflow/dags:/opt/airflow/dags
     group_add:
       - "${DOCKER_GID}"
     command: airflow scheduler

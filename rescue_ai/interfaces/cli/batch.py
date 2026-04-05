@@ -15,6 +15,8 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import tempfile
+from pathlib import Path
 
 from rescue_ai.application.batch_dtos import BatchRunRequest
 from rescue_ai.application.batch_runner import (
@@ -49,7 +51,7 @@ from rescue_ai.infrastructure.postgres_repositories import (
 )
 from rescue_ai.infrastructure.s3_mission_source import S3MissionSource
 from rescue_ai.infrastructure.stage_store import S3StageStore
-from rescue_ai.infrastructure.status_store import PostgresStatusStore
+from rescue_ai.infrastructure.status_store import JsonStatusStore, PostgresStatusStore
 from rescue_ai.infrastructure.yolo_detector import YoloDetector
 
 STAGES = ("data", "train", "validate", "inference")
@@ -134,14 +136,21 @@ def build_stage_store() -> S3StageStore:
     return S3StageStore(_build_s3_settings())
 
 
-def build_status_store() -> PostgresStatusStore:
-    """Build Postgres run status store."""
+def build_status_store() -> PostgresStatusStore | JsonStatusStore:
+    """Build run status store; falls back to local JSON if Postgres is unreachable."""
     settings = get_settings()
     dsn = settings.database.dsn.strip()
     if not dsn:
         raise ValueError("DB_DSN is required")
+    try:
+        import psycopg  # noqa: PLC0415
 
-    return PostgresStatusStore(db=PostgresDatabase(dsn=dsn, schema="app"))
+        connection = psycopg.connect(dsn, connect_timeout=5)
+        connection.close()
+        return PostgresStatusStore(db=PostgresDatabase(dsn=dsn, schema="app"))
+    except (OSError, TimeoutError, psycopg.Error) as exc:
+        print(f"[WARN] Postgres unavailable ({exc}), using local JSON status store")
+    return JsonStatusStore(path=Path("/tmp/rescue_ai_status"))
 
 
 def build_artifact_store() -> S3ArtifactStorage:
@@ -227,8 +236,26 @@ def main() -> None:
         detector = YoloDetector(
             config=contract.inference, model_version=args.model_version
         )
+        _val_tmp = Path(tempfile.mkdtemp(prefix="rescue_ai_val_"))
+        _s3_settings = _build_s3_settings()
 
         def _detector_predict(image_uri: str) -> bool:
+            if image_uri.startswith("s3://"):
+                import boto3
+
+                path_part = image_uri[5:]
+                bucket, _, key = path_part.partition("/")
+                local_path = _val_tmp / Path(key).name
+                if not local_path.exists():
+                    client = boto3.client(
+                        "s3",
+                        endpoint_url=_s3_settings.endpoint,
+                        region_name=_s3_settings.region,
+                        aws_access_key_id=_s3_settings.access_key_id,
+                        aws_secret_access_key=_s3_settings.secret_access_key,
+                    )
+                    client.download_file(bucket, key, str(local_path))
+                return bool(detector.detect(str(local_path)))
             return bool(detector.detect(image_uri))
 
         result = run_validate_stage(
