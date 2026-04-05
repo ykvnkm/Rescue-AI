@@ -15,6 +15,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import os
 
 from rescue_ai.application.batch_dtos import BatchRunRequest
 from rescue_ai.application.batch_runner import (
@@ -57,6 +58,14 @@ DEFAULT_MODEL_VERSION = "yolov8n_baseline_multiscale"
 DEFAULT_CODE_VERSION = "main"
 DEFAULT_BATCH_OUTPUT_SUFFIX = "batch"
 DEFAULT_SOURCE_FPS = 6.0
+
+
+def _default_min_accuracy() -> float:
+    raw = os.environ.get("BATCH_VALIDATE_MIN_ACCURACY", "0.75").strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.75
 
 
 class PilotMissionEngineFactory:
@@ -112,7 +121,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-version", default=DEFAULT_MODEL_VERSION)
     parser.add_argument("--code-version", default=DEFAULT_CODE_VERSION)
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--min-accuracy", type=float, default=0.75)
+    parser.add_argument("--min-accuracy", type=float, default=_default_min_accuracy())
     return parser.parse_args()
 
 

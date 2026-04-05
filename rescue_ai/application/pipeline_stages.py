@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -407,7 +408,18 @@ def _parse_val_manifest(dataset: dict[str, object]) -> list[dict[str, object]]:
         raise RuntimeError("val_manifest is missing in dataset artifact")
     if not all(isinstance(item, dict) for item in val_manifest_raw):
         raise RuntimeError("val_manifest item must be an object")
-    return [item for item in val_manifest_raw if isinstance(item, dict)]
+    manifest = [item for item in val_manifest_raw if isinstance(item, dict)]
+    max_samples_raw = os.environ.get("BATCH_VALIDATE_MAX_SAMPLES", "").strip()
+    if not max_samples_raw:
+        return manifest
+
+    try:
+        max_samples = int(max_samples_raw)
+    except ValueError:
+        return manifest
+    if max_samples <= 0:
+        return manifest
+    return manifest[:max_samples]
 
 
 def _evaluate_validation_manifest(

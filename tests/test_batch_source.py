@@ -102,3 +102,35 @@ def test_s3_mission_source_global_history_up_to_ds(monkeypatch) -> None:
     assert mission_input.frames[0].frame_id == 1
     assert mission_input.frames[1].frame_id == 2
     assert mission_input.source_uri == "s3://bucket/missions/ds<=2026-03-02"
+
+
+def test_s3_mission_source_supports_ds_mission_frames_layout(monkeypatch) -> None:
+    mapping = {
+        "missions/2026-03-27/mission-1/frames/frame_0001.jpg": b"\xff\xd8\xff\xd9",
+        "missions/2026-03-27/mission-1/frames/frame_0002.jpg": b"\xff\xd8\xff\xd9",
+        "missions/2026-03-27/mission-1/report.json": b"{}",
+    }
+    fake_client = _FakeS3Client(mapping)
+    fake_boto3 = _FakeBoto3(fake_client)
+
+    import sys
+
+    monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
+
+    source = S3MissionSource(
+        settings=S3ArtifactBackendSettings(
+            endpoint="https://storage.yandexcloud.net",
+            region="ru-central1",
+            access_key_id="key",
+            secret_access_key="secret",
+            bucket="bucket",
+        ),
+        source_prefix="missions",
+        fps=2.0,
+    )
+    mission_input = source.load(mission_id="mission-1", ds="2026-03-27")
+
+    assert len(mission_input.frames) == 2
+    assert mission_input.frames[0].is_corrupted is False
+    assert mission_input.frames[1].is_corrupted is False
+    assert mission_input.source_uri == "s3://bucket/missions/2026-03-27/mission-1"

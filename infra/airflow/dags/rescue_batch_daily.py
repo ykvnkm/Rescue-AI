@@ -16,7 +16,7 @@ from datetime import timedelta
 from typing import Any
 
 from airflow import DAG
-from airflow.decorators import task, task_group
+from airflow.decorators import task
 from airflow.providers.docker.operators.docker import DockerOperator
 from docker.types import Mount
 from pendulum import datetime
@@ -27,8 +27,10 @@ MODEL_VERSION = "yolov8n_baseline_multiscale"
 BATCH_IMAGE = os.environ.get("BATCH_IMAGE", "rescue-ai-batch:latest")
 DS_TEMPLATE = "{{ ds }}"
 GLOBAL_TRAINING_MISSION_ID = "__all_missions__"
+PROJECT_ROOT = os.environ.get("PROJECT_ROOT", "/home/mihask79/Rescue-AI").strip()
 
 _ALLOWED_FRAME_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+_FRAME_DIR_NAMES = {"images", "frames"}
 
 _COMMON_ENV = {
     "DB_DSN": os.environ.get("DB_DSN", ""),
@@ -40,6 +42,10 @@ _COMMON_ENV = {
         "ARTIFACTS_S3_SECRET_ACCESS_KEY", ""
     ),
     "ARTIFACTS_S3_REGION": os.environ.get("ARTIFACTS_S3_REGION", ""),
+    "BATCH_VALIDATE_MAX_SAMPLES": os.environ.get("BATCH_VALIDATE_MAX_SAMPLES", "200"),
+    "BATCH_VALIDATE_MIN_ACCURACY": os.environ.get(
+        "BATCH_VALIDATE_MIN_ACCURACY", "0.75"
+    ),
 }
 
 
@@ -53,6 +59,8 @@ def _stage_command(stage: str, mission_id: str) -> str:
         f"--model-version {MODEL_VERSION}",
         f"--code-version {CODE_VERSION}",
     ]
+    if stage == "data":
+        parts.append("--force")
     return " ".join(parts)
 
 
@@ -69,23 +77,67 @@ def _parse_mission_from_left(left: str) -> str | None:
 
 
 def _extract_mission_id_from_key(key: str, *, ds: str, root_prefix: str) -> str | None:
-    """Extract mission id from S3 key for both supported mission layouts."""
+    """Extract mission id from S3 key for supported mission layouts."""
     normalized_root = root_prefix.strip("/")
     relative_key = key
     root_with_sep = f"{normalized_root}/" if normalized_root else ""
     if root_with_sep and key.startswith(root_with_sep):
         relative_key = key.removeprefix(root_with_sep)
 
-    lower_key = relative_key.lower()
-    if "/images/" not in lower_key:
-        return None
-    if not lower_key.endswith(_ALLOWED_FRAME_EXTENSIONS):
+    if not relative_key.lower().endswith(_ALLOWED_FRAME_EXTENSIONS):
         return None
 
-    for token in (f"/ds={ds}/images/", f"/{ds}/images/"):
-        index = relative_key.find(token)
-        if index >= 0:
-            return _parse_mission_from_left(relative_key[:index])
+    parts = [part for part in relative_key.split("/") if part]
+    if len(parts) < 3:
+        return None
+
+    path_parts = parts[:-1]
+    frame_dir_index = -1
+    for idx, segment in enumerate(path_parts):
+        if segment.lower() in _FRAME_DIR_NAMES:
+            frame_dir_index = idx
+            break
+    if frame_dir_index < 0:
+        return None
+
+    mission_scope = path_parts[:frame_dir_index]
+    if not mission_scope:
+        return None
+
+    def _ds_value(segment: str) -> str | None:
+        if segment == ds:
+            return segment
+        if segment.startswith("ds="):
+            value = segment.split("=", 1)[1].strip()
+            return value if value == ds else None
+        return None
+
+    ds_index = next(
+        (idx for idx, segment in enumerate(mission_scope) if _ds_value(segment)),
+        -1,
+    )
+    if ds_index < 0:
+        return None
+
+    for segment in mission_scope:
+        if segment.startswith("mission="):
+            mission_id = segment.split("=", 1)[1].strip()
+            if mission_id:
+                return mission_id
+
+    for idx in (ds_index - 1, ds_index + 1):
+        if idx < 0 or idx >= len(mission_scope):
+            continue
+        candidate = mission_scope[idx].strip()
+        if not candidate or candidate.lower() in {
+            "missions",
+            "images",
+            "frames",
+            ds.lower(),
+            f"ds={ds}".lower(),
+        }:
+            continue
+        return _parse_mission_from_left(candidate)
     return None
 
 
@@ -148,7 +200,7 @@ with DAG(
         "image": BATCH_IMAGE,
         "docker_url": "unix://var/run/docker.sock",
         "api_version": "auto",
-        "force_pull": True,
+        "force_pull": False,
         "auto_remove": "success",
         "mount_tmp_dir": False,
         "mounts": [
@@ -156,7 +208,13 @@ with DAG(
                 source="airflow_shared_data",
                 target="/opt/airflow/data",
                 type="volume",
-            )
+            ),
+            Mount(
+                source=f"{PROJECT_ROOT}/rescue_ai",
+                target="/app/rescue_ai",
+                type="bind",
+                read_only=True,
+            ),
         ],
         "environment": _COMMON_ENV,
     }
@@ -179,14 +237,14 @@ with DAG(
         **_docker_defaults,
     )
 
-    @task_group(group_id="mission_inference")
-    def mission_inference(mission_id: str) -> None:
-        DockerOperator(
-            task_id="stage_inference",
-            command=_stage_command("inference", mission_id),
-            **_docker_defaults,
-        )
+    @task
+    def build_inference_commands(mission_ids: list[str]) -> list[str]:
+        return [_stage_command("inference", mission_id) for mission_id in mission_ids]
 
     discovered_missions = discover_missions(ds=DS_TEMPLATE)
     stage_data >> stage_train >> stage_validate >> discovered_missions
-    mission_inference.expand(mission_id=discovered_missions)
+    inference_commands = build_inference_commands(discovered_missions)
+    DockerOperator.partial(
+        task_id="stage_inference",
+        **_docker_defaults,
+    ).expand(command=inference_commands)

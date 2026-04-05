@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from datetime import date
 from pathlib import Path
-from tempfile import mkdtemp
 
 from rescue_ai.application.batch_dtos import FrameRecord, MissionInput
 from rescue_ai.infrastructure.annotation_index import build_annotation_index
@@ -12,6 +12,7 @@ from rescue_ai.infrastructure.artifact_storage import S3ArtifactBackendSettings
 
 _ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 GLOBAL_MISSION_ID = "__all_missions__"
+_FRAME_DIR_CANDIDATES = ("images", "frames")
 
 
 class S3MissionSource:
@@ -32,7 +33,11 @@ class S3MissionSource:
         self._source_prefix = source_prefix.strip("/")
         self._fps = fps
         self._bucket = settings.bucket
-        self._workspace = Path(mkdtemp(prefix="rescue_ai_batch_source_"))
+        shared_data_root = Path(
+            (os.environ.get("BATCH_SHARED_DATA_DIR") or "/opt/airflow/data").strip()
+        )
+        self._workspace = shared_data_root / "batch_source"
+        self._workspace.mkdir(parents=True, exist_ok=True)
         self._client = boto3.client(
             "s3",
             endpoint_url=settings.endpoint,
@@ -47,15 +52,15 @@ class S3MissionSource:
             return self._load_global(ds)
 
         source_key_root = self._resolve_source_root(mission_id=mission_id, ds=ds)
-        frame_keys = self._list_frame_keys(f"{source_key_root}/images/")
+        frame_keys, frame_dir_name = self._list_frame_keys_with_dir(source_key_root)
         if not frame_keys:
             raise ValueError(
                 "No frame images found in "
-                f"s3://{self._bucket}/{source_key_root}/images/"
+                f"s3://{self._bucket}/{source_key_root}/(images|frames)/"
             )
 
         mission_workspace = self._workspace / mission_id / ds
-        frames_dir = mission_workspace / "images"
+        frames_dir = mission_workspace / frame_dir_name
         frames_dir.mkdir(parents=True, exist_ok=True)
         self._download_objects(frame_keys, frames_dir)
 
@@ -132,14 +137,14 @@ class S3MissionSource:
         aggregated: list[FrameRecord] = []
         gt_available = True
         for root in roots:
-            frame_keys = self._list_frame_keys(f"{root}/images/")
+            frame_keys, frame_dir_name = self._list_frame_keys_with_dir(root)
             if not frame_keys:
                 continue
             annotation_keys = self._list_json_keys(f"{root}/annotations/")
 
             workspace_key = root.replace("/", "__")
             mission_workspace = self._workspace / GLOBAL_MISSION_ID / ds / workspace_key
-            frames_dir = mission_workspace / "images"
+            frames_dir = mission_workspace / frame_dir_name
             frames_dir.mkdir(parents=True, exist_ok=True)
             self._download_objects(frame_keys, frames_dir)
 
@@ -190,9 +195,14 @@ class S3MissionSource:
         return sorted(roots)
 
     def _parse_source_root_with_ds(self, key: str) -> tuple[str, str] | None:
-        if "/images/" not in key:
+        source_root = None
+        for frame_dir in _FRAME_DIR_CANDIDATES:
+            token = f"/{frame_dir}/"
+            if token in key:
+                source_root, _ = key.split(token, 1)
+                break
+        if source_root is None:
             return None
-        source_root, _ = key.split("/images/", 1)
         relative_root = source_root
         source_prefix_with_sep = (
             f"{self._source_prefix}/" if self._source_prefix else ""
@@ -201,27 +211,26 @@ class S3MissionSource:
             relative_root = source_root.removeprefix(source_prefix_with_sep)
 
         parts = [part for part in relative_root.split("/") if part]
-        if len(parts) < 2:
-            return None
-        last_part = parts[-1]
-        ds = (
-            last_part.split("=", 1)[1]
-            if last_part.startswith("ds=")
-            else last_part
-        )
-        if not _is_iso_date(ds):
-            return None
-        return source_root, ds
+        ds = _extract_ds_from_parts(parts)
+        return (source_root, ds) if ds else None
 
     def _resolve_source_root(self, mission_id: str, ds: str) -> str:
         candidates = [
             self._join(self._source_prefix, f"mission={mission_id}", f"ds={ds}"),
             self._join(self._source_prefix, mission_id, ds),
+            self._join(self._source_prefix, f"ds={ds}", f"mission={mission_id}"),
+            self._join(self._source_prefix, ds, mission_id),
         ]
         for prefix in candidates:
-            if self._list_keys(prefix=f"{prefix}/", max_keys=1):
+            if self._has_frame_data(prefix):
                 return prefix
         return candidates[0]
+
+    def _has_frame_data(self, prefix: str) -> bool:
+        return any(
+            self._list_keys(prefix=f"{prefix}/{frame_dir}/", max_keys=1)
+            for frame_dir in _FRAME_DIR_CANDIDATES
+        )
 
     def _list_keys(self, prefix: str, max_keys: int | None = None) -> list[str]:
         kwargs: dict[str, object] = {"Bucket": self._bucket, "Prefix": prefix}
@@ -235,6 +244,13 @@ class S3MissionSource:
         return sorted(
             key for key in keys if Path(key).suffix.lower() in _ALLOWED_EXTENSIONS
         )
+
+    def _list_frame_keys_with_dir(self, source_root: str) -> tuple[list[str], str]:
+        for frame_dir in _FRAME_DIR_CANDIDATES:
+            keys = self._list_frame_keys(f"{source_root}/{frame_dir}/")
+            if keys:
+                return keys, frame_dir
+        return [], "images"
 
     def _list_json_keys(self, prefix: str) -> list[str]:
         keys = self._list_keys(prefix)
@@ -271,6 +287,14 @@ def _is_iso_date(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _extract_ds_from_parts(parts: list[str]) -> str | None:
+    for part in parts:
+        ds_candidate = part.split("=", 1)[1] if part.startswith("ds=") else part
+        if _is_iso_date(ds_candidate):
+            return ds_candidate
+    return None
 
 
 def _date_not_after(candidate: str, target: str) -> bool:
