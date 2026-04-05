@@ -15,6 +15,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import importlib
 import tempfile
 from pathlib import Path
 
@@ -143,12 +144,11 @@ def build_status_store() -> PostgresStatusStore | JsonStatusStore:
     if not dsn:
         raise ValueError("DB_DSN is required")
     try:
-        import psycopg  # noqa: PLC0415
-
-        connection = psycopg.connect(dsn, connect_timeout=5)
+        psycopg_module = importlib.import_module("psycopg")
+        connection = psycopg_module.connect(dsn, connect_timeout=5)
         connection.close()
         return PostgresStatusStore(db=PostgresDatabase(dsn=dsn, schema="app"))
-    except (OSError, TimeoutError, psycopg.Error) as exc:
+    except (ImportError, OSError, TimeoutError) as exc:
         print(f"[WARN] Postgres unavailable ({exc}), using local JSON status store")
     return JsonStatusStore(path=Path("/tmp/rescue_ai_status"))
 
