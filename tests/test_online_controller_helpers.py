@@ -203,6 +203,7 @@ def test_read_frame_with_recovery_stops_when_source_finished(monkeypatch) -> Non
         target_fps=2.0,
         frame_interval=0.5,
         gt_tracker=online_main._GtTracker(sequence=[True]),
+        source_filenames=None,
         capture=_FakeCapture([None]),
         tmp_dir=Path("."),
         consecutive_read_failures=8,
@@ -231,6 +232,7 @@ def test_process_frame_updates_counters(monkeypatch, tmp_path) -> None:
         target_fps=2.0,
         frame_interval=0.5,
         gt_tracker=online_main._GtTracker(sequence=[True]),
+        source_filenames=None,
         capture=_FakeCapture([b"jpeg"]),
         tmp_dir=tmp_path,
     )
@@ -263,6 +265,7 @@ def test_ingest_event_updates_error_on_failure() -> None:
         target_fps=2.0,
         frame_interval=0.5,
         gt_tracker=online_main._GtTracker(sequence=[True]),
+        source_filenames=None,
         capture=_FakeCapture([]),
         tmp_dir=Path("."),
     )
@@ -295,6 +298,7 @@ def test_read_frame_with_recovery_success_resets_failures() -> None:
         target_fps=2.0,
         frame_interval=0.5,
         gt_tracker=online_main._GtTracker(sequence=[True]),
+        source_filenames=None,
         capture=_FakeCapture([b"frame"]),
         tmp_dir=Path("."),
         consecutive_read_failures=3,
@@ -322,6 +326,7 @@ def test_read_frame_with_recovery_switches_to_http(monkeypatch) -> None:
         target_fps=2.0,
         frame_interval=0.5,
         gt_tracker=online_main._GtTracker(sequence=[True]),
+        source_filenames=None,
         capture=_FakeCapture([None]),
         tmp_dir=Path("."),
         consecutive_read_failures=8,
@@ -349,6 +354,7 @@ def test_detection_loop_handles_exception_and_finalizes(monkeypatch, tmp_path) -
         target_fps=2.0,
         frame_interval=0.5,
         gt_tracker=online_main._GtTracker(sequence=[True]),
+        source_filenames=None,
         capture=capture,
         tmp_dir=tmp_path,
     )
@@ -382,6 +388,51 @@ def test_detect_frame_falls_back_to_path_on_type_error(tmp_path) -> None:
 def test_save_frame_raises_for_unsupported_type(tmp_path) -> None:
     with pytest.raises(TypeError, match="Unexpected frame type"):
         online_main.DetectionStreamController._save_frame(object(), tmp_path / "x.jpg")
+
+
+def test_extract_source_filenames_from_annotations_payload() -> None:
+    payload: dict[str, object] = {
+        "images": [
+            {"id": 2, "file_name": "frames/013203.jpg"},
+            {"id": 1, "file_name": "frames/013202.jpg"},
+        ]
+    }
+    filenames = online_main.DetectionStreamController._extract_source_filenames(payload)
+    assert filenames == ["013202.jpg", "013203.jpg"]
+
+
+def test_process_frame_uses_source_filename_from_annotations(
+    monkeypatch, tmp_path
+) -> None:
+    controller = online_main.DetectionStreamController(
+        _settings(),
+        pilot_service=_pilot_service(),
+        detector=_FakeDetector(),
+    )
+    state = _state()
+    ctx = online_main._LoopContext(
+        mission_id="m1",
+        state=state,
+        stop_event=threading.Event(),
+        target_fps=2.0,
+        frame_interval=0.5,
+        gt_tracker=online_main._GtTracker(sequence=[True]),
+        source_filenames=["013202.jpg"],
+        capture=_FakeCapture([b"jpeg"]),
+        tmp_dir=tmp_path,
+    )
+    monkeypatch.setattr(controller, "_detect_frame_or_empty", lambda **kwargs: [])
+    ingested: dict[str, str] = {}
+
+    def _capture_ingest(*, ctx, frame_event, detections):
+        _ = (ctx, detections)
+        ingested["image_uri"] = frame_event.image_uri
+
+    monkeypatch.setattr(controller, "_ingest_event", _capture_ingest)
+
+    controller._process_frame(ctx, b"\xff\xd8\xff\xd9")
+
+    assert ingested["image_uri"].endswith("/013202.jpg")
 
 
 def test_build_api_runtime_and_main(monkeypatch) -> None:

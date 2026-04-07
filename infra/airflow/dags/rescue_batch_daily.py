@@ -10,20 +10,51 @@ Design notes for defence
 * **Simple graph** — exactly 4 DockerOperator tasks in UI:
   ``data -> train -> validate -> publish``.
   No dynamic mapping and no helper ``build_*`` tasks.
-* **Idempotency** is enforced on two levels:
-    1. every stage checks ``store.exists(...)`` in S3 and skips unless
-       ``force=true`` (see ``rescue_ai/application/pipeline_stages.py``);
-    2. the final ``publish`` stage upserts into
-       ``batch_pipeline_metrics`` keyed on
-       ``(ds, mission_id, model_version, code_version)`` —
-       ``updated_at`` is refreshed on every re-run.
-* **Secrets** come from Airflow Connections/Variables (registered via
-  the standard ``AIRFLOW_CONN_*`` / ``AIRFLOW_VAR_*`` environment
-  variable mechanism populated from GitHub Secrets in CI). Nothing is
-  hardcoded; ``BaseHook.get_connection`` is the single source of truth.
+
+* **Idempotency — two layers, different jobs:**
+
+    1. *Per-ds artifact skip (S3).* Every stage writes a deterministic
+       JSON key under ``ml_pipeline/mission={id}/ds={ds}/...`` and checks
+       ``store.exists(...)`` before doing any work. Retry of a failed
+       task inside the same ds skips already-completed stages. S3 grows
+       ``O(N_missions × N_days)`` — bounded by a bucket lifecycle policy
+       (Glacier after 30d, expire after 180d), not by the pipeline.
+
+    2. *Cross-day mission-level upsert (Postgres).* The ``publish``
+       stage upserts into ``batch_pipeline_metrics`` keyed on
+       ``(mission_id, model_version, code_version)``. Exactly ONE row
+       per mission × model × code-version for the whole lifetime of
+       the system; every successful run overwrites that row and bumps
+       ``ds`` + ``updated_at``. The table grows
+       ``O(N_missions × N_model_versions × N_code_versions)`` —
+       independent of how many days the pipeline has been running.
+
+* **Mission discovery is cached.** Only the ``data`` stage calls
+  ``list_objects_v2``; it writes the resolved mission set to a small
+  JSON manifest at ``.../ml_pipeline/ds={ds}/missions.json``. Downstream
+  stages read that manifest with a single ``get_object``, so the DAG
+  makes ~1 LIST per day instead of 4, and the mission set is pinned for
+  the whole run (no races if a new mission is uploaded mid-run).
+
+* **``catchup=False`` is intentional.** The pipeline input is a set of
+  static mission folders in S3, *not* a time-partitioned event stream.
+  A missed day has no unique data: the next day's run re-processes the
+  same mission set and upserts the same row. ``ds`` is a provenance tag
+  ("when was this row last refreshed"), not an event partition key.
+  If time-series drift tracking is ever needed, the correct fix is a
+  separate ``batch_pipeline_metrics_history`` append-only table — NOT
+  ``catchup=True`` (which would just waste compute re-running identical
+  inputs).
+
+* **Secrets** come from Airflow Connections registered via the standard
+  ``AIRFLOW_CONN_*`` environment variable mechanism, populated from
+  GitHub Secrets in CI. Nothing is hardcoded; ``BaseHook.get_connection``
+  is the single source of truth.
+
 * **conf parameters** (``dag_run.conf``):
     - ``mission_ids_csv`` — optional comma-separated mission IDs to
-      restrict processing inside each stage;
+      restrict processing to a subset (filters the manifest, does not
+      bypass it);
     - ``model_version`` / ``code_version`` — labels written into
       artifact keys and PG rows.
 

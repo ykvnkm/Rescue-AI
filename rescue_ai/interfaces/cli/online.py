@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import tempfile
 import threading
 import time
@@ -87,6 +88,7 @@ class _LoopContext:
     target_fps: float
     frame_interval: float
     gt_tracker: _GtTracker
+    source_filenames: list[str] | None
     capture: _FrameCapture
     tmp_dir: Path
     frame_id: int = 0
@@ -515,6 +517,7 @@ class DetectionStreamController:
         gt_sequence = self._load_gt_sequence(state.rpi_mission_id)
         state.gt_sequence_total = len(gt_sequence) if gt_sequence is not None else None
         annotations_payload = self._load_annotations_payload(state.rpi_mission_id)
+        source_filenames = self._extract_source_filenames(annotations_payload)
         if annotations_payload and self._pilot_service is not None:
             try:
                 self._pilot_service.save_mission_annotations(
@@ -544,6 +547,7 @@ class DetectionStreamController:
             target_fps=target_fps,
             frame_interval=frame_interval,
             gt_tracker=_GtTracker(sequence=gt_sequence),
+            source_filenames=source_filenames,
             capture=capture,
             tmp_dir=Path(tempfile.mkdtemp(prefix="rescue_frames_")),
         )
@@ -597,7 +601,7 @@ class DetectionStreamController:
         return True
 
     def _process_frame(self, ctx: _LoopContext, frame: object) -> None:
-        frame_path = ctx.tmp_dir / f"frame_{ctx.frame_id:06d}.jpg"
+        frame_path = ctx.tmp_dir / self._resolve_frame_filename(ctx)
         self._save_frame(frame, frame_path)
         ts_sec = (
             ctx.frame_id / ctx.target_fps if ctx.target_fps > 0 else ctx.frame_id * 0.5
@@ -620,6 +624,56 @@ class DetectionStreamController:
         self._ingest_event(ctx=ctx, frame_event=frame_event, detections=detections)
         ctx.frame_id += 1
         ctx.state.processed_frames = ctx.frame_id
+
+    @staticmethod
+    def _resolve_frame_filename(ctx: _LoopContext) -> str:
+        source_filenames = ctx.source_filenames
+        if (
+            source_filenames is not None
+            and 0 <= ctx.frame_id < len(source_filenames)
+            and source_filenames[ctx.frame_id]
+        ):
+            return source_filenames[ctx.frame_id]
+        return f"frame_{ctx.frame_id:06d}.jpg"
+
+    @staticmethod
+    def _extract_source_filenames(
+        payload: dict[str, object] | None,
+    ) -> list[str] | None:
+        if not isinstance(payload, dict):
+            return None
+        images_raw = payload.get("images")
+        if not isinstance(images_raw, list):
+            return None
+
+        images: list[dict[str, object]] = [
+            item for item in images_raw if isinstance(item, dict)
+        ]
+        if not images:
+            return None
+
+        parsed_rows: list[tuple[int | None, str, int]] = []
+        for row in images:
+            file_name_raw = row.get("file_name")
+            if not isinstance(file_name_raw, str) or not file_name_raw.strip():
+                continue
+            basename = Path(file_name_raw).name
+            if not basename:
+                continue
+            image_id_raw = row.get("id")
+            image_id = image_id_raw if isinstance(image_id_raw, int) else 0
+            frame_num_match = re.search(r"(\d+)$", Path(basename).stem)
+            frame_num = int(frame_num_match.group(1)) if frame_num_match else None
+            parsed_rows.append((frame_num, basename, image_id))
+
+        if not parsed_rows:
+            return None
+
+        if all(frame_num is not None for frame_num, _name, _image_id in parsed_rows):
+            parsed_rows.sort(key=lambda item: (item[0] or 0, item[2]))
+        else:
+            parsed_rows.sort(key=lambda item: (item[1], item[2]))
+        return [name for _frame_num, name, _image_id in parsed_rows]
 
     def _detect_frame_or_empty(
         self,

@@ -8,24 +8,45 @@ from typing import Any
 
 
 class AnnotationIndex:
-    """Lookup index for ground-truth boxes by frame path variations."""
+    """Lookup index for ground-truth boxes by frame path variations.
+
+    Matching strategies (tried in order):
+
+    1. Full normalized path key relative to the mission workspace.
+    2. Path key relative to ``frames_dir`` / without the ``images/`` prefix.
+    3. Exact basename (case-sensitive) — requires basename to be unique.
+    4. Case-insensitive stem (filename without extension) — catches
+       ``frame_0001.jpeg`` in the COCO vs ``frame_0001.jpg`` on disk.
+    5. Case-insensitive stem *suffix* — catches ``frame_0001`` in the COCO
+       vs ``<mission-id>_frame_0001`` on disk when the prefix was added
+       after annotations were produced.
+
+    Strategies 4 and 5 only trigger when the match is *unambiguous* (the
+    stem resolves to exactly one annotation entry). This avoids silently
+    attributing the wrong bbox to a frame.
+    """
 
     def __init__(
         self,
         frames_dir: Path,
         gt_boxes_by_key: dict[str, list[tuple[float, float, float, float]]],
         gt_boxes_by_unique_basename: dict[str, list[tuple[float, float, float, float]]],
+        gt_boxes_by_unique_stem: dict[str, list[tuple[float, float, float, float]]],
     ) -> None:
         self._frames_dir = frames_dir.resolve()
         self._gt_boxes_by_key = gt_boxes_by_key
         self._gt_boxes_by_unique_basename = gt_boxes_by_unique_basename
+        self._gt_boxes_by_unique_stem = gt_boxes_by_unique_stem
 
     def get_gt_boxes(self, frame_path: Path) -> list[tuple[float, float, float, float]]:
         for key in self._build_lookup_keys(frame_path):
             boxes = self._gt_boxes_by_key.get(key)
             if boxes is not None:
                 return list(boxes)
-        return list(self._gt_boxes_by_unique_basename.get(frame_path.name, []))
+        basename_hit = self._gt_boxes_by_unique_basename.get(frame_path.name)
+        if basename_hit is not None:
+            return list(basename_hit)
+        return list(self._lookup_by_stem(frame_path))
 
     def has_frame(self, frame_path: Path) -> bool:
         if frame_path.name in self._gt_boxes_by_unique_basename:
@@ -33,7 +54,28 @@ class AnnotationIndex:
         for key in self._build_lookup_keys(frame_path):
             if key in self._gt_boxes_by_key:
                 return True
-        return False
+        return bool(self._lookup_by_stem(frame_path))
+
+    def _lookup_by_stem(
+        self, frame_path: Path
+    ) -> list[tuple[float, float, float, float]]:
+        stem = frame_path.stem.lower()
+        if not stem:
+            return []
+        exact = self._gt_boxes_by_unique_stem.get(stem)
+        if exact is not None:
+            return exact
+        # Suffix match: annotation stem is a suffix of the frame stem
+        # (e.g. frame on disk is "<mission>_frame_0001", annotation is
+        # "frame_0001"). Requires exactly one candidate.
+        candidates = [
+            boxes
+            for ann_stem, boxes in self._gt_boxes_by_unique_stem.items()
+            if stem.endswith(ann_stem) or ann_stem.endswith(stem)
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+        return []
 
     def _build_lookup_keys(self, frame_path: Path) -> list[str]:
         path = frame_path.resolve()
@@ -111,11 +153,17 @@ def _build_from_coco_json(coco_path: Path, frames_dir: Path) -> AnnotationIndex:
         image_keys_by_id=image_keys_by_id,
         gt_boxes_by_key=gt_boxes_by_key,
     )
+    gt_boxes_by_unique_stem = _build_unique_stem_box_map(
+        image_basename_by_id=image_basename_by_id,
+        image_keys_by_id=image_keys_by_id,
+        gt_boxes_by_key=gt_boxes_by_key,
+    )
 
     return AnnotationIndex(
         frames_dir=frames_dir,
         gt_boxes_by_key=gt_boxes_by_key,
         gt_boxes_by_unique_basename=gt_boxes_by_unique_basename,
+        gt_boxes_by_unique_stem=gt_boxes_by_unique_stem,
     )
 
 
@@ -209,6 +257,36 @@ def _build_gt_boxes_by_key(
             person_category_ids=person_category_ids,
         )
     return gt_boxes_by_key
+
+
+def _build_unique_stem_box_map(
+    image_basename_by_id: dict[int, str],
+    image_keys_by_id: dict[int, list[str]],
+    gt_boxes_by_key: dict[str, list[tuple[float, float, float, float]]],
+) -> dict[str, list[tuple[float, float, float, float]]]:
+    """Case-insensitive stem → boxes, populated only for stems that are unique.
+
+    Two annotation images sharing the same stem (e.g. ``frame_0001.jpg`` and
+    ``frame_0001.png``) are excluded to avoid ambiguous matches.
+    """
+    stem_count: dict[str, int] = {}
+    stem_to_image_id: dict[str, int] = {}
+    for image_id, basename in image_basename_by_id.items():
+        stem = Path(basename).stem.lower()
+        if not stem:
+            continue
+        stem_count[stem] = stem_count.get(stem, 0) + 1
+        stem_to_image_id.setdefault(stem, image_id)
+    result: dict[str, list[tuple[float, float, float, float]]] = {}
+    for stem, count in stem_count.items():
+        if count != 1:
+            continue
+        image_id = stem_to_image_id[stem]
+        keys = image_keys_by_id.get(image_id, [])
+        if not keys:
+            continue
+        result[stem] = gt_boxes_by_key.get(keys[0], [])
+    return result
 
 
 def _build_unique_basename_box_map(
