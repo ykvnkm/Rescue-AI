@@ -228,22 +228,48 @@ jobs:
             ENVEOF
             sed -i 's/^[[:space:]]*//' "${APP_DIR}/.env"
 
+            # ── Compose Airflow Connection URIs from existing secrets ──
+            # rescue_app_db: Airflow accepts a postgresql:// DSN directly as a
+            # Connection URI, so we reuse DB_DSN verbatim.
+            # rescue_s3: Airflow's aws:// URI format with userinfo credentials
+            # and endpoint/region/bucket/prefix in the query string. We build
+            # it via Python to get correct URL-encoding of every component.
+            AIRFLOW_CONN_RESCUE_APP_DB="${DB_DSN}"
+            AIRFLOW_CONN_RESCUE_S3="$(
+              ARTIFACTS_S3_ENDPOINT="${ARTIFACTS_S3_ENDPOINT}" \
+              ARTIFACTS_S3_REGION="${ARTIFACTS_S3_REGION}" \
+              ARTIFACTS_S3_ACCESS_KEY_ID="${ARTIFACTS_S3_ACCESS_KEY_ID}" \
+              ARTIFACTS_S3_SECRET_ACCESS_KEY="${ARTIFACTS_S3_SECRET_ACCESS_KEY}" \
+              ARTIFACTS_S3_BUCKET="${ARTIFACTS_S3_BUCKET}" \
+              python3 -c '
+            import os, urllib.parse
+            q = lambda v: urllib.parse.quote(v, safe="")
+            print("aws://{k}:{s}@/?endpoint_url={e}&region_name={r}&bucket={b}&prefix=missions".format(
+                k=q(os.environ["ARTIFACTS_S3_ACCESS_KEY_ID"]),
+                s=q(os.environ["ARTIFACTS_S3_SECRET_ACCESS_KEY"]),
+                e=q(os.environ["ARTIFACTS_S3_ENDPOINT"]),
+                r=q(os.environ["ARTIFACTS_S3_REGION"]),
+                b=q(os.environ["ARTIFACTS_S3_BUCKET"]),
+            ))
+            '
+            )"
+            export AIRFLOW_CONN_RESCUE_APP_DB AIRFLOW_CONN_RESCUE_S3
+
             # ── Write platform.env for Airflow stack ──
+            # Contains only secrets Airflow itself consumes: the local
+            # metadata DB credentials, admin UI credentials, and the two
+            # AIRFLOW_CONN_* variables that Airflow auto-registers as
+            # Connections at process start.
+            # BATCH_IMAGE / DOCKER_GID are NOT here — compose substitutes
+            # them from the exported shell variables above.
             cat > "${APP_DIR}/infra/platform.env" <<ENVEOF
             AIRFLOW_DB_USER=${AIRFLOW_DB_USER}
             AIRFLOW_DB_PASSWORD=${AIRFLOW_DB_PASSWORD}
             AIRFLOW_ADMIN_USER=${AIRFLOW_ADMIN_USER}
             AIRFLOW_ADMIN_PASSWORD=${AIRFLOW_ADMIN_PASSWORD}
             AIRFLOW_ADMIN_EMAIL=${AIRFLOW_ADMIN_EMAIL}
-            DB_DSN=${DB_DSN}
-            ARTIFACTS_S3_ENDPOINT=${ARTIFACTS_S3_ENDPOINT}
-            ARTIFACTS_S3_REGION=${ARTIFACTS_S3_REGION}
-            ARTIFACTS_S3_ACCESS_KEY_ID=${ARTIFACTS_S3_ACCESS_KEY_ID}
-            ARTIFACTS_S3_SECRET_ACCESS_KEY=${ARTIFACTS_S3_SECRET_ACCESS_KEY}
-            ARTIFACTS_S3_BUCKET=${ARTIFACTS_S3_BUCKET}
-            ARTIFACTS_S3_PREFIX=missions
-            BATCH_IMAGE=${BATCH_IMAGE}
-            DOCKER_GID=${DOCKER_GID}
+            AIRFLOW_CONN_RESCUE_APP_DB=${AIRFLOW_CONN_RESCUE_APP_DB}
+            AIRFLOW_CONN_RESCUE_S3=${AIRFLOW_CONN_RESCUE_S3}
             ENVEOF
             sed -i 's/^[[:space:]]*//' "${APP_DIR}/infra/platform.env"
 

@@ -15,7 +15,7 @@ def test_batch_dag_import_and_task_command() -> None:
     dag_path = Path("infra/airflow/dags/rescue_batch_daily.py")
     payload = dag_path.read_text(encoding="utf-8")
     assert 'DAG_ID = "rescue_batch_pipeline"' in payload
-    assert "DockerOperator(" in payload
+    assert "DockerOperator.partial" in payload
     assert "rescue_ai.interfaces.cli.batch" in payload
 
 

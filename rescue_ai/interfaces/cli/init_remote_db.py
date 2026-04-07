@@ -34,6 +34,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _iter_sql_statements(sql: str) -> list[str]:
+    """Split SQL script into statements, ignoring inline ``--`` comments."""
+    uncommented = "\n".join(raw_line.split("--", 1)[0] for raw_line in sql.splitlines())
+    return [statement.strip() for statement in uncommented.split(";") if statement.strip()]
+
+
 def main() -> None:
     settings = get_settings()
     dsn = settings.database.dsn
@@ -52,10 +58,7 @@ def main() -> None:
         with conn.cursor() as cur:
             cur.execute("CREATE SCHEMA IF NOT EXISTS app")
             cur.execute("SET search_path TO app")
-            for statement in sql.split(";"):
-                statement = statement.strip()
-                if not statement:
-                    continue
+            for statement in _iter_sql_statements(sql):
                 cur.execute(statement)
         conn.commit()
 

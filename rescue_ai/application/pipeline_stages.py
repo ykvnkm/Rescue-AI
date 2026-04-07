@@ -238,10 +238,21 @@ def run_validate_stage(
     paths: PipelinePaths,
     *,
     force: bool = False,
-    min_accuracy: float = 0.75,
     detector_predict=None,
 ) -> dict[str, object]:
-    """Run validation on val split using detector predictions."""
+    """Smoke-test the trained detector on the val split.
+
+    Validation in this pipeline is intentionally **not** a quality gate on
+    accuracy: the true business metric is episode-level recall, which is
+    computed offline on a separately labelled dataset. In production mission
+    data has no GT annotations, so accuracy is not meaningful. This stage
+    therefore only:
+
+    * runs the detector on every frame of the val manifest (smoke-test that
+      the model loads and inference works end-to-end);
+    * records a confusion matrix as observability;
+    * fails only if the detector itself errored on any frame.
+    """
     if store.exists(paths.validation_key) and not force:
         return _skip("validate", store.uri(paths.validation_key))
     _require_validation_prerequisites(store, paths)
@@ -257,9 +268,7 @@ def run_validate_stage(
         detector_predict=detector_predict,
     )
     accuracy = counts.accuracy if counts.total > 0 else 1.0
-
-    # Without ground truth labels accuracy is not meaningful — skip the gate.
-    passed = True if not gt_available else accuracy >= min_accuracy
+    passed = counts.detector_errors == 0
 
     payload: dict[str, object] = {
         "stage": "validate",
@@ -275,7 +284,6 @@ def run_validate_stage(
         "fn": counts.fn,
         "detector_errors": counts.detector_errors,
         "accuracy": accuracy,
-        "min_accuracy": min_accuracy,
         "gt_available": gt_available,
         "passed": passed,
     }
@@ -283,7 +291,7 @@ def run_validate_stage(
 
     if not passed:
         raise RuntimeError(
-            f"validation failed: accuracy={accuracy} < threshold={min_accuracy}"
+            f"validation smoke-test failed: detector_errors={counts.detector_errors}"
         )
     return _done("validate", store.uri(paths.validation_key))
 
@@ -343,6 +351,64 @@ def run_inference_stage(
     }
     store.write_json(paths.inference_key, payload)
     return _done("inference", store.uri(paths.inference_key))
+
+
+# ── Stage 5: publish summary metrics to Postgres ───────────────
+
+
+class BatchMetricsWriter(Protocol):
+    """Minimal port for the publish stage (infrastructure-agnostic)."""
+
+    def upsert(self, record: object) -> None:
+        """Upsert one summary row into the backing store."""
+
+
+def run_publish_stage(
+    store: StageStorage,
+    paths: PipelinePaths,
+    *,
+    metrics_writer,
+    record_factory,
+) -> dict[str, object]:
+    """Read the four stage artifacts and upsert a summary row.
+
+    This stage is the only place where the batch pipeline writes into the
+    application Postgres. It is always safe to re-run — the underlying
+    repository uses ``ON CONFLICT ... DO UPDATE`` keyed on
+    ``(ds, mission_id, model_version, code_version)``.
+    """
+    for required_key, label in (
+        (paths.data_key, "dataset"),
+        (paths.model_key, "model"),
+        (paths.validation_key, "validation"),
+        (paths.inference_key, "inference"),
+    ):
+        if not store.exists(required_key):
+            raise RuntimeError(
+                f"{label} artifact is missing: {store.uri(required_key)}"
+            )
+
+    dataset = store.read_json(paths.data_key)
+    validation = store.read_json(paths.validation_key)
+    inference = store.read_json(paths.inference_key)
+
+    record = record_factory(
+        paths=paths,
+        dataset=dataset,
+        validation=validation,
+        inference=inference,
+        dataset_uri=store.uri(paths.data_key),
+        model_uri=store.uri(paths.model_key),
+        validation_uri=store.uri(paths.validation_key),
+        inference_uri=store.uri(paths.inference_key),
+    )
+    metrics_writer.upsert(record)
+    return {
+        "stage": "publish",
+        "status": "completed",
+        "ds": paths.ds,
+        "mission_id": paths.mission_id,
+    }
 
 
 # ── Helpers ─────────────────────────────────────────────────────

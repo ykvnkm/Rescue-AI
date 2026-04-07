@@ -171,28 +171,30 @@ class TestValidateStage:
     def _predict_all_correct(image_uri: str) -> bool:
         return image_uri.endswith("f1.jpg")
 
-    def test_passes_quality_gate(self, store, paths) -> None:
+    def test_smoke_test_passes(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
         run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
         result = run_validate_stage(
             store,
             paths,
-            min_accuracy=0.01,
             detector_predict=self._predict_all_correct,
         )
         assert result["status"] == "completed"
         payload = store.read_json(paths.validation_key)
         assert payload["passed"] is True
 
-    def test_fails_quality_gate(self, store, paths) -> None:
+    def test_smoke_test_fails_when_detector_raises(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
         run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
-        with pytest.raises(RuntimeError, match="validation failed"):
+
+        def _broken(_image_uri: str) -> bool:
+            raise RuntimeError("detector is down")
+
+        with pytest.raises(RuntimeError, match="detector failed"):
             run_validate_stage(
                 store,
                 paths,
-                min_accuracy=1.0,
-                detector_predict=lambda _: True,
+                detector_predict=_broken,
             )
 
     def test_requires_dataset(self, store, paths) -> None:
@@ -210,13 +212,11 @@ class TestValidateStage:
         run_validate_stage(
             store,
             paths,
-            min_accuracy=0.01,
             detector_predict=self._predict_all_correct,
         )
         result = run_validate_stage(
             store,
             paths,
-            min_accuracy=0.01,
             detector_predict=self._predict_all_correct,
         )
         assert result["status"] == "idempotent_skip"
@@ -239,7 +239,6 @@ class TestInferenceStage:
         run_validate_stage(
             store,
             paths,
-            min_accuracy=0.01,
             detector_predict=TestValidateStage._predict_all_correct,
         )
 

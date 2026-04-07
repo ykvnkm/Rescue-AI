@@ -30,6 +30,7 @@ from rescue_ai.application.pipeline_stages import (
     print_result,
     run_data_stage,
     run_inference_stage,
+    run_publish_stage,
     run_train_stage,
     run_validate_stage,
 )
@@ -40,6 +41,10 @@ from rescue_ai.infrastructure.artifact_storage import (
     S3ArtifactBackendSettings,
     S3ArtifactStorage,
     build_s3_storage,
+)
+from rescue_ai.infrastructure.batch_metrics_repository import (
+    BatchPipelineMetricsRecord,
+    PostgresBatchMetricsRepository,
 )
 from rescue_ai.infrastructure.contract_loader import load_stream_contract
 from rescue_ai.infrastructure.pilot_engine import PilotMissionEngine
@@ -55,7 +60,7 @@ from rescue_ai.infrastructure.stage_store import S3StageStore
 from rescue_ai.infrastructure.status_store import JsonStatusStore, PostgresStatusStore
 from rescue_ai.infrastructure.yolo_detector import YoloDetector
 
-STAGES = ("data", "train", "validate", "inference")
+STAGES = ("data", "train", "validate", "inference", "publish")
 DEFAULT_MODEL_VERSION = "yolov8n_baseline_multiscale"
 DEFAULT_CODE_VERSION = "main"
 DEFAULT_BATCH_OUTPUT_SUFFIX = "batch"
@@ -102,6 +107,67 @@ class PilotMissionEngineFactory:
         return "pilot-postgres"
 
 
+def _build_metrics_record(
+    *,
+    paths: PipelinePaths,
+    dataset: dict[str, object],
+    validation: dict[str, object],
+    inference: dict[str, object],
+    dataset_uri: str,
+    model_uri: str,
+    validation_uri: str,
+    inference_uri: str,
+) -> BatchPipelineMetricsRecord:
+    """Flatten stage artifacts into a row for ``batch_pipeline_metrics``."""
+
+    def _int(value: object, default: int = 0) -> int:
+        if isinstance(value, bool):
+            return default
+        if isinstance(value, (int, float)):
+            return int(value)
+        return default
+
+    def _float(value: object, default: float = 0.0) -> float:
+        if isinstance(value, bool):
+            return default
+        if isinstance(value, (int, float)):
+            return float(value)
+        return default
+
+    def _bool(value: object, default: bool = False) -> bool:
+        return bool(value) if isinstance(value, bool) else default
+
+    def _str(value: object, default: str = "") -> str:
+        return value if isinstance(value, str) else default
+
+    return BatchPipelineMetricsRecord(
+        ds=paths.ds,
+        mission_id=paths.mission_id,
+        model_version=paths.model_version,
+        code_version=paths.code_version,
+        rows_total=_int(dataset.get("rows_total")),
+        rows_positive=_int(dataset.get("rows_positive")),
+        rows_corrupted=_int(dataset.get("rows_corrupted")),
+        train_count=_int(dataset.get("train_count")),
+        val_count=_int(dataset.get("val_count")),
+        samples_total=_int(validation.get("samples_total")),
+        tp=_int(validation.get("tp")),
+        tn=_int(validation.get("tn")),
+        fp=_int(validation.get("fp")),
+        fn=_int(validation.get("fn")),
+        detector_errors=_int(validation.get("detector_errors")),
+        accuracy=_float(validation.get("accuracy")),
+        gt_available=_bool(validation.get("gt_available")),
+        validate_passed=_bool(validation.get("passed")),
+        inference_status=_str(inference.get("status"), default="unknown"),
+        inference_run_key=_str(inference.get("run_key")),
+        dataset_uri=dataset_uri,
+        model_uri=model_uri,
+        validation_uri=validation_uri,
+        inference_uri=inference_uri,
+    )
+
+
 def parse_args() -> argparse.Namespace:
     """Parse unified pipeline CLI arguments."""
     parser = argparse.ArgumentParser(
@@ -115,7 +181,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-version", default=DEFAULT_MODEL_VERSION)
     parser.add_argument("--code-version", default=DEFAULT_CODE_VERSION)
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--min-accuracy", type=float, default=0.75)
     return parser.parse_args()
 
 
@@ -262,7 +327,6 @@ def main() -> None:
             store,
             paths,
             force=args.force,
-            min_accuracy=args.min_accuracy,
             detector_predict=_detector_predict,
         )
 
@@ -289,6 +353,20 @@ def main() -> None:
 
         result = run_inference_stage(
             store, paths, force=args.force, runner_factory=_runner_factory
+        )
+
+    elif args.stage == "publish":
+        dsn = settings.database.dsn.strip()
+        if not dsn:
+            raise ValueError("DB_DSN is required for publish stage")
+        metrics_writer = PostgresBatchMetricsRepository(
+            db=PostgresDatabase(dsn=dsn, schema="app")
+        )
+        result = run_publish_stage(
+            store,
+            paths,
+            metrics_writer=metrics_writer,
+            record_factory=_build_metrics_record,
         )
     else:
         raise ValueError(f"Unknown stage: {args.stage}")
