@@ -161,6 +161,21 @@ class FakeEngineFactory(MissionEngineFactoryPort):
         return "fake-engine-factory"
 
 
+@dataclass
+class CompletedMissionEngine(FakeEngine):
+    """Engine test double that emulates already completed mission guard."""
+
+    def create_and_start_mission(
+        self,
+        source_name: str,
+        total_frames: int,
+        fps: float,
+        report_metadata: ReportMetadataPayload,
+    ) -> str:
+        _ = (source_name, total_frames, fps, report_metadata)
+        raise ValueError("Mission already completed")
+
+
 def _runner(
     *,
     mission_input: MissionInput,
@@ -235,6 +250,28 @@ def test_batch_skip_when_completed_and_not_force() -> None:
 
     assert result.status == "completed"
     assert result.report == {"idempotent_skip": True}
+
+
+def test_batch_mission_already_completed_is_treated_as_idempotent_skip() -> None:
+    with TemporaryDirectory() as temp_dir:
+        status_store = JsonStatusStore(path=Path(temp_dir) / "runs.json")
+        runner = _runner(
+            mission_input=MissionInput(
+                source_uri="s", frames=[_frame(1, True)], gt_available=True
+            ),
+            detector=FakeDetector(),
+            statuses=status_store,
+            engine=CompletedMissionEngine(reviewed=[]),
+        )
+        result = runner.run(_request(force=True))
+        record = status_store.get(_request(force=True).run_key)
+
+    assert result.status == "completed"
+    assert result.report["idempotent_skip"] is True
+    assert result.report["reason"] == "mission_already_completed"
+    assert record is not None
+    assert record.status == "completed"
+    assert record.reason == "mission_already_completed"
 
 
 def test_batch_no_gt_does_not_auto_review_and_marks_kpi_not_applicable() -> None:

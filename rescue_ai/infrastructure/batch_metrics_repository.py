@@ -35,14 +35,9 @@ class BatchPipelineMetricsRecord:
     fn: int
     detector_errors: int
     accuracy: float
+    recall: float
     gt_available: bool
     validate_passed: bool
-    inference_status: str
-    inference_run_key: str
-    dataset_uri: str
-    model_uri: str
-    validation_uri: str
-    inference_uri: str
 
 
 class PostgresBatchMetricsRepository:
@@ -61,17 +56,13 @@ class PostgresBatchMetricsRepository:
                         rows_total, rows_positive, rows_corrupted,
                         train_count, val_count,
                         samples_total, tp, tn, fp, fn, detector_errors,
-                        accuracy, gt_available, validate_passed,
-                        inference_status, inference_run_key,
-                        dataset_uri, model_uri, validation_uri, inference_uri,
+                        accuracy, recall, gt_available, validate_passed,
                         updated_at
                     ) VALUES (
                         %s, %s, %s, %s,
                         %s, %s, %s,
                         %s, %s,
                         %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s,
-                        %s, %s,
                         %s, %s, %s, %s,
                         NOW()
                     )
@@ -89,14 +80,9 @@ class PostgresBatchMetricsRepository:
                         fn                = EXCLUDED.fn,
                         detector_errors   = EXCLUDED.detector_errors,
                         accuracy          = EXCLUDED.accuracy,
+                        recall            = EXCLUDED.recall,
                         gt_available      = EXCLUDED.gt_available,
                         validate_passed   = EXCLUDED.validate_passed,
-                        inference_status  = EXCLUDED.inference_status,
-                        inference_run_key = EXCLUDED.inference_run_key,
-                        dataset_uri       = EXCLUDED.dataset_uri,
-                        model_uri         = EXCLUDED.model_uri,
-                        validation_uri    = EXCLUDED.validation_uri,
-                        inference_uri     = EXCLUDED.inference_uri,
                         updated_at        = NOW()
                     """,
                     (
@@ -116,14 +102,9 @@ class PostgresBatchMetricsRepository:
                         record.fn,
                         record.detector_errors,
                         record.accuracy,
+                        record.recall,
                         record.gt_available,
                         record.validate_passed,
-                        record.inference_status,
-                        record.inference_run_key,
-                        record.dataset_uri,
-                        record.model_uri,
-                        record.validation_uri,
-                        record.inference_uri,
                     ),
                 )
             conn.commit()

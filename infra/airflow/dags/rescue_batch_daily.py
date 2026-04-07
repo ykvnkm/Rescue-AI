@@ -1,15 +1,15 @@
 """Rescue-AI daily batch ML pipeline.
 
 One DAG, runs once per day, processes every mission that has frames in
-S3 through the five stages of the pipeline::
+S3 through the four stages of the pipeline::
 
-    data → train → validate → inference → publish
+    data → train → validate → publish
 
 Design notes for defence
 ------------------------
-* **schedule = "@daily" + catchup = True** — ``airflow dags backfill
-  -s <from> -e <to> rescue_batch_pipeline`` just works. No extra DAG,
-  no watcher, no cron script.
+* **Simple graph** — exactly 4 DockerOperator tasks in UI:
+  ``data -> train -> validate -> publish``.
+  No dynamic mapping and no helper ``build_*`` tasks.
 * **Idempotency** is enforced on two levels:
     1. every stage checks ``store.exists(...)`` in S3 and skips unless
        ``force=true`` (see ``rescue_ai/application/pipeline_stages.py``);
@@ -22,12 +22,10 @@ Design notes for defence
   variable mechanism populated from GitHub Secrets in CI). Nothing is
   hardcoded; ``BaseHook.get_connection`` is the single source of truth.
 * **conf parameters** (``dag_run.conf``):
-    - ``mission_ids`` — optional list, restrict the run to specific
-      missions (used for manual re-runs after data fixes);
-    - ``force`` — bool, re-compute stage artifacts even if already
-      present in S3;
-    - ``model_version`` / ``code_version`` — label the artifacts for
-      A/B experiments without editing the DAG.
+    - ``mission_ids_csv`` — optional comma-separated mission IDs to
+      restrict processing inside each stage;
+    - ``model_version`` / ``code_version`` — labels written into
+      artifact keys and PG rows.
 
 S3 layout (input): ``missions/{mission_uuid}/frames/*.jpg``
 S3 layout (output): ``missions/batch/ml_pipeline/mission=<uuid>/ds=<date>/*.json``
@@ -40,9 +38,7 @@ from datetime import datetime as std_datetime
 from datetime import timedelta
 from typing import Any, Literal, cast
 
-_Boto3Module: Any = None
 _AirflowDAGClass: Any
-_TaskDecoratorFunc: Any
 _BaseHookClass: Any
 _ParamClass: Any
 _DockerOperatorClass: Any
@@ -50,9 +46,7 @@ _MountClass: Any
 _DateTimeFactory: Any
 
 try:
-    import boto3
     from airflow import DAG as AirflowDAGClass
-    from airflow.decorators import task as AirflowTaskDecorator
     from airflow.hooks.base import BaseHook as AirflowBaseHookClass
     from airflow.models.param import Param as AirflowParamClass
     from airflow.providers.docker.operators.docker import (
@@ -61,9 +55,7 @@ try:
     from docker.types import Mount as DockerMountClass
     from pendulum import datetime as PendulumDateTimeFactory
 
-    _Boto3Module = boto3
     _AirflowDAGClass = AirflowDAGClass
-    _TaskDecoratorFunc = AirflowTaskDecorator
     _BaseHookClass = AirflowBaseHookClass
     _ParamClass = AirflowParamClass
     _DockerOperatorClass = AirflowDockerOperatorClass
@@ -81,11 +73,6 @@ except ImportError:  # pragma: no cover — keeps the file importable for lintin
 
         def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> Literal[False]:
             return False
-
-    def _fallback_task(func=None, **_kwargs):
-        if func is None:
-            return lambda wrapped: wrapped
-        return func
 
     class _FallbackBaseHook:
         @staticmethod
@@ -125,16 +112,13 @@ except ImportError:  # pragma: no cover — keeps the file importable for lintin
             return None
 
     _AirflowDAGClass = cast(Any, _FallbackDAG)
-    _TaskDecoratorFunc = cast(Any, _fallback_task)
     _BaseHookClass = cast(Any, _FallbackBaseHook)
     _ParamClass = cast(Any, _FallbackParam)
     _DockerOperatorClass = cast(Any, _FallbackDockerOperator)
     _MountClass = cast(Any, _FallbackMount)
     _DateTimeFactory = cast(Any, std_datetime)
 
-boto3 = _Boto3Module
 DAG = _AirflowDAGClass
-task = _TaskDecoratorFunc
 BaseHook = _BaseHookClass
 Param = _ParamClass
 DockerOperator = _DockerOperatorClass
@@ -149,9 +133,6 @@ BATCH_IMAGE = os.environ.get("BATCH_IMAGE", "rescue-ai-batch:local")
 
 APP_DB_CONN_ID = "rescue_app_db"
 S3_CONN_ID = "rescue_s3"
-
-# Missions that are output artifacts, not input missions.
-_EXCLUDE_PREFIXES = frozenset({"batch"})
 
 
 # ── Secret wiring via Airflow Connections (standard mechanism) ──
@@ -182,62 +163,46 @@ def _build_base_env() -> dict[str, str]:
     }
 
 
-# ── Mission discovery ───────────────────────────────────────────
-
-
-def _list_missions_from_s3(env: dict[str, str]) -> list[str]:
-    """List mission UUIDs from S3 via CommonPrefixes (fast, no full scan)."""
-    if boto3 is None:  # pragma: no cover
-        raise RuntimeError("boto3 is not available")
-
-    client = boto3.client(
-        "s3",
-        endpoint_url=env["ARTIFACTS_S3_ENDPOINT"] or None,
-        region_name=env["ARTIFACTS_S3_REGION"] or None,
-        aws_access_key_id=env["ARTIFACTS_S3_ACCESS_KEY_ID"] or None,
-        aws_secret_access_key=env["ARTIFACTS_S3_SECRET_ACCESS_KEY"] or None,
-    )
-    bucket = env["ARTIFACTS_S3_BUCKET"]
-    prefix = env["ARTIFACTS_S3_PREFIX"].strip("/")
-    search_prefix = f"{prefix}/" if prefix else ""
-
-    paginator = client.get_paginator("list_objects_v2")
-    found: list[str] = []
-    for page in paginator.paginate(Bucket=bucket, Prefix=search_prefix, Delimiter="/"):
-        for common in page.get("CommonPrefixes", []) or []:
-            segment = common["Prefix"].rstrip("/").split("/")[-1]
-            if segment and segment not in _EXCLUDE_PREFIXES:
-                found.append(segment)
-    return sorted(set(found))
+def _build_stage_command(stage: str) -> list[str]:
+    """Return templated argv for one pipeline stage."""
+    return [
+        "python",
+        "-m",
+        "rescue_ai.interfaces.cli.batch",
+        "--stage",
+        stage,
+        "--all-missions",
+        "--mission-ids-csv",
+        "{{ params.mission_ids_csv if params.mission_ids_csv is not none else '' }}",
+        "--ds",
+        "{{ ds }}",
+        "--model-version",
+        "{{ params.model_version }}",
+        "--code-version",
+        "{{ params.code_version }}",
+    ]
 
 
 # ── DAG definition ──────────────────────────────────────────────
 
 with DAG(
     dag_id=DAG_ID,
-    description="Rescue-AI daily batch: data → train → validate → inference → publish",
+    description="Rescue-AI daily batch: data → train → validate → publish",
     start_date=datetime(2026, 3, 1),
     schedule="@daily",
-    catchup=True,
+    catchup=False,
     max_active_runs=1,
     default_args={
         "retries": 1,
         "retry_delay": timedelta(minutes=15),
     },
     params={
-        "mission_ids": Param(
-            default=[],
-            type=["array", "null"],
+        "mission_ids_csv": Param(
+            default=None,
+            type=["null", "string"],
             description=(
-                "Optional allow-list of mission UUIDs. "
-                "Empty → process every mission discovered in S3."
-            ),
-        ),
-        "force": Param(
-            default=False,
-            type="boolean",
-            description=(
-                "Re-compute every stage even if the S3 artifact already exists."
+                "Optional comma-separated mission IDs allow-list. "
+                "Empty -> process all discovered missions for ds."
             ),
         ),
         "model_version": Param(
@@ -253,72 +218,7 @@ with DAG(
     },
     tags=["rescue-ai", "ml-pipeline", "batch"],
 ) as dag:
-
-    # -- 1. Resolve the list of missions for this DAG run ------------
-
-    @task
-    def resolve_missions(**context) -> list[str]:
-        """Return the sorted list of mission UUIDs to process for this run."""
-        env = _build_base_env()
-        conf_ids = (context["params"] or {}).get("mission_ids") or []
-        discovered = _list_missions_from_s3(env)
-
-        if conf_ids:
-            requested = {str(m) for m in conf_ids}
-            missing = requested - set(discovered)
-            if missing:
-                raise ValueError(
-                    "Requested missions not found in S3: " + ", ".join(sorted(missing))
-                )
-            return sorted(requested)
-
-        if not discovered:
-            raise ValueError(
-                "No missions discovered in S3. "
-                "Upload a mission under "
-                f"s3://{env['ARTIFACTS_S3_BUCKET']}/{env['ARTIFACTS_S3_PREFIX']}/"
-                " or trigger the DAG with {'mission_ids': ['<uuid>']}."
-            )
-        return discovered
-
-    # -- 2. Build one Docker command per (mission, stage) ------------
-
-    @task
-    def build_commands(
-        mission_ids: Any,
-        stage: str,
-        **context,
-    ) -> list[list[str]]:
-        """Return a list of argv lists, one per mission, for a given stage."""
-        params = context["params"] or {}
-        ds = context["ds"]
-        model_version = params.get("model_version", "yolov8n_baseline_multiscale")
-        code_version = params.get("code_version", "main")
-        force = bool(params.get("force", False))
-
-        commands: list[list[str]] = []
-        for mission_id in cast(list[str], mission_ids):
-            cmd = [
-                "python",
-                "-m",
-                "rescue_ai.interfaces.cli.batch",
-                "--stage",
-                stage,
-                "--mission-id",
-                mission_id,
-                "--ds",
-                ds,
-                "--model-version",
-                model_version,
-                "--code-version",
-                code_version,
-            ]
-            if force:
-                cmd.append("--force")
-            commands.append(cmd)
-        return commands
-
-    # -- 3. Shared DockerOperator defaults ---------------------------
+    # -- Shared DockerOperator defaults ------------------------------
 
     _docker_defaults: dict[str, object] = {
         "image": BATCH_IMAGE,
@@ -337,57 +237,36 @@ with DAG(
         ],
     }
 
-    # -- 4. Stage fan-out via dynamic task mapping -------------------
+    # -- Five fixed stage tasks --------------------------------------
 
-    missions = resolve_missions()
-
-    data_cmds = build_commands.override(task_id="build_data_cmds")(
-        mission_ids=missions, stage="data"
-    )
-    train_cmds = build_commands.override(task_id="build_train_cmds")(
-        mission_ids=missions, stage="train"
-    )
-    validate_cmds = build_commands.override(task_id="build_validate_cmds")(
-        mission_ids=missions, stage="validate"
-    )
-    inference_cmds = build_commands.override(task_id="build_inference_cmds")(
-        mission_ids=missions, stage="inference"
-    )
-    publish_cmds = build_commands.override(task_id="build_publish_cmds")(
-        mission_ids=missions, stage="publish"
-    )
-
-    stage_data = DockerOperator.partial(
+    stage_data = DockerOperator(
         task_id="data",
         execution_timeout=timedelta(minutes=30),
+        command=_build_stage_command("data"),
         **_docker_defaults,
-    ).expand(command=data_cmds)
+    )
 
-    stage_train = DockerOperator.partial(
+    stage_train = DockerOperator(
         task_id="train",
         execution_timeout=timedelta(hours=2),
+        command=_build_stage_command("train"),
         **_docker_defaults,
-    ).expand(command=train_cmds)
+    )
 
-    stage_validate = DockerOperator.partial(
+    stage_validate = DockerOperator(
         task_id="validate",
         execution_timeout=timedelta(hours=1),
+        command=_build_stage_command("validate"),
         **_docker_defaults,
-    ).expand(command=validate_cmds)
+    )
 
-    stage_inference = DockerOperator.partial(
-        task_id="inference",
-        execution_timeout=timedelta(hours=6),
-        **_docker_defaults,
-    ).expand(command=inference_cmds)
-
-    stage_publish = DockerOperator.partial(
+    stage_publish = DockerOperator(
         task_id="publish",
         execution_timeout=timedelta(minutes=10),
+        command=_build_stage_command("publish"),
         **_docker_defaults,
-    ).expand(command=publish_cmds)
+    )
 
     stage_train.set_upstream(stage_data)
     stage_validate.set_upstream(stage_train)
-    stage_inference.set_upstream(stage_validate)
-    stage_publish.set_upstream(stage_inference)
+    stage_publish.set_upstream(stage_validate)

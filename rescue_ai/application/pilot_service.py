@@ -267,6 +267,20 @@ class PilotService:
         self._deps.artifact_storage.save_mission_report(mission_id, report)
         return report
 
+    def save_mission_annotations(
+        self,
+        mission_id: str,
+        payload: dict[str, object],
+    ) -> str:
+        """Persist mission annotations blob in artifact storage."""
+        mission = self._deps.mission_repository.get(mission_id)
+        if mission is None:
+            raise ValueError("Mission not found")
+        return self._deps.artifact_storage.save_mission_annotations(
+            mission_id,
+            payload,
+        )
+
     def get_alert_frame_artifact(self, alert_id: str) -> ArtifactBlob:
         alert = self._deps.alert_repository.get(alert_id)
         if alert is None:

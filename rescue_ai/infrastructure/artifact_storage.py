@@ -153,6 +153,21 @@ class S3ArtifactStorage:
         )
         return f"s3://{self._settings.bucket}/{key}"
 
+    def save_mission_annotations(
+        self,
+        mission_id: str,
+        payload: Mapping[str, object],
+    ) -> str:
+        key = self._annotations_key(mission_id)
+        body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        self._client.put_object(
+            Bucket=self._settings.bucket,
+            Key=key,
+            Body=body,
+            ContentType="application/json",
+        )
+        return f"s3://{self._settings.bucket}/{key}"
+
     def load_mission_report(self, mission_id: str) -> Mapping[str, object] | None:
         key = self._report_key(mission_id)
         try:
@@ -197,6 +212,9 @@ class S3ArtifactStorage:
 
     def _report_key(self, mission_id: str) -> str:
         return f"missions/{mission_id}/report.json"
+
+    def _annotations_key(self, mission_id: str) -> str:
+        return f"missions/{mission_id}/annotations/mission.json"
 
     def _upload_frame(self, key: str, payload: bytes, content_type: str) -> None:
         try:

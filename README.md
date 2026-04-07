@@ -127,7 +127,7 @@ uv run python -m rescue_ai.interfaces.cli.batch \
   --ds 2026-03-01
 
 # Все стадии последовательно
-for stage in data train validate inference; do
+for stage in data train validate publish; do
   uv run python -m rescue_ai.interfaces.cli.batch \
     --stage $stage \
     --mission-id demo_mission \

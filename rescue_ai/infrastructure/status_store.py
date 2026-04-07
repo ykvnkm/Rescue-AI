@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 from rescue_ai.application.batch_dtos import RunStatusRecord
-from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
 
 
 class JsonStatusStore:
@@ -51,62 +50,6 @@ class JsonStatusStore:
         return {
             str(key): value for key, value in payload.items() if isinstance(value, dict)
         }
-
-
-class PostgresStatusStore:
-    """Status store backed by Postgres table `batch_mission_runs`."""
-
-    def __init__(self, db: PostgresDatabase) -> None:
-        self._db = db
-
-    def get(self, run_key: str) -> RunStatusRecord | None:
-        with self._db.connect() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT run_key, status, reason, report_uri, debug_uri
-                    FROM batch_mission_runs
-                    WHERE run_key = %s
-                    """,
-                    (run_key,),
-                )
-                row = cursor.fetchone()
-                if row is None:
-                    return None
-                return RunStatusRecord(
-                    run_key=str(row[0]),
-                    status=str(row[1]),
-                    reason=_as_optional_str(row[2]),
-                    report_uri=_as_optional_str(row[3]),
-                    debug_uri=_as_optional_str(row[4]),
-                )
-
-    def upsert(self, record: RunStatusRecord) -> None:
-        with self._db.connect() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO batch_mission_runs (
-                      run_key, status, reason, report_uri, debug_uri
-                    )
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (run_key)
-                    DO UPDATE SET
-                      status = EXCLUDED.status,
-                      reason = EXCLUDED.reason,
-                      report_uri = EXCLUDED.report_uri,
-                      debug_uri = EXCLUDED.debug_uri,
-                      updated_at = NOW()
-                    """,
-                    (
-                        record.run_key,
-                        record.status,
-                        record.reason,
-                        record.report_uri,
-                        record.debug_uri,
-                    ),
-                )
-            conn.commit()
 
 
 def _as_optional_str(value: object) -> str | None:

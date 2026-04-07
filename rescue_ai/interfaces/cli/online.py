@@ -514,6 +514,20 @@ class DetectionStreamController:
         frame_interval = 1.0 / target_fps if target_fps > 0 else 0.5
         gt_sequence = self._load_gt_sequence(state.rpi_mission_id)
         state.gt_sequence_total = len(gt_sequence) if gt_sequence is not None else None
+        annotations_payload = self._load_annotations_payload(state.rpi_mission_id)
+        if annotations_payload and self._pilot_service is not None:
+            try:
+                self._pilot_service.save_mission_annotations(
+                    mission_id=mission_id,
+                    payload=annotations_payload,
+                )
+            except (ValueError, RuntimeError, OSError, TypeError) as error:
+                logger.warning(
+                    "Cannot persist mission annotations mission=%s: %s: %s",
+                    mission_id,
+                    type(error).__name__,
+                    error,
+                )
         capture = self._open_capture(state)
         if capture is None:
             state.error = "Cannot open stream (tried HTTP and RTSP)"
@@ -685,9 +699,26 @@ class DetectionStreamController:
                 rpi_mission_id,
                 timeout_sec=self._rpi_settings.timeout_sec,
             )
-        except (ValueError, RuntimeError, OSError) as error:
+        except (httpx.HTTPError, ValueError, RuntimeError, OSError) as error:
             logger.warning(
                 "Cannot load GT sequence mission=%s: %s: %s",
+                rpi_mission_id,
+                type(error).__name__,
+                error,
+            )
+            return None
+
+    def _load_annotations_payload(
+        self, rpi_mission_id: str
+    ) -> dict[str, object] | None:
+        try:
+            return self._client().load_annotations_payload(
+                rpi_mission_id,
+                timeout_sec=self._rpi_settings.timeout_sec,
+            )
+        except (httpx.HTTPError, ValueError, RuntimeError, OSError) as error:
+            logger.warning(
+                "Cannot load annotations payload mission=%s: %s: %s",
                 rpi_mission_id,
                 type(error).__name__,
                 error,
