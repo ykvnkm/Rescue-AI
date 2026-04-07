@@ -76,6 +76,7 @@ jobs:
           ARTIFACTS_S3_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_S3_ACCESS_KEY_ID }}
           ARTIFACTS_S3_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_S3_SECRET_ACCESS_KEY }}
           ARTIFACTS_S3_BUCKET: ${{ secrets.ARTIFACTS_S3_BUCKET }}
+          ARTIFACTS_S3_PREFIX: ${{ secrets.ARTIFACTS_S3_PREFIX }}
           RPI_BASE_URL: ${{ secrets.RPI_BASE_URL }}
           RPI_MISSIONS_DIR: ${{ secrets.RPI_MISSIONS_DIR }}
           RPI_RTSP_PORT: ${{ secrets.RPI_RTSP_PORT }}
@@ -92,12 +93,13 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: DB_DSN,ARTIFACTS_S3_ENDPOINT,ARTIFACTS_S3_REGION,ARTIFACTS_S3_ACCESS_KEY_ID,ARTIFACTS_S3_SECRET_ACCESS_KEY,ARTIFACTS_S3_BUCKET,RPI_BASE_URL,RPI_MISSIONS_DIR,RPI_RTSP_PORT,GHCR_TOKEN,GHCR_USERNAME,AIRFLOW_DB_USER,AIRFLOW_DB_PASSWORD,AIRFLOW_ADMIN_USER,AIRFLOW_ADMIN_PASSWORD,AIRFLOW_ADMIN_EMAIL,GIT_SHA,OWNER
+          envs: DB_DSN,ARTIFACTS_S3_ENDPOINT,ARTIFACTS_S3_REGION,ARTIFACTS_S3_ACCESS_KEY_ID,ARTIFACTS_S3_SECRET_ACCESS_KEY,ARTIFACTS_S3_BUCKET,ARTIFACTS_S3_PREFIX,RPI_BASE_URL,RPI_MISSIONS_DIR,RPI_RTSP_PORT,GHCR_TOKEN,GHCR_USERNAME,AIRFLOW_DB_USER,AIRFLOW_DB_PASSWORD,AIRFLOW_ADMIN_USER,AIRFLOW_ADMIN_PASSWORD,AIRFLOW_ADMIN_EMAIL,GIT_SHA,OWNER
           command_timeout: 15m
           script: |
             set -euo pipefail
 
             APP_DIR="$HOME/rescue-ai"
+            ARTIFACTS_S3_PREFIX="${ARTIFACTS_S3_PREFIX:-missions}"
 
             export ONLINE_IMAGE="ghcr.io/${OWNER}/rescue-ai-online:${GIT_SHA}"
             export BATCH_IMAGE="ghcr.io/${OWNER}/rescue-ai-batch:${GIT_SHA}"
@@ -219,7 +221,7 @@ jobs:
             ARTIFACTS_S3_ACCESS_KEY_ID=${ARTIFACTS_S3_ACCESS_KEY_ID}
             ARTIFACTS_S3_SECRET_ACCESS_KEY=${ARTIFACTS_S3_SECRET_ACCESS_KEY}
             ARTIFACTS_S3_BUCKET=${ARTIFACTS_S3_BUCKET}
-            ARTIFACTS_S3_PREFIX=missions
+            ARTIFACTS_S3_PREFIX=${ARTIFACTS_S3_PREFIX}
             RPI_BASE_URL=${RPI_BASE_URL}
             RPI_MISSIONS_DIR=${RPI_MISSIONS_DIR}
             RPI_RTSP_PORT=${RPI_RTSP_PORT}
@@ -241,15 +243,17 @@ jobs:
               ARTIFACTS_S3_ACCESS_KEY_ID="${ARTIFACTS_S3_ACCESS_KEY_ID}" \
               ARTIFACTS_S3_SECRET_ACCESS_KEY="${ARTIFACTS_S3_SECRET_ACCESS_KEY}" \
               ARTIFACTS_S3_BUCKET="${ARTIFACTS_S3_BUCKET}" \
+              ARTIFACTS_S3_PREFIX="${ARTIFACTS_S3_PREFIX}" \
               python3 -c '
             import os, urllib.parse
             q = lambda v: urllib.parse.quote(v, safe="")
-            print("aws://{k}:{s}@/?endpoint_url={e}&region_name={r}&bucket={b}&prefix=missions".format(
+            print("aws://{k}:{s}@/?endpoint_url={e}&region_name={r}&bucket={b}&prefix={p}".format(
                 k=q(os.environ["ARTIFACTS_S3_ACCESS_KEY_ID"]),
                 s=q(os.environ["ARTIFACTS_S3_SECRET_ACCESS_KEY"]),
                 e=q(os.environ["ARTIFACTS_S3_ENDPOINT"]),
                 r=q(os.environ["ARTIFACTS_S3_REGION"]),
                 b=q(os.environ["ARTIFACTS_S3_BUCKET"]),
+                p=q(os.environ["ARTIFACTS_S3_PREFIX"]),
             ))
             '
             )"
