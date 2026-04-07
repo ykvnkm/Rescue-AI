@@ -38,14 +38,14 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 
 - Запускается ежедневно (`@daily`) с `catchup=True`.
 - На старте выполняет auto-discovery миссий в S3 для текущей `ds`.
-- Для каждой найденной миссии оркестрирует 4 шага в `DockerOperator`: `stage_data -> stage_train -> stage_validate -> stage_inference`.
+- Для каждой найденной миссии оркестрирует 5 шагов в `DockerOperator`: `data -> train -> validate -> inference -> publish` (последний upsert'ит сводные метрики в `batch_pipeline_metrics`).
 - Передача между тасками идет через S3: каждый шаг пишет артефакт в S3, следующий читает по детерминированному ключу.
 - Идемпотентность по каждому шагу: при повторном запуске на ту же `ds` шаг возвращает `idempotent_skip`, если артефакт уже существует.
 - Для демонстрации backfill оставлен `catchup=True` и CLI-команда `airflow dags backfill`.
 
 Канонический контракт stage-runner (`rescue_ai/interfaces/cli/batch.py`):
 
-- Вход: `stage`, `mission_id`, `ds`, `model_version`, `code_version`, `force`, `min_accuracy`.
+- Вход: `stage`, `mission_id`, `ds`, `model_version`, `code_version`, `force`.
 - Выход: `status`, `output_uri` (JSON в stdout).
 
 ## Пошаговый запуск Airflow и что смотреть
@@ -55,7 +55,7 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 cp infra/platform.env.example infra/platform.env
 ```
 Заполните минимум:
-`DB_DSN`, `AIRFLOW_ADMIN_USER`, `AIRFLOW_ADMIN_PASSWORD`, `AIRFLOW_ADMIN_EMAIL`, `ARTIFACTS_S3_ENDPOINT`, `ARTIFACTS_S3_REGION`, `ARTIFACTS_S3_ACCESS_KEY_ID`, `ARTIFACTS_S3_SECRET_ACCESS_KEY`, `ARTIFACTS_S3_BUCKET`.
+`AIRFLOW_ADMIN_USER`, `AIRFLOW_ADMIN_PASSWORD`, `AIRFLOW_ADMIN_EMAIL`, `AIRFLOW_CONN_RESCUE_APP_DB`, `AIRFLOW_CONN_RESCUE_S3`. Секреты прокидываются в Airflow штатно — через env-переменные с префиксом `AIRFLOW_CONN_*`, которые Airflow автоматически регистрирует как Connections на старте. В DAG-е обращение через `BaseHook.get_connection("rescue_app_db" | "rescue_s3")`.
 
 2. Проверьте конфиг compose:
 ```bash

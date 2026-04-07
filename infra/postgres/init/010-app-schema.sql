@@ -66,3 +66,38 @@ CREATE TABLE IF NOT EXISTS batch_mission_runs (
     debug_uri TEXT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Summary metrics for each (ds, mission, model, code) run of the batch ML pipeline.
+-- Written at the end of the pipeline by the `publish` stage; one row per
+-- (ds, mission_id, model_version, code_version). Re-runs upsert via ON CONFLICT
+-- so `updated_at` reflects the latest successful execution (idempotency signal).
+CREATE TABLE IF NOT EXISTS batch_pipeline_metrics (
+    ds               DATE NOT NULL,
+    mission_id       TEXT NOT NULL,
+    model_version    TEXT NOT NULL,
+    code_version     TEXT NOT NULL,
+    rows_total       INTEGER NOT NULL,
+    rows_positive    INTEGER NOT NULL,
+    rows_corrupted   INTEGER NOT NULL,
+    train_count      INTEGER NOT NULL,
+    val_count        INTEGER NOT NULL,
+    samples_total    INTEGER NOT NULL,
+    tp               INTEGER NOT NULL,
+    tn               INTEGER NOT NULL,
+    fp               INTEGER NOT NULL,
+    fn               INTEGER NOT NULL,
+    detector_errors  INTEGER NOT NULL,
+    accuracy         DOUBLE PRECISION NOT NULL,
+    gt_available     BOOLEAN NOT NULL,
+    validate_passed  BOOLEAN NOT NULL,
+    inference_status TEXT NOT NULL,
+    inference_run_key TEXT NOT NULL,
+    dataset_uri      TEXT NOT NULL,
+    model_uri        TEXT NOT NULL,
+    validation_uri   TEXT NOT NULL,
+    inference_uri    TEXT NOT NULL,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ds, mission_id, model_version, code_version)
+);
+CREATE INDEX IF NOT EXISTS ix_batch_pipeline_metrics_ds
+    ON batch_pipeline_metrics (ds);
