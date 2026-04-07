@@ -37,7 +37,9 @@ logger = logging.getLogger(__name__)
 def _iter_sql_statements(sql: str) -> list[str]:
     """Split SQL script into statements, ignoring inline ``--`` comments."""
     uncommented = "\n".join(raw_line.split("--", 1)[0] for raw_line in sql.splitlines())
-    return [statement.strip() for statement in uncommented.split(";") if statement.strip()]
+    return [
+        statement.strip() for statement in uncommented.split(";") if statement.strip()
+    ]
 
 
 def main() -> None:

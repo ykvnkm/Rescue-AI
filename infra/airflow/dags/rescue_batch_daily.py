@@ -387,4 +387,7 @@ with DAG(
         **_docker_defaults,
     ).expand(command=publish_cmds)
 
-    stage_data >> stage_train >> stage_validate >> stage_inference >> stage_publish
+    stage_train.set_upstream(stage_data)
+    stage_validate.set_upstream(stage_train)
+    stage_inference.set_upstream(stage_validate)
+    stage_publish.set_upstream(stage_inference)

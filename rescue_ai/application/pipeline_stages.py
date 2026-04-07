@@ -397,10 +397,12 @@ def run_publish_stage(
         dataset=dataset,
         validation=validation,
         inference=inference,
-        dataset_uri=store.uri(paths.data_key),
-        model_uri=store.uri(paths.model_key),
-        validation_uri=store.uri(paths.validation_key),
-        inference_uri=store.uri(paths.inference_key),
+        artifact_uris={
+            "dataset_uri": store.uri(paths.data_key),
+            "model_uri": store.uri(paths.model_key),
+            "validation_uri": store.uri(paths.validation_key),
+            "inference_uri": store.uri(paths.inference_key),
+        },
     )
     metrics_writer.upsert(record)
     return {
