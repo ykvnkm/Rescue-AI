@@ -1,11 +1,11 @@
 """Postgres repository for summary metrics of the batch ML pipeline.
 
-Each pipeline run of the DAG writes exactly one row per
-``(ds, mission_id, model_version, code_version)`` tuple into the
-``batch_pipeline_metrics`` table. Re-runs upsert the row so that
-``updated_at`` always reflects the latest successful execution — this is
-what makes idempotency observable from a BI dashboard (or from a
-``SELECT ... WHERE ds = CURRENT_DATE``).
+Each pipeline run of the DAG upserts exactly one row per
+``(mission_id, model_version, code_version)`` tuple into the
+``batch_pipeline_metrics`` table. Re-running the DAG for the same mission
+on a new ``ds`` updates the existing row in place — the table does not
+grow linearly with #missions × #days. ``ds`` and ``updated_at`` record the
+most recent successful execution (observable idempotency signal).
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ class PostgresBatchMetricsRepository:
                 cursor.execute(
                     """
                     INSERT INTO batch_pipeline_metrics (
-                        ds, mission_id, model_version, code_version,
+                        mission_id, model_version, code_version, ds,
                         rows_total, rows_positive, rows_corrupted,
                         train_count, val_count,
                         samples_total, tp, tn, fp, fn, detector_errors,
@@ -66,8 +66,9 @@ class PostgresBatchMetricsRepository:
                         %s, %s, %s, %s,
                         NOW()
                     )
-                    ON CONFLICT (ds, mission_id, model_version, code_version)
+                    ON CONFLICT (mission_id, model_version, code_version)
                     DO UPDATE SET
+                        ds                = EXCLUDED.ds,
                         rows_total        = EXCLUDED.rows_total,
                         rows_positive     = EXCLUDED.rows_positive,
                         rows_corrupted    = EXCLUDED.rows_corrupted,
@@ -86,10 +87,10 @@ class PostgresBatchMetricsRepository:
                         updated_at        = NOW()
                     """,
                     (
-                        record.ds,
                         record.mission_id,
                         record.model_version,
                         record.code_version,
+                        record.ds,
                         record.rows_total,
                         record.rows_positive,
                         record.rows_corrupted,

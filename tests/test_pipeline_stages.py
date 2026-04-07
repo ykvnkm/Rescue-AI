@@ -10,7 +10,6 @@ from rescue_ai.application.batch_dtos import FrameRecord, MissionInput
 from rescue_ai.application.pipeline_stages import (
     PipelinePaths,
     run_data_stage,
-    run_inference_stage,
     run_train_stage,
     run_validate_stage,
 )
@@ -51,9 +50,8 @@ class TestPipelinePaths:
             paths.data_key,
             paths.model_key,
             paths.validation_key,
-            paths.inference_key,
         }
-        assert len(keys) == 4
+        assert len(keys) == 3
 
 
 # ── Data stage ──────────────────────────────────────────────────
@@ -226,83 +224,3 @@ class TestValidateStage:
         run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
         with pytest.raises(RuntimeError, match="detector_predict is required"):
             run_validate_stage(store, paths)
-
-
-# ── Inference stage ─────────────────────────────────────────────
-
-
-class TestInferenceStage:
-    def _seed_through_validation(self, store, paths) -> None:
-        """Run data → train → validate so inference can proceed."""
-        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
-        run_validate_stage(
-            store,
-            paths,
-            detector_predict=TestValidateStage._predict_all_correct,
-        )
-
-    def test_requires_validation(self, store, paths) -> None:
-        with pytest.raises(RuntimeError, match="validation artifact is missing"):
-            run_inference_stage(store, paths)
-
-    def test_blocks_on_failed_validation(self, store, paths) -> None:
-        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
-        # Write a "failed" validation artifact manually
-        store.write_json(
-            paths.validation_key,
-            {"passed": False, "accuracy": 0.5, "stage": "validate"},
-        )
-        with pytest.raises(RuntimeError, match="validation did not pass"):
-            run_inference_stage(store, paths, runner_factory=lambda: None)
-
-    def test_requires_runner_factory(self, store, paths) -> None:
-        self._seed_through_validation(store, paths)
-        with pytest.raises(RuntimeError, match="runner_factory is required"):
-            run_inference_stage(store, paths)
-
-    def test_runs_with_fake_runner(self, store, paths) -> None:
-        self._seed_through_validation(store, paths)
-
-        class FakeResult:
-            run_key = "rk"
-            status = "completed"
-            report_uri = "report://uri"
-            debug_uri = "debug://uri"
-
-        class FakeRunner:
-            def run(self, _request):
-                return FakeResult()
-
-        class FakeRequest:
-            pass
-
-        def factory():
-            return FakeRunner(), FakeRequest()
-
-        result = run_inference_stage(store, paths, runner_factory=factory)
-        assert result["status"] == "completed"
-        payload = store.read_json(paths.inference_key)
-        assert payload["stage"] == "inference"
-        assert payload["run_key"] == "rk"
-
-    def test_idempotent_skip(self, store, paths) -> None:
-        self._seed_through_validation(store, paths)
-
-        class FakeResult:
-            run_key = "rk"
-            status = "completed"
-            report_uri = "r"
-            debug_uri = "d"
-
-        class FakeRunner:
-            def run(self, _request):
-                return FakeResult()
-
-        def factory():
-            return FakeRunner(), object()
-
-        run_inference_stage(store, paths, runner_factory=factory)
-        result = run_inference_stage(store, paths, runner_factory=factory)
-        assert result["status"] == "idempotent_skip"

@@ -58,15 +58,17 @@ CREATE TABLE IF NOT EXISTS episodes (
 CREATE INDEX IF NOT EXISTS ix_episodes_mission_found
     ON episodes (mission_id, found_by_alert);
 
--- Summary metrics for each (ds, mission, model, code) run of the batch ML pipeline.
--- Written at the end of the pipeline by the `publish` stage; one row per
--- (ds, mission_id, model_version, code_version). Re-runs upsert via ON CONFLICT
--- so `updated_at` reflects the latest successful execution (idempotency signal).
+-- Summary metrics for each (mission, model, code) of the batch ML pipeline.
+-- Written by the `publish` stage; exactly ONE row per
+-- (mission_id, model_version, code_version) — re-running the pipeline for the
+-- same mission on a new ds upserts the row in place, so the table does not
+-- grow linearly with #missions × #days. `ds` stores the date of the last
+-- successful run (observable idempotency signal alongside `updated_at`).
 CREATE TABLE IF NOT EXISTS batch_pipeline_metrics (
-    ds               DATE NOT NULL,
     mission_id       TEXT NOT NULL,
     model_version    TEXT NOT NULL,
     code_version     TEXT NOT NULL,
+    ds               DATE NOT NULL,
     rows_total       INTEGER NOT NULL,
     rows_positive    INTEGER NOT NULL,
     rows_corrupted   INTEGER NOT NULL,
@@ -83,7 +85,7 @@ CREATE TABLE IF NOT EXISTS batch_pipeline_metrics (
     gt_available     BOOLEAN NOT NULL,
     validate_passed  BOOLEAN NOT NULL,
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (ds, mission_id, model_version, code_version)
+    PRIMARY KEY (mission_id, model_version, code_version)
 );
 ALTER TABLE batch_pipeline_metrics
     ADD COLUMN IF NOT EXISTS recall DOUBLE PRECISION NOT NULL DEFAULT 0;
@@ -101,6 +103,41 @@ ALTER TABLE batch_pipeline_metrics
     DROP COLUMN IF EXISTS model_uri;
 ALTER TABLE batch_pipeline_metrics
     DROP COLUMN IF EXISTS validation_uri;
+-- Migrate existing deployments from the old (ds, mission, model, code) PK
+-- to the new mission-level PK: keep the latest row per mission (by ds) and
+-- drop the rest before adding the new constraint.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.table_constraints
+        WHERE table_name = 'batch_pipeline_metrics'
+          AND constraint_type = 'PRIMARY KEY'
+          AND constraint_name = 'batch_pipeline_metrics_pkey'
+    ) THEN
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.key_column_usage
+            WHERE constraint_name = 'batch_pipeline_metrics_pkey'
+              AND column_name = 'ds'
+        ) THEN
+            DELETE FROM batch_pipeline_metrics m
+            USING (
+                SELECT mission_id, model_version, code_version, MAX(ds) AS last_ds
+                FROM batch_pipeline_metrics
+                GROUP BY mission_id, model_version, code_version
+            ) latest
+            WHERE m.mission_id   = latest.mission_id
+              AND m.model_version = latest.model_version
+              AND m.code_version = latest.code_version
+              AND m.ds <> latest.last_ds;
+            ALTER TABLE batch_pipeline_metrics
+                DROP CONSTRAINT batch_pipeline_metrics_pkey;
+            ALTER TABLE batch_pipeline_metrics
+                ADD PRIMARY KEY (mission_id, model_version, code_version);
+        END IF;
+    END IF;
+END $$;
 DROP TABLE IF EXISTS batch_mission_runs;
 CREATE INDEX IF NOT EXISTS ix_batch_pipeline_metrics_ds
     ON batch_pipeline_metrics (ds);

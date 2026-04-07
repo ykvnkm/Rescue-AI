@@ -133,9 +133,12 @@ def test_main_data_stage_smoke(monkeypatch, capsys) -> None:
 
     batch_main.main()
 
-    output = json.loads(capsys.readouterr().out.strip())
+    captured = capsys.readouterr().out
+    json_line = captured.strip().splitlines()[-1]
+    output = json.loads(json_line)
     assert output["stage"] == "data"
     assert output["status"] == "completed"
+    assert "[data] status=completed" in captured
     assert calls["mission_id"] == "m"
     assert calls["ds"] == "2026-03-01"
     assert calls["force"] is False

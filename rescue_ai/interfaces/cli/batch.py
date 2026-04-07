@@ -202,6 +202,57 @@ def _mission_has_input_for_ds(
     return False
 
 
+def _mission_manifest_key(batch_prefix: str, ds: str) -> str:
+    """Return the S3 key for the cached per-ds mission discovery manifest."""
+    prefix = batch_prefix.strip("/")
+    root = f"ml_pipeline/ds={ds}/missions.json"
+    return f"{prefix}/{root}" if prefix else root
+
+
+def _resolve_mission_ids(
+    args: argparse.Namespace,
+    *,
+    store: S3StageStore,
+    batch_prefix: str,
+) -> list[str]:
+    """Return the list of missions to process for this DAG run.
+
+    Discovery is expensive (paginated ``list_objects_v2`` + 2 HEAD per
+    candidate), so we cache the result in a small JSON manifest keyed by
+    ``ds``. The first stage of the DAG (``data``) writes the manifest; every
+    downstream stage (``train``/``validate``/``publish``) reads it with a
+    single ``get_object``. This also pins the mission set for the whole run
+    — if new missions appear in S3 mid-run, they are deferred to the next
+    ``ds`` instead of racing between stages.
+    """
+    manifest_key = _mission_manifest_key(batch_prefix, args.ds)
+    stage = args.stage
+    force_refresh = stage == "data" and args.force
+
+    if store.exists(manifest_key) and not force_refresh:
+        cached = store.read_json(manifest_key)
+        ids_raw = cached.get("mission_ids") or []
+        if isinstance(ids_raw, list):
+            return [str(item) for item in ids_raw if isinstance(item, str)]
+
+    if stage != "data":
+        raise RuntimeError(
+            f"mission manifest is missing: {store.uri(manifest_key)}. "
+            "Run the `data` stage first so discovery is pinned for this ds."
+        )
+
+    discovered = _discover_missions_for_ds(args.ds)
+    store.write_json(
+        manifest_key,
+        {
+            "ds": args.ds,
+            "mission_ids": discovered,
+            "count": len(discovered),
+        },
+    )
+    return discovered
+
+
 def _discover_missions_for_ds(ds: str) -> list[str]:
     settings = get_settings()
     s3_settings = _build_s3_settings()
@@ -365,7 +416,9 @@ def main() -> None:
         else DEFAULT_BATCH_OUTPUT_SUFFIX
     )
     mission_ids = (
-        [args.mission_id] if args.mission_id else _discover_missions_for_ds(args.ds)
+        [args.mission_id]
+        if args.mission_id
+        else _resolve_mission_ids(args, store=store, batch_prefix=batch_prefix)
     )
     mission_ids_csv = args.mission_ids_csv.strip()
     if mission_ids_csv:

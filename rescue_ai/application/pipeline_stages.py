@@ -75,13 +75,6 @@ class PipelinePaths:
         cv = _slug(self.code_version)
         return f"{self.base}/validation_{mv}_{cv}.json"
 
-    @property
-    def inference_key(self) -> str:
-        """Return the storage key for the inference results."""
-        mv = _slug(self.model_version)
-        cv = _slug(self.code_version)
-        return f"{self.base}/inference_{mv}_{cv}.json"
-
 
 @dataclass
 class ValidationCounts:
@@ -240,6 +233,25 @@ def run_train_stage(
 # ── Stage 3: validation (quality gate) ─────────────────────────
 
 
+def _metrics_from_validation(payload: dict[str, object]) -> dict[str, object]:
+    """Pick metric fields out of a validation artifact for log-friendly output."""
+    return {
+        field: payload.get(field)
+        for field in (
+            "samples_total",
+            "tp",
+            "tn",
+            "fp",
+            "fn",
+            "detector_errors",
+            "accuracy",
+            "recall",
+            "gt_available",
+            "passed",
+        )
+    }
+
+
 def run_validate_stage(
     store: StageStorage,
     paths: PipelinePaths,
@@ -302,67 +314,12 @@ def run_validate_stage(
         raise RuntimeError(
             f"validation smoke-test failed: detector_errors={counts.detector_errors}"
         )
-    return _done("validate", store.uri(paths.validation_key))
+    result = _done("validate", store.uri(paths.validation_key))
+    result["metrics"] = _metrics_from_validation(payload)
+    return result
 
 
-# ── Stage 4: batch inference ────────────────────────────────────
-
-
-def run_inference_stage(
-    store: StageStorage,
-    paths: PipelinePaths,
-    *,
-    force: bool = False,
-    runner_factory=None,
-) -> dict[str, object]:
-    """Run batch inference using MissionBatchRunner, gate on validation.
-
-    Parameters
-    ----------
-    runner_factory:
-        Callable ``() -> (MissionBatchRunner, BatchRunRequest)`` injected by
-        the CLI layer so this module stays free of infrastructure imports.
-    """
-    if not store.exists(paths.validation_key):
-        raise RuntimeError(
-            f"validation artifact is missing: {store.uri(paths.validation_key)}"
-        )
-    if not store.read_json(paths.validation_key).get("passed"):
-        raise RuntimeError(
-            "validation did not pass — inference blocked "
-            f"(accuracy={store.read_json(paths.validation_key).get('accuracy')})"
-        )
-
-    if store.exists(paths.inference_key) and not force:
-        return _skip("inference", store.uri(paths.inference_key))
-
-    if runner_factory is None:
-        raise RuntimeError("runner_factory is required for inference stage")
-
-    runner, request = runner_factory()
-    run_key, status, report_uri, debug_uri, db_unavailable = _run_inference_with_guard(
-        runner=runner,
-        request=request,
-    )
-
-    payload: dict[str, object] = {
-        "stage": "inference",
-        "created_at": _now_iso(),
-        "mission_id": paths.mission_id,
-        "ds": paths.ds,
-        "model_version": paths.model_version,
-        "code_version": paths.code_version,
-        "run_key": run_key,
-        "status": status,
-        "report_uri": report_uri,
-        "debug_uri": debug_uri,
-        "db_unavailable": db_unavailable,
-    }
-    store.write_json(paths.inference_key, payload)
-    return _done("inference", store.uri(paths.inference_key))
-
-
-# ── Stage 5: publish summary metrics to Postgres ───────────────
+# ── Stage 4: publish summary metrics to Postgres ───────────────
 
 
 class BatchMetricsWriter(Protocol):
@@ -384,7 +341,8 @@ def run_publish_stage(
     This stage is the only place where the batch pipeline writes into the
     application Postgres. It is always safe to re-run — the underlying
     repository uses ``ON CONFLICT ... DO UPDATE`` keyed on
-    ``(ds, mission_id, model_version, code_version)``.
+    ``(mission_id, model_version, code_version)``, so re-running the DAG
+    for the same mission on a new ``ds`` updates the existing row in place.
     """
     for required_key, label in (
         (paths.data_key, "dataset"),
@@ -415,6 +373,14 @@ def run_publish_stage(
         "status": "completed",
         "ds": paths.ds,
         "mission_id": paths.mission_id,
+        "metrics": _metrics_from_validation(validation)
+        | {
+            "rows_total": dataset.get("rows_total"),
+            "rows_positive": dataset.get("rows_positive"),
+            "rows_corrupted": dataset.get("rows_corrupted"),
+            "train_count": dataset.get("train_count"),
+            "val_count": dataset.get("val_count"),
+        },
     }
 
 
@@ -427,37 +393,6 @@ def _skip(stage: str, uri: str) -> dict[str, object]:
 
 def _done(stage: str, uri: str) -> dict[str, object]:
     return {"stage": stage, "status": "completed", "output_uri": uri}
-
-
-def _run_inference_with_guard(
-    *,
-    runner,
-    request,
-) -> tuple[str, str, str | None, str | None, bool]:
-    try:
-        result = runner.run(request)
-        return (
-            result.run_key,
-            result.status,
-            result.report_uri,
-            result.debug_uri,
-            False,
-        )
-    except (ConnectionError, TimeoutError, OSError, RuntimeError) as exc:
-        if _is_db_unavailable_error(exc):
-            print(
-                f"[WARN] DB unavailable during inference ({exc});"
-                " writing placeholder result"
-            )
-            return (request.run_key, "completed_no_db", None, None, True)
-        raise
-
-
-def _is_db_unavailable_error(exc: Exception) -> bool:
-    exc_text = str(exc).lower()
-    return any(
-        keyword in exc_text for keyword in ("timeout", "connection", "operational")
-    )
 
 
 def _slug(value: str) -> str:
@@ -545,5 +480,24 @@ def _evaluate_validation_manifest(
 
 
 def print_result(result: dict[str, object]) -> None:
-    """Print stage result as JSON to stdout (used by CLI layer)."""
-    print(json.dumps(result, ensure_ascii=False))
+    """Print stage result to stdout in a log-friendly form.
+
+    Metrics (if present) are printed as a readable key=value block so they
+    land in Airflow task logs as actual numbers, not just an S3 URI pointing
+    at a report JSON that nobody opens during a live defense.
+    """
+    stage = result.get("stage", "?")
+    status = result.get("status", "?")
+    header_parts = [f"[{stage}] status={status}"]
+    if "output_uri" in result:
+        header_parts.append(f"uri={result['output_uri']}")
+    if "mission_id" in result:
+        header_parts.append(f"mission={result['mission_id']}")
+    if "ds" in result:
+        header_parts.append(f"ds={result['ds']}")
+    print(" ".join(header_parts))
+    metrics = result.get("metrics")
+    if isinstance(metrics, dict) and metrics:
+        for key, value in metrics.items():
+            print(f"    {key}={value}")
+    print(json.dumps(result, ensure_ascii=False, default=str))
