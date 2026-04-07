@@ -26,7 +26,7 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 ## Важно
 
 - В `platform.env.example` нет дефолтных секретов. Перед запуском заполните DSN и S3 ключи.
-- `infra/postgres/init/010-app-schema.sql` — единый SQL со схемой продуктовых таблиц (`missions`, `alerts`, `frame_events`, `episodes`, `batch_mission_runs`) в schema `app`.
+- `infra/postgres/init/010-app-schema.sql` — единый SQL со схемой продуктовых таблиц (`missions`, `alerts`, `frame_events`, `episodes`, `batch_pipeline_metrics`) в schema `app`.
 - Airflow metadata хранится в schema `airflow` (через `AIRFLOW__DATABASE__SQL_ALCHEMY_SCHEMA=airflow`).
 - Основной DAG batch-контура: `infra/airflow/dags/rescue_batch_daily.py`.
 
@@ -36,12 +36,12 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 
 `rescue_batch_daily`:
 
-- Запускается ежедневно (`@daily`) с `catchup=True`.
+- Запускается ежедневно (`@daily`) с `catchup=False`.
 - На старте выполняет auto-discovery миссий в S3 для текущей `ds`.
-- Для каждой найденной миссии оркестрирует 5 шагов в `DockerOperator`: `data -> train -> validate -> inference -> publish` (последний upsert'ит сводные метрики в `batch_pipeline_metrics`).
+- Для каждой найденной миссии оркестрирует 4 шага в `DockerOperator`: `data -> train -> validate -> publish` (последний upsert'ит сводные метрики в `batch_pipeline_metrics`).
 - Передача между тасками идет через S3: каждый шаг пишет артефакт в S3, следующий читает по детерминированному ключу.
 - Идемпотентность по каждому шагу: при повторном запуске на ту же `ds` шаг возвращает `idempotent_skip`, если артефакт уже существует.
-- Для демонстрации backfill оставлен `catchup=True` и CLI-команда `airflow dags backfill`.
+- Backfill выполняется вручную через `airflow dags backfill` при необходимости.
 
 Канонический контракт stage-runner (`rescue_ai/interfaces/cli/batch.py`):
 

@@ -124,6 +124,10 @@ class ArtifactStorage(Protocol):
         self, mission_id: str, report: Mapping[str, object]
     ) -> str: ...
 
+    def save_mission_annotations(
+        self, mission_id: str, payload: Mapping[str, object]
+    ) -> str: ...
+
     def load_mission_report(self, mission_id: str) -> Mapping[str, object] | None: ...
 
 

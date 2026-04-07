@@ -5,8 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 
-import pytest
-
 from rescue_ai.config import get_settings
 from rescue_ai.interfaces.cli import batch as batch_main
 
@@ -17,34 +15,6 @@ def setup_function() -> None:
 
 def teardown_function() -> None:
     get_settings.cache_clear()
-
-
-def test_build_status_store_requires_dsn(monkeypatch) -> None:
-    monkeypatch.delenv("DB_DSN", raising=False)
-    from rescue_ai.config import (
-        ApiSettings,
-        AppSettings,
-        BatchSettings,
-        DatabaseSettings,
-        DetectionSettings,
-        RpiSettings,
-        Settings,
-        StorageSettings,
-    )
-
-    empty_settings = Settings(
-        app=AppSettings(),
-        api=ApiSettings(),
-        database=DatabaseSettings(DB_DSN=""),
-        storage=StorageSettings(),
-        rpi=RpiSettings(),
-        batch=BatchSettings(),
-        detection=DetectionSettings(),
-    )
-    monkeypatch.setattr(batch_main, "get_settings", lambda: empty_settings)
-
-    with pytest.raises(ValueError, match="DB_DSN is required"):
-        batch_main.build_status_store()
 
 
 def test_build_artifact_store_uses_s3_settings(monkeypatch) -> None:

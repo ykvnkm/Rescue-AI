@@ -158,6 +158,20 @@ class RpiClient:
         timeout_sec: float = 15.0,
     ) -> list[bool] | None:
         """Load per-frame GT person presence sequence from mission COCO annotations."""
+        payload = self.load_annotations_payload(
+            mission_id,
+            timeout_sec=timeout_sec,
+        )
+        if not isinstance(payload, dict):
+            return None
+        return _build_gt_sequence_from_coco(payload)
+
+    def load_annotations_payload(
+        self,
+        mission_id: str,
+        timeout_sec: float = 15.0,
+    ) -> dict[str, object] | None:
+        """Load raw COCO annotations JSON for a mission."""
         catalog = self.catalog(timeout_sec=timeout_sec)
         mission = next(
             (item for item in catalog.missions if item.mission_id == mission_id),
@@ -173,9 +187,7 @@ class RpiClient:
         )
         response.raise_for_status()
         payload = response.json()
-        if not isinstance(payload, dict):
-            return None
-        return _build_gt_sequence_from_coco(payload)
+        return payload if isinstance(payload, dict) else None
 
     @property
     def base_url(self) -> str:

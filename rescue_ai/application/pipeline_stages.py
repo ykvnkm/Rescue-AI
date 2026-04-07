@@ -6,7 +6,7 @@ unless ``force=True``.  Stages communicate through ``StageStorage``
 builder so that every artifact URI is deterministic.
 
 Stage flow:
-    data  →  train  →  validate  →  inference
+    data  →  train  →  validate  →  publish
 """
 
 from __future__ import annotations
@@ -114,6 +114,13 @@ class ValidationCounts:
         if self.total <= 0:
             raise RuntimeError("validation has no processable samples")
         return round((self.tp + self.tn) / self.total, 4)
+
+    @property
+    def recall(self) -> float:
+        positives = self.tp + self.fn
+        if positives <= 0:
+            return 1.0
+        return round(self.tp / positives, 4)
 
 
 # ── Stage 1: data preparation ──────────────────────────────────
@@ -268,6 +275,7 @@ def run_validate_stage(
         detector_predict=detector_predict,
     )
     accuracy = counts.accuracy if counts.total > 0 else 1.0
+    recall = counts.recall
     passed = counts.detector_errors == 0
 
     payload: dict[str, object] = {
@@ -284,6 +292,7 @@ def run_validate_stage(
         "fn": counts.fn,
         "detector_errors": counts.detector_errors,
         "accuracy": accuracy,
+        "recall": recall,
         "gt_available": gt_available,
         "passed": passed,
     }
@@ -370,7 +379,7 @@ def run_publish_stage(
     metrics_writer,
     record_factory,
 ) -> dict[str, object]:
-    """Read the four stage artifacts and upsert a summary row.
+    """Read stage artifacts and upsert a summary row.
 
     This stage is the only place where the batch pipeline writes into the
     application Postgres. It is always safe to re-run — the underlying
@@ -381,7 +390,6 @@ def run_publish_stage(
         (paths.data_key, "dataset"),
         (paths.model_key, "model"),
         (paths.validation_key, "validation"),
-        (paths.inference_key, "inference"),
     ):
         if not store.exists(required_key):
             raise RuntimeError(
@@ -390,18 +398,15 @@ def run_publish_stage(
 
     dataset = store.read_json(paths.data_key)
     validation = store.read_json(paths.validation_key)
-    inference = store.read_json(paths.inference_key)
 
     record = record_factory(
         paths=paths,
         dataset=dataset,
         validation=validation,
-        inference=inference,
         artifact_uris={
             "dataset_uri": store.uri(paths.data_key),
             "model_uri": store.uri(paths.model_key),
             "validation_uri": store.uri(paths.validation_key),
-            "inference_uri": store.uri(paths.inference_key),
         },
     )
     metrics_writer.upsert(record)

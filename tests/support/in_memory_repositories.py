@@ -163,6 +163,14 @@ class InMemoryArtifactStorage:
         payload = self._reports.get(mission_id)
         return dict(payload) if payload is not None else None
 
+    def save_mission_annotations(
+        self,
+        mission_id: str,
+        payload: Mapping[str, object],
+    ) -> str:
+        self._reports[f"{mission_id}:annotations"] = dict(payload)
+        return f"memory://missions/{mission_id}/annotations/mission.json"
+
     def write_report(self, run_key: str, payload: dict[str, object]) -> str:
         self._reports[run_key] = dict(payload)
         return f"memory://batch/{run_key}/report.json"

@@ -58,15 +58,6 @@ CREATE TABLE IF NOT EXISTS episodes (
 CREATE INDEX IF NOT EXISTS ix_episodes_mission_found
     ON episodes (mission_id, found_by_alert);
 
-CREATE TABLE IF NOT EXISTS batch_mission_runs (
-    run_key TEXT PRIMARY KEY,
-    status TEXT NOT NULL,
-    reason TEXT NULL,
-    report_uri TEXT NULL,
-    debug_uri TEXT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 -- Summary metrics for each (ds, mission, model, code) run of the batch ML pipeline.
 -- Written at the end of the pipeline by the `publish` stage; one row per
 -- (ds, mission_id, model_version, code_version). Re-runs upsert via ON CONFLICT
@@ -88,16 +79,28 @@ CREATE TABLE IF NOT EXISTS batch_pipeline_metrics (
     fn               INTEGER NOT NULL,
     detector_errors  INTEGER NOT NULL,
     accuracy         DOUBLE PRECISION NOT NULL,
+    recall           DOUBLE PRECISION NOT NULL DEFAULT 0,
     gt_available     BOOLEAN NOT NULL,
     validate_passed  BOOLEAN NOT NULL,
-    inference_status TEXT NOT NULL,
-    inference_run_key TEXT NOT NULL,
-    dataset_uri      TEXT NOT NULL,
-    model_uri        TEXT NOT NULL,
-    validation_uri   TEXT NOT NULL,
-    inference_uri    TEXT NOT NULL,
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (ds, mission_id, model_version, code_version)
 );
+ALTER TABLE batch_pipeline_metrics
+    ADD COLUMN IF NOT EXISTS recall DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE batch_pipeline_metrics
+    DROP COLUMN IF EXISTS inference_status;
+ALTER TABLE batch_pipeline_metrics
+    DROP COLUMN IF EXISTS inference_run_key;
+ALTER TABLE batch_pipeline_metrics
+    DROP COLUMN IF EXISTS inference_uri;
+ALTER TABLE batch_pipeline_metrics
+    DROP COLUMN IF EXISTS validation_report_json;
+ALTER TABLE batch_pipeline_metrics
+    DROP COLUMN IF EXISTS dataset_uri;
+ALTER TABLE batch_pipeline_metrics
+    DROP COLUMN IF EXISTS model_uri;
+ALTER TABLE batch_pipeline_metrics
+    DROP COLUMN IF EXISTS validation_uri;
+DROP TABLE IF EXISTS batch_mission_runs;
 CREATE INDEX IF NOT EXISTS ix_batch_pipeline_metrics_ds
     ON batch_pipeline_metrics (ds);

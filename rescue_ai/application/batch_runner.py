@@ -94,7 +94,34 @@ class MissionBatchRunner:
         try:
             result = self._run_internal(request)
             return result
-        except (RuntimeError, ValueError, OSError, TypeError, KeyError) as exc:
+        except ValueError as exc:
+            if _is_mission_already_completed_error(exc):
+                self._statuses.upsert(
+                    RunStatusRecord(
+                        run_key=request.run_key,
+                        status="completed",
+                        reason="mission_already_completed",
+                    )
+                )
+                return BatchRunResult(
+                    run_key=request.run_key,
+                    status="completed",
+                    report_uri=None,
+                    debug_uri=None,
+                    report={
+                        "idempotent_skip": True,
+                        "reason": "mission_already_completed",
+                    },
+                )
+            self._statuses.upsert(
+                RunStatusRecord(
+                    run_key=request.run_key,
+                    status="failed",
+                    reason=str(exc),
+                )
+            )
+            raise
+        except (RuntimeError, OSError, TypeError, KeyError) as exc:
             self._statuses.upsert(
                 RunStatusRecord(
                     run_key=request.run_key,
@@ -365,6 +392,10 @@ def _resolve_fps(frames: list[FrameRecord]) -> float:
 def should_skip(existing: RunStatusRecord | None, force: bool) -> bool:
     """Check whether a run should be skipped (already completed)."""
     return existing is not None and existing.status == "completed" and not force
+
+
+def _is_mission_already_completed_error(exc: ValueError) -> bool:
+    return "Mission already completed" in str(exc)
 
 
 def _enrich_report(
