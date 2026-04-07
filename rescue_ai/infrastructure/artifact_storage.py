@@ -37,6 +37,7 @@ class S3ArtifactBackendSettings:
     access_key_id: str | None = None
     secret_access_key: str | None = None
     bucket: str | None = None
+    prefix: str | None = None
 
     @property
     def ready(self) -> bool:
@@ -65,6 +66,7 @@ def build_s3_storage(settings: StorageSettings) -> S3ArtifactStorage:
         access_key_id=settings.s3_access_key_id,
         secret_access_key=settings.s3_secret_access_key,
         bucket=settings.s3_bucket,
+        prefix=settings.s3_prefix,
     )
     return S3ArtifactStorage(settings=backend_settings)
 
@@ -93,8 +95,12 @@ class S3ArtifactStorage:
         if source_path is None or not source_path.exists() or not source_path.is_file():
             return source_uri
 
-        suffix = source_path.suffix.lower() or ".bin"
-        key = f"missions/{mission_id}/frames/{frame_id}{suffix}"
+        _ = frame_id
+        filename = source_path.name or "frame.bin"
+        key = self._key_for_mission_file(
+            mission_id=mission_id,
+            leaf=f"frames/{filename}",
+        )
         s3_uri = f"s3://{self._settings.bucket}/{key}"
 
         with self._lock:
@@ -188,7 +194,7 @@ class S3ArtifactStorage:
     def write_report(self, run_key: str, payload: dict[str, object]) -> str:
         """Write a batch run report to S3."""
         safe_key = run_key.replace(":", "__")
-        key = f"{safe_key}/report.json"
+        key = self._batch_report_key(safe_key)
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         self._client.put_object(Bucket=self._settings.bucket, Key=key, Body=body)
         return f"s3://{self._settings.bucket}/{key}"
@@ -196,7 +202,7 @@ class S3ArtifactStorage:
     def write_debug_rows(self, run_key: str, rows: list[dict[str, object]]) -> str:
         """Write batch debug rows as CSV to S3."""
         safe_key = run_key.replace(":", "__")
-        key = f"{safe_key}/debug.csv"
+        key = self._batch_debug_key(safe_key)
         headers = sorted({item for row in rows for item in row.keys()}) if rows else []
         buffer = StringIO()
         writer = csv.DictWriter(buffer, fieldnames=headers)
@@ -211,10 +217,38 @@ class S3ArtifactStorage:
         return f"s3://{self._settings.bucket}/{key}"
 
     def _report_key(self, mission_id: str) -> str:
-        return f"missions/{mission_id}/report.json"
+        return self._key_for_mission_file(mission_id=mission_id, leaf="report.json")
 
     def _annotations_key(self, mission_id: str) -> str:
-        return f"missions/{mission_id}/annotations/mission.json"
+        return self._key_for_mission_file(
+            mission_id=mission_id,
+            leaf="annotations/mission.json",
+        )
+
+    def _batch_report_key(self, safe_run_key: str) -> str:
+        return self._join(
+            self._settings.prefix or "",
+            "batch",
+            "runs",
+            safe_run_key,
+            "report.json",
+        )
+
+    def _batch_debug_key(self, safe_run_key: str) -> str:
+        return self._join(
+            self._settings.prefix or "",
+            "batch",
+            "runs",
+            safe_run_key,
+            "debug.csv",
+        )
+
+    def _key_for_mission_file(self, *, mission_id: str, leaf: str) -> str:
+        return self._join(self._settings.prefix or "", mission_id, leaf)
+
+    @staticmethod
+    def _join(*parts: str) -> str:
+        return "/".join(part.strip("/") for part in parts if part.strip("/"))
 
     def _upload_frame(self, key: str, payload: bytes, content_type: str) -> None:
         try:

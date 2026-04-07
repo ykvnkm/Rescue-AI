@@ -145,6 +145,7 @@ def _build_s3_settings() -> S3ArtifactBackendSettings:
         access_key_id=settings.storage.s3_access_key_id,
         secret_access_key=settings.storage.s3_secret_access_key,
         bucket=settings.storage.s3_bucket,
+        prefix=settings.storage.s3_prefix,
     )
 
 

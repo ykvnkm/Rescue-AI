@@ -2,6 +2,8 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
+from urllib.parse import urlparse
 
 from rescue_ai.domain.entities import Alert, FrameEvent, Mission
 from rescue_ai.domain.ports import AlertReviewPayload
@@ -141,8 +143,11 @@ class InMemoryArtifactStorage:
     _reports: dict[str, dict[str, object]] = field(default_factory=dict)
 
     def store_frame(self, mission_id: str, frame_id: int, source_uri: str) -> str:
-        _ = source_uri
-        uri = f"memory://missions/{mission_id}/frames/{frame_id}.jpg"
+        parsed = urlparse(source_uri)
+        filename = Path(parsed.path).name if parsed.scheme == "file" else ""
+        if not filename:
+            filename = Path(source_uri).name or f"{frame_id}.jpg"
+        uri = f"memory://missions/{mission_id}/frames/{filename}"
         self.stored_frames[(mission_id, frame_id)] = uri
         return uri
 

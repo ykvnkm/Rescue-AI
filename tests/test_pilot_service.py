@@ -78,7 +78,7 @@ def test_ingest_frame_event_persists_stored_image_uri_for_frame_and_alert() -> N
         ],
     )
 
-    expected_uri = f"memory://missions/{mission.mission_id}/frames/1.jpg"
+    expected_uri = f"memory://missions/{mission.mission_id}/frames/frame.jpg"
     assert len(alerts) == 1
     assert alerts[0].image_uri == expected_uri
     assert db.mission_frames[mission.mission_id][0].image_uri == expected_uri
