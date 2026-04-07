@@ -221,7 +221,7 @@ with DAG(
     description="Rescue-AI daily batch: data → train → validate → publish",
     start_date=datetime(2026, 3, 1),
     schedule="@daily",
-    catchup=False,
+    catchup=True,
     max_active_runs=1,
     default_args={
         "retries": 1,
