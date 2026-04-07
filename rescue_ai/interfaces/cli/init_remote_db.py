@@ -3,8 +3,8 @@
 Usage:
     python -m rescue_ai.interfaces.cli.init_remote_db
 
-Reads DB_DSN from env / .env and executes
-infra/postgres/init/010-app-schema.sql against it.
+Reads DB_DSN from env / .env and executes all SQL files from
+infra/postgres/init in lexicographical order.
 """
 
 from __future__ import annotations
@@ -19,13 +19,7 @@ from rescue_ai.infrastructure.postgres_connection import (
     _ensure_compat_dsn,
 )
 
-_SQL_FILE = (
-    Path(__file__).resolve().parents[3]
-    / "infra"
-    / "postgres"
-    / "init"
-    / "010-app-schema.sql"
-)
+_SQL_DIR = Path(__file__).resolve().parents[3] / "infra" / "postgres" / "init"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,12 +28,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _iter_sql_statements(sql: str) -> list[str]:
-    """Split SQL script into statements, ignoring inline ``--`` comments."""
-    uncommented = "\n".join(raw_line.split("--", 1)[0] for raw_line in sql.splitlines())
-    return [
-        statement.strip() for statement in uncommented.split(";") if statement.strip()
-    ]
+def _iter_sql_files() -> list[Path]:
+    """Return migration SQL files sorted by filename."""
+    return sorted(path for path in _SQL_DIR.glob("*.sql") if path.is_file())
 
 
 def main() -> None:
@@ -50,7 +41,9 @@ def main() -> None:
             "DB_DSN is required. Set it in .env or as an environment variable."
         )
     psycopg = importlib.import_module("psycopg")
-    sql = _SQL_FILE.read_text(encoding="utf-8")
+    sql_files = _iter_sql_files()
+    if not sql_files:
+        raise RuntimeError(f"No SQL migration files found in {_SQL_DIR}")
 
     logger.info("Connecting to remote Postgres...")
     with psycopg.connect(
@@ -60,8 +53,9 @@ def main() -> None:
         with conn.cursor() as cur:
             cur.execute("CREATE SCHEMA IF NOT EXISTS app")
             cur.execute("SET search_path TO app")
-            for statement in _iter_sql_statements(sql):
-                cur.execute(statement)
+            for sql_file in sql_files:
+                logger.info("Applying migration: %s", sql_file.name)
+                cur.execute(sql_file.read_text(encoding="utf-8"))
         conn.commit()
 
     logger.info("Remote schema initialized successfully ✓")
