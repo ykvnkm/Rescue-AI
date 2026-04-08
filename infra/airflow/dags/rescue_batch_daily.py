@@ -70,13 +70,14 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
+from typing import Any
+
 from airflow import DAG
 from airflow.hooks.base import BaseHook
 from airflow.models.param import Param
 from airflow.providers.docker.operators.docker import DockerOperator
 from docker.types import Mount
 from pendulum import datetime
-
 
 # ── Constants ────────────────────────────────────────────────────
 
@@ -172,7 +173,7 @@ with DAG(
 ) as dag:
     # -- Shared DockerOperator defaults ------------------------------
 
-    _docker_defaults: dict[str, object] = {
+    _docker_defaults: dict[str, Any] = {
         "image": BATCH_IMAGE,
         "docker_url": "unix://var/run/docker.sock",
         "api_version": "auto",
