@@ -195,6 +195,7 @@ def _mission_has_input_for_ds(
     roots = [
         _join_s3(base_prefix, mission_id, ds),
         _join_s3(base_prefix, f"mission={mission_id}", f"ds={ds}"),
+        _join_s3(base_prefix, mission_id),
     ]
     for root in roots:
         for subdir in ("frames", "images"):

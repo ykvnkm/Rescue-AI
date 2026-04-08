@@ -141,7 +141,7 @@ def _build_stage_command(stage: str) -> list[str]:
 with DAG(
     dag_id=DAG_ID,
     description="Rescue-AI daily batch: data → warmup → evaluate → publish",
-    start_date=datetime(2026, 4, 1),
+    start_date=datetime(2026, 4, 6),
     schedule="@daily",
     catchup=True,
     max_active_runs=1,
