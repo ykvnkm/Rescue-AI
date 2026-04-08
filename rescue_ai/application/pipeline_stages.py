@@ -145,13 +145,24 @@ def run_data_stage(
     mission_loader=None,
 ) -> dict[str, object]:
     """Build dataset manifest from real mission frames."""
-    if store.exists(paths.data_key) and not force:
-        return _skip("data", store.uri(paths.data_key))
-
     if mission_loader is None:
         raise RuntimeError("mission_loader is required for data stage")
 
     mission_input = mission_loader()
+    source_fingerprint = _mission_source_fingerprint(mission_input)
+    dataset_changed = False
+    if store.exists(paths.data_key) and not force:
+        existing_dataset = store.read_json(paths.data_key)
+        existing_fingerprint = _dataset_source_fingerprint(existing_dataset)
+        if existing_fingerprint == source_fingerprint:
+            return _skip(
+                "data",
+                store.uri(paths.data_key),
+                reason="source_unchanged",
+                source_fingerprint=source_fingerprint,
+            )
+        dataset_changed = True
+
     valid_frames = [frame for frame in mission_input.frames if not frame.is_corrupted]
     corrupted_count = len(mission_input.frames) - len(valid_frames)
     if not valid_frames:
@@ -165,6 +176,7 @@ def run_data_stage(
         "mission_id": paths.mission_id,
         "ds": paths.ds,
         "source_uri": mission_input.source_uri,
+        "source_fingerprint": source_fingerprint,
         "gt_available": mission_input.gt_available,
         "rows_total": len(valid_frames),
         "rows_positive": positives,
@@ -182,7 +194,10 @@ def run_data_stage(
         ).hexdigest()[:16],
     }
     store.write_json(paths.data_key, payload)
-    return _done("data", store.uri(paths.data_key))
+    result = _done("data", store.uri(paths.data_key))
+    result["source_fingerprint"] = source_fingerprint
+    result["recomputed_due_to_source_change"] = dataset_changed
+    return result
 
 
 # ── Stage 2: warmup (load deployed model + probe) ──────────────
@@ -203,10 +218,21 @@ def run_warmup_stage(
     """
     if not store.exists(paths.data_key):
         raise RuntimeError(f"dataset is missing: {store.uri(paths.data_key)}")
-    if store.exists(paths.model_key) and not force:
-        return _skip("warmup", store.uri(paths.model_key))
 
     dataset = store.read_json(paths.data_key)
+    source_fingerprint = _dataset_source_fingerprint(dataset)
+    model_changed = False
+    if store.exists(paths.model_key) and not force:
+        existing_model = store.read_json(paths.model_key)
+        if existing_model.get("source_fingerprint") == source_fingerprint:
+            return _skip(
+                "warmup",
+                store.uri(paths.model_key),
+                reason="source_unchanged",
+                source_fingerprint=source_fingerprint,
+            )
+        model_changed = True
+
     rows_total = _as_int(dataset.get("rows_total"), field_name="rows_total")
     rows_positive = _as_int(dataset.get("rows_positive"), field_name="rows_positive")
     if rows_total <= 0:
@@ -224,6 +250,7 @@ def run_warmup_stage(
         "created_at": _now_iso(),
         "mission_id": paths.mission_id,
         "ds": paths.ds,
+        "source_fingerprint": source_fingerprint,
         "model_version": paths.model_version,
         "code_version": paths.code_version,
         "dataset_uri": store.uri(paths.data_key),
@@ -239,7 +266,10 @@ def run_warmup_stage(
         ).hexdigest()[:16],
     }
     store.write_json(paths.model_key, payload)
-    return _done("warmup", store.uri(paths.model_key))
+    result = _done("warmup", store.uri(paths.model_key))
+    result["source_fingerprint"] = source_fingerprint
+    result["recomputed_due_to_source_change"] = model_changed
+    return result
 
 
 # ── Stage 3: evaluate deployed detector on mission manifest ─────
@@ -281,13 +311,24 @@ def run_evaluate_stage(
     threshold. The only hard failure condition is a detector crash on a
     frame (captured in ``detector_errors``).
     """
-    if store.exists(paths.evaluation_key) and not force:
-        return _skip("evaluate", store.uri(paths.evaluation_key))
     _require_evaluation_prerequisites(store, paths)
     if detector_predict is None:
         raise RuntimeError("detector_predict is required for evaluate stage")
 
     dataset = store.read_json(paths.data_key)
+    source_fingerprint = _dataset_source_fingerprint(dataset)
+    evaluation_changed = False
+    if store.exists(paths.evaluation_key) and not force:
+        existing_evaluation = store.read_json(paths.evaluation_key)
+        if existing_evaluation.get("source_fingerprint") == source_fingerprint:
+            return _skip(
+                "evaluate",
+                store.uri(paths.evaluation_key),
+                reason="source_unchanged",
+                source_fingerprint=source_fingerprint,
+            )
+        evaluation_changed = True
+
     _ensure_dataset_has_rows(dataset)
     gt_available = bool(dataset.get("gt_available", True))
     evaluation_manifest = _parse_evaluation_manifest(dataset)
@@ -295,16 +336,13 @@ def run_evaluate_stage(
         evaluation_manifest=evaluation_manifest,
         detector_predict=detector_predict,
     )
-    accuracy = counts.accuracy if counts.total > 0 else 1.0
-    precision = counts.precision
-    recall = counts.recall
-    passed = counts.detector_errors == 0
 
     payload: dict[str, object] = {
         "stage": "evaluate",
         "created_at": _now_iso(),
         "mission_id": paths.mission_id,
         "ds": paths.ds,
+        "source_fingerprint": source_fingerprint,
         "dataset_uri": store.uri(paths.data_key),
         "model_uri": store.uri(paths.model_key),
         "tp": counts.tp,
@@ -312,19 +350,21 @@ def run_evaluate_stage(
         "fp": counts.fp,
         "fn": counts.fn,
         "detector_errors": counts.detector_errors,
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
+        "accuracy": counts.accuracy if counts.total > 0 else 1.0,
+        "precision": counts.precision,
+        "recall": counts.recall,
         "gt_available": gt_available,
-        "passed": passed,
+        "passed": counts.detector_errors == 0,
     }
     store.write_json(paths.evaluation_key, payload)
 
-    if not passed:
+    if counts.detector_errors > 0:
         raise RuntimeError(
             f"evaluation failed: detector_errors={counts.detector_errors}"
         )
     result = _done("evaluate", store.uri(paths.evaluation_key))
+    result["source_fingerprint"] = source_fingerprint
+    result["recomputed_due_to_source_change"] = evaluation_changed
     result["metrics"] = _metrics_from_evaluation(payload)
     return result
 
@@ -397,12 +437,53 @@ def run_publish_stage(
 # ── Helpers ─────────────────────────────────────────────────────
 
 
-def _skip(stage: str, uri: str) -> dict[str, object]:
-    return {"stage": stage, "status": "idempotent_skip", "output_uri": uri}
+def _skip(
+    stage: str,
+    uri: str,
+    *,
+    reason: str | None = None,
+    source_fingerprint: str | None = None,
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "stage": stage,
+        "status": "idempotent_skip",
+        "output_uri": uri,
+    }
+    if reason:
+        result["skip_reason"] = reason
+    if source_fingerprint:
+        result["source_fingerprint"] = source_fingerprint
+    return result
 
 
 def _done(stage: str, uri: str) -> dict[str, object]:
     return {"stage": stage, "status": "completed", "output_uri": uri}
+
+
+def _mission_source_fingerprint(mission_input: object) -> str:
+    frames_raw = getattr(mission_input, "frames", [])
+    records: list[tuple[int, str, bool, bool]] = []
+    for frame in frames_raw:
+        frame_id = int(getattr(frame, "frame_id", 0))
+        image_uri = str(getattr(frame, "image_uri", ""))
+        gt_person_present = bool(getattr(frame, "gt_person_present", False))
+        is_corrupted = bool(getattr(frame, "is_corrupted", False))
+        records.append((frame_id, image_uri, gt_person_present, is_corrupted))
+    records.sort()
+    payload = {
+        "source_uri": str(getattr(mission_input, "source_uri", "")),
+        "gt_available": bool(getattr(mission_input, "gt_available", False)),
+        "frames": records,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _dataset_source_fingerprint(dataset: dict[str, object]) -> str:
+    value = dataset.get("source_fingerprint")
+    if isinstance(value, str) and value.strip():
+        return value
+    raise RuntimeError("source_fingerprint is missing in dataset artifact")
 
 
 def _slug(value: str) -> str:
@@ -505,6 +586,12 @@ def print_result(result: dict[str, object]) -> None:
         header_parts.append(f"mission={result['mission_id']}")
     if "ds" in result:
         header_parts.append(f"ds={result['ds']}")
+    if "skip_reason" in result:
+        header_parts.append(f"reason={result['skip_reason']}")
+    if "source_fingerprint" in result:
+        header_parts.append(f"fp={result['source_fingerprint']}")
+    if result.get("recomputed_due_to_source_change"):
+        header_parts.append("recomputed=true")
     print(" ".join(header_parts))
     metrics = result.get("metrics")
     if isinstance(metrics, dict) and metrics:

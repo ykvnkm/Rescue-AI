@@ -178,6 +178,7 @@ with DAG(
         "docker_url": "unix://var/run/docker.sock",
         "api_version": "auto",
         "force_pull": False,
+        "do_xcom_push": True,
         "auto_remove": "success",
         "mount_tmp_dir": False,
         "environment": _build_base_env(),

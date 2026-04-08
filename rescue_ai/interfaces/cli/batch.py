@@ -233,7 +233,7 @@ def _resolve_mission_ids(
     """
     manifest_key = _mission_manifest_key(batch_prefix, args.ds)
     stage = args.stage
-    force_refresh = stage == "data" and args.force
+    force_refresh = stage == "data"
 
     if store.exists(manifest_key) and not force_refresh:
         cached = store.read_json(manifest_key)
