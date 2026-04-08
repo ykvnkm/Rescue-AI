@@ -6,7 +6,18 @@ unless ``force=True``.  Stages communicate through ``StageStorage``
 builder so that every artifact URI is deterministic.
 
 Stage flow:
-    data  →  train  →  validate  →  publish
+    data  →  warmup  →  evaluate  →  publish
+
+Semantics:
+    * ``data``     — list mission frames and build a train/val manifest.
+    * ``warmup``   — load the deployed detector, run a probe forward pass,
+                     write a model card. This is NOT training — the model
+                     weights are fixed; the stage only verifies that the
+                     runtime can load them before spending compute on the
+                     full evaluation.
+    * ``evaluate`` — run the deployed detector over the val manifest and
+                     record a confusion matrix.
+    * ``publish``  — upsert the summary row into Postgres.
 """
 
 from __future__ import annotations
@@ -69,11 +80,11 @@ class PipelinePaths:
         return f"{self.base}/model_{mv}_{cv}.json"
 
     @property
-    def validation_key(self) -> str:
-        """Return the storage key for the validation report."""
+    def evaluation_key(self) -> str:
+        """Return the storage key for the evaluation report."""
         mv = _slug(self.model_version)
         cv = _slug(self.code_version)
-        return f"{self.base}/validation_{mv}_{cv}.json"
+        return f"{self.base}/evaluation_{mv}_{cv}.json"
 
 
 @dataclass
@@ -179,21 +190,26 @@ def run_data_stage(
     return _done("data", store.uri(paths.data_key))
 
 
-# ── Stage 2: model registration (train) ────────────────────────
+# ── Stage 2: warmup (load deployed model + probe) ──────────────
 
 
-def run_train_stage(
+def run_warmup_stage(
     store: StageStorage,
     paths: PipelinePaths,
     *,
     force: bool = False,
     model_probe=None,
 ) -> dict[str, object]:
-    """Prepare runtime model and write model card."""
+    """Load the deployed detector, run a probe, write a model card.
+
+    This stage does NOT train anything — weights are fixed. Its job is
+    fail-fast: if the runtime cannot load the model, we stop here before
+    spending compute on the full ``evaluate`` stage.
+    """
     if not store.exists(paths.data_key):
         raise RuntimeError(f"dataset is missing: {store.uri(paths.data_key)}")
     if store.exists(paths.model_key) and not force:
-        return _skip("train", store.uri(paths.model_key))
+        return _skip("warmup", store.uri(paths.model_key))
 
     dataset = store.read_json(paths.data_key)
     rows_total = _as_int(dataset.get("rows_total"), field_name="rows_total")
@@ -201,7 +217,7 @@ def run_train_stage(
     if rows_total <= 0:
         raise RuntimeError("dataset has zero rows")
     if model_probe is None:
-        raise RuntimeError("model_probe is required for train stage")
+        raise RuntimeError("model_probe is required for warmup stage")
 
     model_meta = model_probe()
     if not isinstance(model_meta, dict):
@@ -209,7 +225,7 @@ def run_train_stage(
 
     class_ratio = rows_positive / rows_total
     payload: dict[str, object] = {
-        "stage": "train",
+        "stage": "warmup",
         "created_at": _now_iso(),
         "mission_id": paths.mission_id,
         "ds": paths.ds,
@@ -227,14 +243,14 @@ def run_train_stage(
         ).hexdigest()[:16],
     }
     store.write_json(paths.model_key, payload)
-    return _done("train", store.uri(paths.model_key))
+    return _done("warmup", store.uri(paths.model_key))
 
 
-# ── Stage 3: validation (quality gate) ─────────────────────────
+# ── Stage 3: evaluate deployed detector on val manifest ────────
 
 
-def _metrics_from_validation(payload: dict[str, object]) -> dict[str, object]:
-    """Pick metric fields out of a validation artifact for log-friendly output."""
+def _metrics_from_evaluation(payload: dict[str, object]) -> dict[str, object]:
+    """Pick metric fields out of an evaluation artifact for log output."""
     return {
         field: payload.get(field)
         for field in (
@@ -252,31 +268,28 @@ def _metrics_from_validation(payload: dict[str, object]) -> dict[str, object]:
     }
 
 
-def run_validate_stage(
+def run_evaluate_stage(
     store: StageStorage,
     paths: PipelinePaths,
     *,
     force: bool = False,
     detector_predict=None,
 ) -> dict[str, object]:
-    """Smoke-test the trained detector on the val split.
+    """Evaluate the deployed detector on the val split of this mission.
 
-    Validation in this pipeline is intentionally **not** a quality gate on
-    accuracy: the true business metric is episode-level recall, which is
-    computed offline on a separately labelled dataset. In production mission
-    data has no GT annotations, so accuracy is not meaningful. This stage
-    therefore only:
-
-    * runs the detector on every frame of the val manifest (smoke-test that
-      the model loads and inference works end-to-end);
-    * records a confusion matrix as observability;
-    * fails only if the detector itself errored on any frame.
+    This is the metric-generating stage: it runs the detector on every
+    frame of the val manifest, builds a confusion matrix, and records
+    accuracy / recall alongside the raw counts. It is intentionally NOT
+    a quality gate on accuracy — GT coverage on production mission data
+    is partial, so accuracy is an observability signal, not a pass/fail
+    threshold. The only hard failure condition is a detector crash on a
+    frame (captured in ``detector_errors``).
     """
-    if store.exists(paths.validation_key) and not force:
-        return _skip("validate", store.uri(paths.validation_key))
-    _require_validation_prerequisites(store, paths)
+    if store.exists(paths.evaluation_key) and not force:
+        return _skip("evaluate", store.uri(paths.evaluation_key))
+    _require_evaluation_prerequisites(store, paths)
     if detector_predict is None:
-        raise RuntimeError("detector_predict is required for validate stage")
+        raise RuntimeError("detector_predict is required for evaluate stage")
 
     dataset = store.read_json(paths.data_key)
     _ensure_dataset_has_rows(dataset)
@@ -291,7 +304,7 @@ def run_validate_stage(
     passed = counts.detector_errors == 0
 
     payload: dict[str, object] = {
-        "stage": "validate",
+        "stage": "evaluate",
         "created_at": _now_iso(),
         "mission_id": paths.mission_id,
         "ds": paths.ds,
@@ -308,14 +321,14 @@ def run_validate_stage(
         "gt_available": gt_available,
         "passed": passed,
     }
-    store.write_json(paths.validation_key, payload)
+    store.write_json(paths.evaluation_key, payload)
 
     if not passed:
         raise RuntimeError(
-            f"validation smoke-test failed: detector_errors={counts.detector_errors}"
+            f"evaluation failed: detector_errors={counts.detector_errors}"
         )
-    result = _done("validate", store.uri(paths.validation_key))
-    result["metrics"] = _metrics_from_validation(payload)
+    result = _done("evaluate", store.uri(paths.evaluation_key))
+    result["metrics"] = _metrics_from_evaluation(payload)
     return result
 
 
@@ -338,16 +351,17 @@ def run_publish_stage(
 ) -> dict[str, object]:
     """Read stage artifacts and upsert a summary row.
 
-    This stage is the only place where the batch pipeline writes into the
-    application Postgres. It is always safe to re-run — the underlying
+    This stage is the only place where the batch pipeline writes into
+    the application Postgres. It is always safe to re-run — the
     repository uses ``ON CONFLICT ... DO UPDATE`` keyed on
-    ``(mission_id, model_version, code_version)``, so re-running the DAG
-    for the same mission on a new ``ds`` updates the existing row in place.
+    ``(ds, mission_id, model_version, code_version)``, so rerunning the
+    DAG for the same ds updates the row in place, while rerunning for a
+    different ds (e.g. via ``airflow dags backfill``) inserts a new row.
     """
     for required_key, label in (
         (paths.data_key, "dataset"),
         (paths.model_key, "model"),
-        (paths.validation_key, "validation"),
+        (paths.evaluation_key, "evaluation"),
     ):
         if not store.exists(required_key):
             raise RuntimeError(
@@ -355,16 +369,16 @@ def run_publish_stage(
             )
 
     dataset = store.read_json(paths.data_key)
-    validation = store.read_json(paths.validation_key)
+    evaluation = store.read_json(paths.evaluation_key)
 
     record = record_factory(
         paths=paths,
         dataset=dataset,
-        validation=validation,
+        evaluation=evaluation,
         artifact_uris={
             "dataset_uri": store.uri(paths.data_key),
             "model_uri": store.uri(paths.model_key),
-            "validation_uri": store.uri(paths.validation_key),
+            "evaluation_uri": store.uri(paths.evaluation_key),
         },
     )
     metrics_writer.upsert(record)
@@ -373,7 +387,7 @@ def run_publish_stage(
         "status": "completed",
         "ds": paths.ds,
         "mission_id": paths.mission_id,
-        "metrics": _metrics_from_validation(validation)
+        "metrics": _metrics_from_evaluation(evaluation)
         | {
             "rows_total": dataset.get("rows_total"),
             "rows_positive": dataset.get("rows_positive"),
@@ -432,7 +446,7 @@ def _as_bool(value: object, *, field_name: str) -> bool:
     raise RuntimeError(f"{field_name} must be boolean")
 
 
-def _require_validation_prerequisites(
+def _require_evaluation_prerequisites(
     store: StageStorage,
     paths: PipelinePaths,
 ) -> None:

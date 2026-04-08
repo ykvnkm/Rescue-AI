@@ -1,11 +1,12 @@
 """Postgres repository for summary metrics of the batch ML pipeline.
 
-Each pipeline run of the DAG upserts exactly one row per
-``(mission_id, model_version, code_version)`` tuple into the
-``batch_pipeline_metrics`` table. Re-running the DAG for the same mission
-on a new ``ds`` updates the existing row in place — the table does not
-grow linearly with #missions × #days. ``ds`` and ``updated_at`` record the
-most recent successful execution (observable idempotency signal).
+Each pipeline run of the DAG upserts one row per
+``(ds, mission_id, model_version, code_version)`` tuple into the
+``batch_pipeline_metrics`` table. Re-running the same ds is idempotent:
+``ON CONFLICT ... DO UPDATE`` overwrites the row and refreshes
+``updated_at``. Running an ``airflow dags backfill`` across a date range
+inserts one row per ds — ``updated_at`` then diverges from ``ds`` and
+becomes an observable signal that the backfill actually ran.
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ class PostgresBatchMetricsRepository:
                 cursor.execute(
                     """
                     INSERT INTO batch_pipeline_metrics (
-                        mission_id, model_version, code_version, ds,
+                        ds, mission_id, model_version, code_version,
                         rows_total, rows_positive, rows_corrupted,
                         train_count, val_count,
                         samples_total, tp, tn, fp, fn, detector_errors,
@@ -66,9 +67,8 @@ class PostgresBatchMetricsRepository:
                         %s, %s, %s, %s,
                         NOW()
                     )
-                    ON CONFLICT (mission_id, model_version, code_version)
+                    ON CONFLICT (ds, mission_id, model_version, code_version)
                     DO UPDATE SET
-                        ds                = EXCLUDED.ds,
                         rows_total        = EXCLUDED.rows_total,
                         rows_positive     = EXCLUDED.rows_positive,
                         rows_corrupted    = EXCLUDED.rows_corrupted,
@@ -87,10 +87,10 @@ class PostgresBatchMetricsRepository:
                         updated_at        = NOW()
                     """,
                     (
+                        record.ds,
                         record.mission_id,
                         record.model_version,
                         record.code_version,
-                        record.ds,
                         record.rows_total,
                         record.rows_positive,
                         record.rows_corrupted,

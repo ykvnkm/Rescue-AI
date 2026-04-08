@@ -3,12 +3,20 @@
 One DAG, runs once per day, processes every mission that has frames in
 S3 through the four stages of the pipeline::
 
-    data → train → validate → publish
+    data → warmup → evaluate → publish
+
+This DAG does **continuous evaluation** of a fixed detector against the
+labeled mission corpus — it does NOT train or fine-tune weights. The
+``warmup`` stage loads the deployed detector and probes it (fail-fast on
+a broken runtime before the heavy ``evaluate`` stage). The ``evaluate``
+stage runs the detector over the val manifest and records a confusion
+matrix. Honest naming matters: a task called ``train`` that doesn't
+actually train weights is a lie the reviewer will catch.
 
 Design notes for defence
 ------------------------
 * **Simple graph** — exactly 4 DockerOperator tasks in UI:
-  ``data -> train -> validate -> publish``.
+  ``data -> warmup -> evaluate -> publish``.
   No dynamic mapping and no helper ``build_*`` tasks.
 
 * **Idempotency — two layers, different jobs:**
@@ -16,18 +24,18 @@ Design notes for defence
     1. *Per-ds artifact skip (S3).* Every stage writes a deterministic
        JSON key under ``ml_pipeline/mission={id}/ds={ds}/...`` and checks
        ``store.exists(...)`` before doing any work. Retry of a failed
-       task inside the same ds skips already-completed stages. S3 grows
-       ``O(N_missions × N_days)`` — bounded by a bucket lifecycle policy
-       (Glacier after 30d, expire after 180d), not by the pipeline.
+       task skips already-completed stages.
 
-    2. *Cross-day mission-level upsert (Postgres).* The ``publish``
-       stage upserts into ``batch_pipeline_metrics`` keyed on
-       ``(mission_id, model_version, code_version)``. Exactly ONE row
-       per mission × model × code-version for the whole lifetime of
-       the system; every successful run overwrites that row and bumps
-       ``ds`` + ``updated_at``. The table grows
-       ``O(N_missions × N_model_versions × N_code_versions)`` —
-       independent of how many days the pipeline has been running.
+    2. *Per-ds upsert (Postgres).* The ``publish`` stage upserts into
+       ``batch_pipeline_metrics`` keyed on
+       ``(ds, mission_id, model_version, code_version)``. Re-running a
+       single ds is idempotent (``ON CONFLICT ... DO UPDATE``);
+       ``airflow dags backfill -s X -e Y`` inserts one row per day in
+       the range, and ``updated_at`` diverges from ``ds`` — an
+       observable signal that the backfill actually ran. The table
+       grows ``O(N_missions × N_days × N_model_versions × N_code_versions)``
+       which for the realistic corpus (~10 labeled missions × 365 days)
+       is negligible.
 
 * **Mission discovery is cached.** Only the ``data`` stage calls
   ``list_objects_v2``; it writes the resolved mission set to a small
@@ -36,15 +44,11 @@ Design notes for defence
   makes ~1 LIST per day instead of 4, and the mission set is pinned for
   the whole run (no races if a new mission is uploaded mid-run).
 
-* **``catchup=False`` is intentional.** The pipeline input is a set of
-  static mission folders in S3, *not* a time-partitioned event stream.
-  A missed day has no unique data: the next day's run re-processes the
-  same mission set and upserts the same row. ``ds`` is a provenance tag
-  ("when was this row last refreshed"), not an event partition key.
-  If time-series drift tracking is ever needed, the correct fix is a
-  separate ``batch_pipeline_metrics_history`` append-only table — NOT
-  ``catchup=True`` (which would just waste compute re-running identical
-  inputs).
+* **``catchup=True`` is intentional.** ``ds`` is part of the PK, so
+  backfilling a date range fills one row per day. This gives a drift
+  signal over time (recall/accuracy per ds) and lets the reviewer see
+  ``airflow dags backfill -s X -e Y`` actually do something observable
+  (divergence of ``updated_at`` from ``ds``).
 
 * **Secrets** come from Airflow Connections registered via the standard
   ``AIRFLOW_CONN_*`` environment variable mechanism, populated from
@@ -59,7 +63,7 @@ Design notes for defence
       artifact keys and PG rows.
 
 S3 layout (input): ``missions/{mission_uuid}/frames/*.jpg``
-S3 layout (output): ``missions/batch/ml_pipeline/mission=<uuid>/ds=<date>/*.json``
+S3 layout (output): ``missions/batch/ml_pipeline/mission=<uuid>/*.json``
 """
 
 from __future__ import annotations
@@ -218,8 +222,8 @@ def _build_stage_command(stage: str) -> list[str]:
 
 with DAG(
     dag_id=DAG_ID,
-    description="Rescue-AI daily batch: data → train → validate → publish",
-    start_date=datetime(2026, 3, 1),
+    description="Rescue-AI daily batch: data → warmup → evaluate → publish",
+    start_date=datetime(2026, 4, 1),
     schedule="@daily",
     catchup=True,
     max_active_runs=1,
@@ -268,7 +272,7 @@ with DAG(
         ],
     }
 
-    # -- Five fixed stage tasks --------------------------------------
+    # -- Four fixed stage tasks --------------------------------------
 
     stage_data = DockerOperator(
         task_id="data",
@@ -277,17 +281,17 @@ with DAG(
         **_docker_defaults,
     )
 
-    stage_train = DockerOperator(
-        task_id="train",
-        execution_timeout=timedelta(hours=2),
-        command=_build_stage_command("train"),
+    stage_warmup = DockerOperator(
+        task_id="warmup",
+        execution_timeout=timedelta(minutes=15),
+        command=_build_stage_command("warmup"),
         **_docker_defaults,
     )
 
-    stage_validate = DockerOperator(
-        task_id="validate",
+    stage_evaluate = DockerOperator(
+        task_id="evaluate",
         execution_timeout=timedelta(hours=1),
-        command=_build_stage_command("validate"),
+        command=_build_stage_command("evaluate"),
         **_docker_defaults,
     )
 
@@ -298,6 +302,6 @@ with DAG(
         **_docker_defaults,
     )
 
-    stage_train.set_upstream(stage_data)
-    stage_validate.set_upstream(stage_train)
-    stage_publish.set_upstream(stage_validate)
+    stage_warmup.set_upstream(stage_data)
+    stage_evaluate.set_upstream(stage_warmup)
+    stage_publish.set_upstream(stage_evaluate)

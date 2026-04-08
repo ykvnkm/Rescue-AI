@@ -2,7 +2,12 @@
 
 Supports four stages that run sequentially in Airflow:
 
-    data  ->  train  ->  validate  ->  publish
+    data  ->  warmup  ->  evaluate  ->  publish
+
+``warmup`` loads the deployed detector and runs a probe (fail-fast on a
+broken runtime before the heavy ``evaluate`` stage). ``evaluate`` runs
+the detector over the val manifest and records a confusion matrix.
+Nothing here trains weights — training is out of scope for this DAG.
 
 Usage::
 
@@ -23,9 +28,9 @@ from rescue_ai.application.pipeline_stages import (
     PipelinePaths,
     print_result,
     run_data_stage,
+    run_evaluate_stage,
     run_publish_stage,
-    run_train_stage,
-    run_validate_stage,
+    run_warmup_stage,
 )
 from rescue_ai.config import get_settings
 from rescue_ai.infrastructure.artifact_storage import (
@@ -42,7 +47,7 @@ from rescue_ai.infrastructure.s3_mission_source import S3MissionSource
 from rescue_ai.infrastructure.stage_store import S3StageStore
 from rescue_ai.infrastructure.yolo_detector import YoloDetector
 
-STAGES = ("data", "train", "validate", "publish")
+STAGES = ("data", "warmup", "evaluate", "publish")
 DEFAULT_MODEL_VERSION = "yolov8n_baseline_multiscale"
 DEFAULT_CODE_VERSION = "main"
 DEFAULT_BATCH_OUTPUT_SUFFIX = "batch"
@@ -55,14 +60,14 @@ class ArtifactUris(TypedDict):
 
     dataset_uri: str
     model_uri: str
-    validation_uri: str
+    evaluation_uri: str
 
 
 def _build_metrics_record(
     *,
     paths: PipelinePaths,
     dataset: dict[str, object],
-    validation: dict[str, object],
+    evaluation: dict[str, object],
     artifact_uris: ArtifactUris,
 ) -> BatchPipelineMetricsRecord:
     """Flatten stage artifacts into a row for ``batch_pipeline_metrics``."""
@@ -85,8 +90,8 @@ def _build_metrics_record(
     def _bool(value: object, default: bool = False) -> bool:
         return bool(value) if isinstance(value, bool) else default
 
-    tp = _int(validation.get("tp"))
-    fn = _int(validation.get("fn"))
+    tp = _int(evaluation.get("tp"))
+    fn = _int(evaluation.get("fn"))
     recall_default = (tp / (tp + fn)) if (tp + fn) > 0 else 1.0
 
     return BatchPipelineMetricsRecord(
@@ -99,23 +104,23 @@ def _build_metrics_record(
         rows_corrupted=_int(dataset.get("rows_corrupted")),
         train_count=_int(dataset.get("train_count")),
         val_count=_int(dataset.get("val_count")),
-        samples_total=_int(validation.get("samples_total")),
+        samples_total=_int(evaluation.get("samples_total")),
         tp=tp,
-        tn=_int(validation.get("tn")),
-        fp=_int(validation.get("fp")),
+        tn=_int(evaluation.get("tn")),
+        fp=_int(evaluation.get("fp")),
         fn=fn,
-        detector_errors=_int(validation.get("detector_errors")),
-        accuracy=_float(validation.get("accuracy")),
-        recall=_float(validation.get("recall"), default=recall_default),
-        gt_available=_bool(validation.get("gt_available")),
-        validate_passed=_bool(validation.get("passed")),
+        detector_errors=_int(evaluation.get("detector_errors")),
+        accuracy=_float(evaluation.get("accuracy")),
+        recall=_float(evaluation.get("recall"), default=recall_default),
+        gt_available=_bool(evaluation.get("gt_available")),
+        validate_passed=_bool(evaluation.get("passed")),
     )
 
 
 def parse_args() -> argparse.Namespace:
     """Parse unified pipeline CLI arguments."""
     parser = argparse.ArgumentParser(
-        description="Rescue-AI ML pipeline (data/train/validate/publish)"
+        description="Rescue-AI ML pipeline (data/warmup/evaluate/publish)"
     )
     parser.add_argument(
         "--stage", required=True, choices=STAGES, help="Pipeline stage to run"
@@ -220,7 +225,7 @@ def _resolve_mission_ids(
     Discovery is expensive (paginated ``list_objects_v2`` + 2 HEAD per
     candidate), so we cache the result in a small JSON manifest keyed by
     ``ds``. The first stage of the DAG (``data``) writes the manifest; every
-    downstream stage (``train``/``validate``/``publish``) reads it with a
+    downstream stage (``warmup``/``evaluate``/``publish``) reads it with a
     single ``get_object``. This also pins the mission set for the whole run
     — if new missions appear in S3 mid-run, they are deferred to the next
     ``ds`` instead of racing between stages.
@@ -315,7 +320,7 @@ def _run_stage_data(
     )
 
 
-def _run_stage_train(
+def _run_stage_warmup(
     args: argparse.Namespace,
     *,
     settings,
@@ -334,7 +339,7 @@ def _run_stage_train(
             "model_ready": True,
         }
 
-    return run_train_stage(
+    return run_warmup_stage(
         store,
         paths,
         force=args.force,
@@ -342,7 +347,7 @@ def _run_stage_train(
     )
 
 
-def _run_stage_validate(
+def _run_stage_evaluate(
     args: argparse.Namespace,
     *,
     settings,
@@ -352,7 +357,7 @@ def _run_stage_validate(
     _ = settings
     contract = load_stream_contract()
     detector = YoloDetector(config=contract.inference, model_version=args.model_version)
-    val_tmp = Path(tempfile.mkdtemp(prefix="rescue_ai_val_"))
+    val_tmp = Path(tempfile.mkdtemp(prefix="rescue_ai_eval_"))
     s3_settings = _build_s3_settings()
 
     def _detector_predict(image_uri: str) -> bool:
@@ -374,7 +379,7 @@ def _run_stage_validate(
             return bool(detector.detect(str(local_path)))
         return bool(detector.detect(image_uri))
 
-    return run_validate_stage(
+    return run_evaluate_stage(
         store,
         paths,
         force=args.force,
@@ -439,8 +444,8 @@ def main() -> None:
         Callable[..., dict[str, object]],
     ] = {
         "data": _run_stage_data,
-        "train": _run_stage_train,
-        "validate": _run_stage_validate,
+        "warmup": _run_stage_warmup,
+        "evaluate": _run_stage_evaluate,
         "publish": _run_stage_publish,
     }
     for mission_id in mission_ids:
