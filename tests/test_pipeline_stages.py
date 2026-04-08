@@ -10,8 +10,8 @@ from rescue_ai.application.batch_dtos import FrameRecord, MissionInput
 from rescue_ai.application.pipeline_stages import (
     PipelinePaths,
     run_data_stage,
-    run_train_stage,
-    run_validate_stage,
+    run_evaluate_stage,
+    run_warmup_stage,
 )
 from rescue_ai.infrastructure.stage_store import LocalStageStore
 
@@ -49,7 +49,7 @@ class TestPipelinePaths:
         keys = {
             paths.data_key,
             paths.model_key,
-            paths.validation_key,
+            paths.evaluation_key,
         }
         assert len(keys) == 3
 
@@ -123,10 +123,10 @@ class TestDataStage:
             run_data_stage(store, paths)
 
 
-# ── Train stage ─────────────────────────────────────────────────
+# ── Warmup stage ────────────────────────────────────────────────
 
 
-class TestTrainStage:
+class TestWarmupStage:
     @staticmethod
     def _model_probe() -> dict[str, object]:
         return {
@@ -137,59 +137,59 @@ class TestTrainStage:
 
     def test_creates_model_card(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        result = run_train_stage(store, paths, model_probe=self._model_probe)
+        result = run_warmup_stage(store, paths, model_probe=self._model_probe)
         assert result["status"] == "completed"
         assert store.exists(paths.model_key)
         payload = store.read_json(paths.model_key)
-        assert payload["stage"] == "train"
+        assert payload["stage"] == "warmup"
         assert "checkpoint_hash" in payload
         assert payload["model_runtime"] == "fake"
 
     def test_requires_dataset(self, store, paths) -> None:
         with pytest.raises(RuntimeError, match="dataset is missing"):
-            run_train_stage(store, paths, model_probe=self._model_probe)
+            run_warmup_stage(store, paths, model_probe=self._model_probe)
 
     def test_idempotent_skip(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        run_train_stage(store, paths, model_probe=self._model_probe)
-        result = run_train_stage(store, paths, model_probe=self._model_probe)
+        run_warmup_stage(store, paths, model_probe=self._model_probe)
+        result = run_warmup_stage(store, paths, model_probe=self._model_probe)
         assert result["status"] == "idempotent_skip"
 
     def test_requires_model_probe(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
         with pytest.raises(RuntimeError, match="model_probe is required"):
-            run_train_stage(store, paths)
+            run_warmup_stage(store, paths)
 
 
-# ── Validate stage ──────────────────────────────────────────────
+# ── Evaluate stage ──────────────────────────────────────────────
 
 
-class TestValidateStage:
+class TestEvaluateStage:
     @staticmethod
     def _predict_all_correct(image_uri: str) -> bool:
         return image_uri.endswith("f1.jpg")
 
     def test_smoke_test_passes(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
-        result = run_validate_stage(
+        run_warmup_stage(store, paths, model_probe=TestWarmupStage._model_probe)
+        result = run_evaluate_stage(
             store,
             paths,
             detector_predict=self._predict_all_correct,
         )
         assert result["status"] == "completed"
-        payload = store.read_json(paths.validation_key)
+        payload = store.read_json(paths.evaluation_key)
         assert payload["passed"] is True
 
     def test_smoke_test_fails_when_detector_raises(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
+        run_warmup_stage(store, paths, model_probe=TestWarmupStage._model_probe)
 
         def _broken(_image_uri: str) -> bool:
             raise RuntimeError("detector is down")
 
         with pytest.raises(RuntimeError, match="detector failed"):
-            run_validate_stage(
+            run_evaluate_stage(
                 store,
                 paths,
                 detector_predict=_broken,
@@ -197,22 +197,22 @@ class TestValidateStage:
 
     def test_requires_dataset(self, store, paths) -> None:
         with pytest.raises(RuntimeError, match="dataset is missing"):
-            run_validate_stage(store, paths, detector_predict=lambda _: True)
+            run_evaluate_stage(store, paths, detector_predict=lambda _: True)
 
     def test_requires_model(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
         with pytest.raises(RuntimeError, match="model artifact is missing"):
-            run_validate_stage(store, paths, detector_predict=lambda _: True)
+            run_evaluate_stage(store, paths, detector_predict=lambda _: True)
 
     def test_idempotent_skip(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
-        run_validate_stage(
+        run_warmup_stage(store, paths, model_probe=TestWarmupStage._model_probe)
+        run_evaluate_stage(
             store,
             paths,
             detector_predict=self._predict_all_correct,
         )
-        result = run_validate_stage(
+        result = run_evaluate_stage(
             store,
             paths,
             detector_predict=self._predict_all_correct,
@@ -221,6 +221,6 @@ class TestValidateStage:
 
     def test_requires_detector_predict(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        run_train_stage(store, paths, model_probe=TestTrainStage._model_probe)
+        run_warmup_stage(store, paths, model_probe=TestWarmupStage._model_probe)
         with pytest.raises(RuntimeError, match="detector_predict is required"):
-            run_validate_stage(store, paths)
+            run_evaluate_stage(store, paths)

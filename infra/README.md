@@ -76,7 +76,7 @@ docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.en
 ```
 
 6. Проверьте артефакты в S3 (по префиксу):
-`<ARTIFACTS_S3_PREFIX>/ml_pipeline/mission=<mission_id>/ds=<YYYY-MM-DD>/`.
+`<ARTIFACTS_S3_PREFIX>/ml_pipeline/mission=<mission_id>/`.
 
 8. При повторном запуске той же даты проверьте в логах тасков `status=idempotent_skip`.
 
