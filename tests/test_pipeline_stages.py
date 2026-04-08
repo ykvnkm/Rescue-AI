@@ -99,9 +99,9 @@ class TestDataStage:
         payload = store.read_json(paths.data_key)
         assert payload["stage"] == "data"
         assert payload["rows_total"] > 0
-        assert payload["train_count"] + payload["val_count"] == payload["rows_total"]
+        assert payload["evaluation_count"] == payload["rows_total"]
         assert payload["rows_corrupted"] == 1
-        assert len(payload["val_manifest"]) > 0
+        assert len(payload["evaluation_manifest"]) > 0
 
     def test_idempotent_skip(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=self._mission_loader)

@@ -27,15 +27,14 @@ class BatchPipelineMetricsRecord:
     rows_total: int
     rows_positive: int
     rows_corrupted: int
-    train_count: int
-    val_count: int
-    samples_total: int
+    evaluation_count: int
     tp: int
     tn: int
     fp: int
     fn: int
     detector_errors: int
     accuracy: float
+    precision: float
     recall: float
     gt_available: bool
     validate_passed: bool
@@ -55,16 +54,16 @@ class PostgresBatchMetricsRepository:
                     INSERT INTO batch_pipeline_metrics (
                         ds, mission_id, model_version, code_version,
                         rows_total, rows_positive, rows_corrupted,
-                        train_count, val_count,
-                        samples_total, tp, tn, fp, fn, detector_errors,
-                        accuracy, recall, gt_available, validate_passed,
+                        evaluation_count,
+                        tp, tn, fp, fn, detector_errors,
+                        accuracy, precision, recall, gt_available, validate_passed,
                         updated_at
                     ) VALUES (
                         %s, %s, %s, %s,
                         %s, %s, %s,
-                        %s, %s,
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s,
+                        %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
                         NOW()
                     )
                     ON CONFLICT (ds, mission_id, model_version, code_version)
@@ -72,15 +71,14 @@ class PostgresBatchMetricsRepository:
                         rows_total        = EXCLUDED.rows_total,
                         rows_positive     = EXCLUDED.rows_positive,
                         rows_corrupted    = EXCLUDED.rows_corrupted,
-                        train_count       = EXCLUDED.train_count,
-                        val_count         = EXCLUDED.val_count,
-                        samples_total     = EXCLUDED.samples_total,
+                        evaluation_count  = EXCLUDED.evaluation_count,
                         tp                = EXCLUDED.tp,
                         tn                = EXCLUDED.tn,
                         fp                = EXCLUDED.fp,
                         fn                = EXCLUDED.fn,
                         detector_errors   = EXCLUDED.detector_errors,
                         accuracy          = EXCLUDED.accuracy,
+                        precision         = EXCLUDED.precision,
                         recall            = EXCLUDED.recall,
                         gt_available      = EXCLUDED.gt_available,
                         validate_passed   = EXCLUDED.validate_passed,
@@ -94,15 +92,14 @@ class PostgresBatchMetricsRepository:
                         record.rows_total,
                         record.rows_positive,
                         record.rows_corrupted,
-                        record.train_count,
-                        record.val_count,
-                        record.samples_total,
+                        record.evaluation_count,
                         record.tp,
                         record.tn,
                         record.fp,
                         record.fn,
                         record.detector_errors,
                         record.accuracy,
+                        record.precision,
                         record.recall,
                         record.gt_available,
                         record.validate_passed,

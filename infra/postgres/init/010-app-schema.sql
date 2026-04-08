@@ -74,15 +74,14 @@ CREATE TABLE IF NOT EXISTS batch_pipeline_metrics (
     rows_total       INTEGER NOT NULL,
     rows_positive    INTEGER NOT NULL,
     rows_corrupted   INTEGER NOT NULL,
-    train_count      INTEGER NOT NULL,
-    val_count        INTEGER NOT NULL,
-    samples_total    INTEGER NOT NULL,
+    evaluation_count INTEGER NOT NULL,
     tp               INTEGER NOT NULL,
     tn               INTEGER NOT NULL,
     fp               INTEGER NOT NULL,
     fn               INTEGER NOT NULL,
     detector_errors  INTEGER NOT NULL,
     accuracy         DOUBLE PRECISION NOT NULL,
+    precision        DOUBLE PRECISION NOT NULL DEFAULT 0,
     recall           DOUBLE PRECISION NOT NULL DEFAULT 0,
     gt_available     BOOLEAN NOT NULL,
     validate_passed  BOOLEAN NOT NULL,
@@ -90,7 +89,17 @@ CREATE TABLE IF NOT EXISTS batch_pipeline_metrics (
     PRIMARY KEY (ds, mission_id, model_version, code_version)
 );
 ALTER TABLE batch_pipeline_metrics
+    ADD COLUMN IF NOT EXISTS precision DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE batch_pipeline_metrics
     ADD COLUMN IF NOT EXISTS recall DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE batch_pipeline_metrics
+    ADD COLUMN IF NOT EXISTS evaluation_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE batch_pipeline_metrics
+    DROP COLUMN IF EXISTS train_count;
+ALTER TABLE batch_pipeline_metrics
+    DROP COLUMN IF EXISTS val_count;
+ALTER TABLE batch_pipeline_metrics
+    DROP COLUMN IF EXISTS samples_total;
 ALTER TABLE batch_pipeline_metrics
     DROP COLUMN IF EXISTS inference_status;
 ALTER TABLE batch_pipeline_metrics
