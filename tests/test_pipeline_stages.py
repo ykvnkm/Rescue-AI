@@ -59,7 +59,7 @@ class TestPipelinePaths:
 
 class TestDataStage:
     @staticmethod
-    def _mission_loader() -> MissionInput:
+    def _mission_loader_variant(include_extra: bool = False) -> MissionInput:
         frames = [
             FrameRecord(
                 frame_id=1,
@@ -86,11 +86,26 @@ class TestDataStage:
                 is_corrupted=True,
             ),
         ]
+        if include_extra:
+            frames.append(
+                FrameRecord(
+                    frame_id=4,
+                    ts_sec=0.3,
+                    frame_path=Path("/tmp/f4.jpg"),
+                    image_uri="/tmp/f4.jpg",
+                    gt_person_present=True,
+                    is_corrupted=False,
+                )
+            )
         return MissionInput(
             source_uri="local:///mission-1/2026-03-01",
             frames=frames,
             gt_available=True,
         )
+
+    @staticmethod
+    def _mission_loader() -> MissionInput:
+        return TestDataStage._mission_loader_variant()
 
     def test_creates_dataset(self, store, paths) -> None:
         result = run_data_stage(store, paths, mission_loader=self._mission_loader)
@@ -107,6 +122,22 @@ class TestDataStage:
         run_data_stage(store, paths, mission_loader=self._mission_loader)
         result = run_data_stage(store, paths, mission_loader=self._mission_loader)
         assert result["status"] == "idempotent_skip"
+
+    def test_rerun_rebuilds_when_source_changes(self, store, paths) -> None:
+        run_data_stage(
+            store,
+            paths,
+            mission_loader=lambda: self._mission_loader_variant(include_extra=False),
+        )
+        result = run_data_stage(
+            store,
+            paths,
+            mission_loader=lambda: self._mission_loader_variant(include_extra=True),
+        )
+        assert result["status"] == "completed"
+        payload = store.read_json(paths.data_key)
+        assert payload["rows_total"] == 3
+        assert payload["evaluation_count"] == 3
 
     def test_force_overwrites(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=self._mission_loader)
@@ -154,6 +185,25 @@ class TestWarmupStage:
         run_warmup_stage(store, paths, model_probe=self._model_probe)
         result = run_warmup_stage(store, paths, model_probe=self._model_probe)
         assert result["status"] == "idempotent_skip"
+
+    def test_rerun_rebuilds_when_dataset_changes(self, store, paths) -> None:
+        run_data_stage(
+            store,
+            paths,
+            mission_loader=lambda: TestDataStage._mission_loader_variant(
+                include_extra=False
+            ),
+        )
+        run_warmup_stage(store, paths, model_probe=self._model_probe)
+        run_data_stage(
+            store,
+            paths,
+            mission_loader=lambda: TestDataStage._mission_loader_variant(
+                include_extra=True
+            ),
+        )
+        result = run_warmup_stage(store, paths, model_probe=self._model_probe)
+        assert result["status"] == "completed"
 
     def test_requires_model_probe(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
@@ -218,6 +268,31 @@ class TestEvaluateStage:
             detector_predict=self._predict_all_correct,
         )
         assert result["status"] == "idempotent_skip"
+
+    def test_rerun_rebuilds_when_dataset_changes(self, store, paths) -> None:
+        run_data_stage(
+            store,
+            paths,
+            mission_loader=lambda: TestDataStage._mission_loader_variant(
+                include_extra=False
+            ),
+        )
+        run_warmup_stage(store, paths, model_probe=TestWarmupStage._model_probe)
+        run_evaluate_stage(store, paths, detector_predict=self._predict_all_correct)
+        run_data_stage(
+            store,
+            paths,
+            mission_loader=lambda: TestDataStage._mission_loader_variant(
+                include_extra=True
+            ),
+        )
+        run_warmup_stage(store, paths, model_probe=TestWarmupStage._model_probe)
+        result = run_evaluate_stage(
+            store,
+            paths,
+            detector_predict=self._predict_all_correct,
+        )
+        assert result["status"] == "completed"
 
     def test_requires_detector_predict(self, store, paths) -> None:
         run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
