@@ -6,7 +6,7 @@ Supports four stages that run sequentially in Airflow:
 
 ``warmup`` loads the deployed detector and runs a probe (fail-fast on a
 broken runtime before the heavy ``evaluate`` stage). ``evaluate`` runs
-the detector over the val manifest and records a confusion matrix.
+the detector over the mission evaluation manifest and records a confusion matrix.
 Nothing here trains weights — training is out of scope for this DAG.
 
 Usage::
@@ -48,10 +48,10 @@ from rescue_ai.infrastructure.stage_store import S3StageStore
 from rescue_ai.infrastructure.yolo_detector import YoloDetector
 
 STAGES = ("data", "warmup", "evaluate", "publish")
-DEFAULT_MODEL_VERSION = "yolov8n_baseline_multiscale"
-DEFAULT_CODE_VERSION = "main"
 DEFAULT_BATCH_OUTPUT_SUFFIX = "batch"
 DEFAULT_SOURCE_FPS = 6.0
+DEFAULT_MODEL_VERSION = "yolov8n_multiscale"
+DEFAULT_CODE_VERSION = "v1"
 _EXCLUDE_PREFIXES = frozenset({"batch"})
 
 
@@ -91,7 +91,9 @@ def _build_metrics_record(
         return bool(value) if isinstance(value, bool) else default
 
     tp = _int(evaluation.get("tp"))
+    fp = _int(evaluation.get("fp"))
     fn = _int(evaluation.get("fn"))
+    precision_default = (tp / (tp + fp)) if (tp + fp) > 0 else 1.0
     recall_default = (tp / (tp + fn)) if (tp + fn) > 0 else 1.0
 
     return BatchPipelineMetricsRecord(
@@ -102,15 +104,14 @@ def _build_metrics_record(
         rows_total=_int(dataset.get("rows_total")),
         rows_positive=_int(dataset.get("rows_positive")),
         rows_corrupted=_int(dataset.get("rows_corrupted")),
-        train_count=_int(dataset.get("train_count")),
-        val_count=_int(dataset.get("val_count")),
-        samples_total=_int(evaluation.get("samples_total")),
+        evaluation_count=_int(dataset.get("evaluation_count")),
         tp=tp,
         tn=_int(evaluation.get("tn")),
-        fp=_int(evaluation.get("fp")),
+        fp=fp,
         fn=fn,
         detector_errors=_int(evaluation.get("detector_errors")),
         accuracy=_float(evaluation.get("accuracy")),
+        precision=_float(evaluation.get("precision"), default=precision_default),
         recall=_float(evaluation.get("recall"), default=recall_default),
         gt_available=_bool(evaluation.get("gt_available")),
         validate_passed=_bool(evaluation.get("passed")),
@@ -194,7 +195,6 @@ def _mission_has_input_for_ds(
     roots = [
         _join_s3(base_prefix, mission_id, ds),
         _join_s3(base_prefix, f"mission={mission_id}", f"ds={ds}"),
-        _join_s3(base_prefix, mission_id),
     ]
     for root in roots:
         for subdir in ("frames", "images"):

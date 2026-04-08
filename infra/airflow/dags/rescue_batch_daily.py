@@ -69,102 +69,19 @@ S3 layout (output): ``missions/batch/ml_pipeline/mission=<uuid>/*.json``
 from __future__ import annotations
 
 import os
-from datetime import datetime as std_datetime
 from datetime import timedelta
-from typing import Any, Literal, cast
-
-_AirflowDAGClass: Any
-_BaseHookClass: Any
-_ParamClass: Any
-_DockerOperatorClass: Any
-_MountClass: Any
-_DateTimeFactory: Any
-
-try:
-    from airflow import DAG as AirflowDAGClass
-    from airflow.hooks.base import BaseHook as AirflowBaseHookClass
-    from airflow.models.param import Param as AirflowParamClass
-    from airflow.providers.docker.operators.docker import (
-        DockerOperator as AirflowDockerOperatorClass,
-    )
-    from docker.types import Mount as DockerMountClass
-    from pendulum import datetime as PendulumDateTimeFactory
-
-    _AirflowDAGClass = AirflowDAGClass
-    _BaseHookClass = AirflowBaseHookClass
-    _ParamClass = AirflowParamClass
-    _DockerOperatorClass = AirflowDockerOperatorClass
-    _MountClass = DockerMountClass
-    _DateTimeFactory = PendulumDateTimeFactory
-except ImportError:  # pragma: no cover — keeps the file importable for linting
-
-    class _FallbackDAG:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            self._args = args
-            self._kwargs = kwargs
-
-        def __enter__(self) -> "_FallbackDAG":
-            return self
-
-        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> Literal[False]:
-            return False
-
-    class _FallbackBaseHook:
-        @staticmethod
-        def get_connection(_key: str) -> Any:  # noqa: D401
-            class _Empty:
-                login = password = host = schema = extra = ""
-                extra_dejson: dict[str, str] = {}
-
-                def get_uri(self) -> str:
-                    return ""
-
-            return _Empty()
-
-    class _FallbackParam:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            self._args = args
-            self._kwargs = kwargs
-
-    class _FallbackMount:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            self._args = args
-            self._kwargs = kwargs
-
-    class _FallbackDockerOperator:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            self._args = args
-            self._kwargs = kwargs
-
-        @classmethod
-        def partial(cls, *args: object, **kwargs: object) -> "_FallbackDockerOperator":
-            return cls(*args, **kwargs)
-
-        def expand(self, **_kwargs: object) -> "_FallbackDockerOperator":
-            return self
-
-        def set_upstream(self, _other: object) -> None:
-            return None
-
-    _AirflowDAGClass = cast(Any, _FallbackDAG)
-    _BaseHookClass = cast(Any, _FallbackBaseHook)
-    _ParamClass = cast(Any, _FallbackParam)
-    _DockerOperatorClass = cast(Any, _FallbackDockerOperator)
-    _MountClass = cast(Any, _FallbackMount)
-    _DateTimeFactory = cast(Any, std_datetime)
-
-DAG = _AirflowDAGClass
-BaseHook = _BaseHookClass
-Param = _ParamClass
-DockerOperator = _DockerOperatorClass
-Mount = _MountClass
-datetime = _DateTimeFactory
+from airflow import DAG
+from airflow.hooks.base import BaseHook
+from airflow.models.param import Param
+from airflow.providers.docker.operators.docker import DockerOperator
+from docker.types import Mount
+from pendulum import datetime
 
 
 # ── Constants ────────────────────────────────────────────────────
 
 DAG_ID = "rescue_batch_pipeline"
-BATCH_IMAGE = os.environ.get("BATCH_IMAGE", "rescue-ai-batch:local")
+BATCH_IMAGE = os.environ["BATCH_IMAGE"]
 
 APP_DB_CONN_ID = "rescue_app_db"
 S3_CONN_ID = "rescue_s3"
@@ -241,12 +158,12 @@ with DAG(
             ),
         ),
         "model_version": Param(
-            default="yolov8n_baseline_multiscale",
+            default="yolov8n_multiscale",
             type="string",
             description="Model version tag written into artifact keys and PG rows.",
         ),
         "code_version": Param(
-            default="main",
+            default="v1",
             type="string",
             description="Code version tag written into artifact keys and PG rows.",
         ),

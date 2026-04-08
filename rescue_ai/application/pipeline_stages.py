@@ -9,13 +9,13 @@ Stage flow:
     data  →  warmup  →  evaluate  →  publish
 
 Semantics:
-    * ``data``     — list mission frames and build a train/val manifest.
+    * ``data``     — list mission frames and build an evaluation manifest.
     * ``warmup``   — load the deployed detector, run a probe forward pass,
                      write a model card. This is NOT training — the model
                      weights are fixed; the stage only verifies that the
                      runtime can load them before spending compute on the
                      full evaluation.
-    * ``evaluate`` — run the deployed detector over the val manifest and
+    * ``evaluate`` — run the deployed detector over the evaluation manifest and
                      record a confusion matrix.
     * ``publish``  — upsert the summary row into Postgres.
 """
@@ -126,6 +126,13 @@ class ValidationCounts:
             return 1.0
         return round(self.tp / positives, 4)
 
+    @property
+    def precision(self) -> float:
+        predicted_positives = self.tp + self.fp
+        if predicted_positives <= 0:
+            return 1.0
+        return round(self.tp / predicted_positives, 4)
+
 
 # ── Stage 1: data preparation ──────────────────────────────────
 
@@ -150,10 +157,6 @@ def run_data_stage(
     if not valid_frames:
         raise RuntimeError("mission has no valid frames")
 
-    split_index = max(1, int(len(valid_frames) * 0.8))
-    split_index = min(split_index, len(valid_frames))
-    train_frames = valid_frames[:split_index]
-    val_frames = valid_frames[split_index:] or valid_frames[-1:]
     positives = sum(1 for frame in valid_frames if frame.gt_person_present)
 
     payload: dict[str, object] = {
@@ -166,21 +169,13 @@ def run_data_stage(
         "rows_total": len(valid_frames),
         "rows_positive": positives,
         "rows_corrupted": corrupted_count,
-        "train_count": len(train_frames),
-        "val_count": len(val_frames),
-        "train_manifest": [
+        "evaluation_count": len(valid_frames),
+        "evaluation_manifest": [
             {
                 "image_uri": frame.image_uri,
                 "gt_person_present": bool(frame.gt_person_present),
             }
-            for frame in train_frames
-        ],
-        "val_manifest": [
-            {
-                "image_uri": frame.image_uri,
-                "gt_person_present": bool(frame.gt_person_present),
-            }
-            for frame in val_frames
+            for frame in valid_frames
         ],
         "feature_hash": hashlib.sha256(
             f"{paths.mission_id}:{paths.ds}".encode()
@@ -233,8 +228,9 @@ def run_warmup_stage(
         "code_version": paths.code_version,
         "dataset_uri": store.uri(paths.data_key),
         "class_ratio": round(class_ratio, 6),
-        "train_count": _as_int(dataset.get("train_count"), field_name="train_count"),
-        "val_count": _as_int(dataset.get("val_count"), field_name="val_count"),
+        "evaluation_count": _as_int(
+            dataset.get("evaluation_count"), field_name="evaluation_count"
+        ),
         "model_runtime": str(model_meta.get("runtime", "unknown")),
         "model_url": str(model_meta.get("model_url", "")),
         "model_ready": bool(model_meta.get("model_ready", True)),
@@ -246,7 +242,7 @@ def run_warmup_stage(
     return _done("warmup", store.uri(paths.model_key))
 
 
-# ── Stage 3: evaluate deployed detector on val manifest ────────
+# ── Stage 3: evaluate deployed detector on mission manifest ─────
 
 
 def _metrics_from_evaluation(payload: dict[str, object]) -> dict[str, object]:
@@ -254,13 +250,13 @@ def _metrics_from_evaluation(payload: dict[str, object]) -> dict[str, object]:
     return {
         field: payload.get(field)
         for field in (
-            "samples_total",
             "tp",
             "tn",
             "fp",
             "fn",
             "detector_errors",
             "accuracy",
+            "precision",
             "recall",
             "gt_available",
             "passed",
@@ -275,11 +271,11 @@ def run_evaluate_stage(
     force: bool = False,
     detector_predict=None,
 ) -> dict[str, object]:
-    """Evaluate the deployed detector on the val split of this mission.
+    """Evaluate the deployed detector on all valid mission frames.
 
     This is the metric-generating stage: it runs the detector on every
-    frame of the val manifest, builds a confusion matrix, and records
-    accuracy / recall alongside the raw counts. It is intentionally NOT
+    frame of the evaluation manifest, builds a confusion matrix, and records
+    accuracy / precision / recall alongside the raw counts. It is intentionally NOT
     a quality gate on accuracy — GT coverage on production mission data
     is partial, so accuracy is an observability signal, not a pass/fail
     threshold. The only hard failure condition is a detector crash on a
@@ -294,12 +290,13 @@ def run_evaluate_stage(
     dataset = store.read_json(paths.data_key)
     _ensure_dataset_has_rows(dataset)
     gt_available = bool(dataset.get("gt_available", True))
-    val_manifest = _parse_val_manifest(dataset)
+    evaluation_manifest = _parse_evaluation_manifest(dataset)
     counts = _evaluate_validation_manifest(
-        val_manifest=val_manifest,
+        evaluation_manifest=evaluation_manifest,
         detector_predict=detector_predict,
     )
     accuracy = counts.accuracy if counts.total > 0 else 1.0
+    precision = counts.precision
     recall = counts.recall
     passed = counts.detector_errors == 0
 
@@ -310,13 +307,13 @@ def run_evaluate_stage(
         "ds": paths.ds,
         "dataset_uri": store.uri(paths.data_key),
         "model_uri": store.uri(paths.model_key),
-        "samples_total": counts.total,
         "tp": counts.tp,
         "tn": counts.tn,
         "fp": counts.fp,
         "fn": counts.fn,
         "detector_errors": counts.detector_errors,
         "accuracy": accuracy,
+        "precision": precision,
         "recall": recall,
         "gt_available": gt_available,
         "passed": passed,
@@ -392,8 +389,7 @@ def run_publish_stage(
             "rows_total": dataset.get("rows_total"),
             "rows_positive": dataset.get("rows_positive"),
             "rows_corrupted": dataset.get("rows_corrupted"),
-            "train_count": dataset.get("train_count"),
-            "val_count": dataset.get("val_count"),
+            "evaluation_count": dataset.get("evaluation_count"),
         },
     }
 
@@ -462,25 +458,25 @@ def _ensure_dataset_has_rows(dataset: dict[str, object]) -> None:
         raise RuntimeError("dataset has zero rows")
 
 
-def _parse_val_manifest(dataset: dict[str, object]) -> list[dict[str, object]]:
-    val_manifest_raw = dataset.get("val_manifest")
-    if not isinstance(val_manifest_raw, list) or not val_manifest_raw:
-        raise RuntimeError("val_manifest is missing in dataset artifact")
-    if not all(isinstance(item, dict) for item in val_manifest_raw):
-        raise RuntimeError("val_manifest item must be an object")
-    return [item for item in val_manifest_raw if isinstance(item, dict)]
+def _parse_evaluation_manifest(dataset: dict[str, object]) -> list[dict[str, object]]:
+    evaluation_manifest_raw = dataset.get("evaluation_manifest")
+    if not isinstance(evaluation_manifest_raw, list) or not evaluation_manifest_raw:
+        raise RuntimeError("evaluation_manifest is missing in dataset artifact")
+    if not all(isinstance(item, dict) for item in evaluation_manifest_raw):
+        raise RuntimeError("evaluation_manifest item must be an object")
+    return [item for item in evaluation_manifest_raw if isinstance(item, dict)]
 
 
 def _evaluate_validation_manifest(
     *,
-    val_manifest: list[dict[str, object]],
+    evaluation_manifest: list[dict[str, object]],
     detector_predict,
 ) -> ValidationCounts:
     counts = ValidationCounts()
-    for item in val_manifest:
+    for item in evaluation_manifest:
         image_uri = str(item.get("image_uri", ""))
         if not image_uri:
-            raise RuntimeError("val_manifest item has empty image_uri")
+            raise RuntimeError("evaluation_manifest item has empty image_uri")
         gt_present = _as_bool(
             item.get("gt_person_present"), field_name="gt_person_present"
         )
