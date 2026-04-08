@@ -300,6 +300,19 @@ jobs:
 
             docker compose --env-file platform.env \
               -f docker-compose.platform.yml \
+              up -d airflow-db
+
+            if ! docker compose --env-file platform.env \
+              -f docker-compose.platform.yml \
+              run --rm airflow-init; then
+              docker compose --env-file platform.env \
+                -f docker-compose.platform.yml \
+                logs --tail=200 airflow-db airflow-init
+              exit 1
+            fi
+
+            docker compose --env-file platform.env \
+              -f docker-compose.platform.yml \
               up -d airflow-webserver airflow-scheduler
 
             # ── Health check ──

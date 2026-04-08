@@ -117,22 +117,25 @@ def _build_base_env() -> dict[str, str]:
 
 
 def _build_stage_command(stage: str) -> list[str]:
-    """Return templated argv for one pipeline stage."""
+    """Return templated shell command for one pipeline stage."""
+    command = (
+        "python -m rescue_ai.interfaces.cli.batch "
+        f"--stage {stage} "
+        "--all-missions "
+        "--mission-ids-csv "
+        "\"{{ params.mission_ids_csv | default('', true) }}\" "
+        '--ds "{{ ds }}" '
+        '--model-version "{{ params.model_version }}" '
+        '--code-version "{{ params.code_version }}" '
+        "{% set run_type = dag_run.run_type if dag_run else '' %}"
+        "{% if params.force_rerun or run_type in ['manual', 'backfill'] %}"
+        "--force"
+        "{% endif %}"
+    )
     return [
-        "python",
-        "-m",
-        "rescue_ai.interfaces.cli.batch",
-        "--stage",
-        stage,
-        "--all-missions",
-        "--mission-ids-csv",
-        "{{ params.mission_ids_csv if params.mission_ids_csv is not none else '' }}",
-        "--ds",
-        "{{ ds }}",
-        "--model-version",
-        "{{ params.model_version }}",
-        "--code-version",
-        "{{ params.code_version }}",
+        "bash",
+        "-lc",
+        command,
     ]
 
 
@@ -167,6 +170,13 @@ with DAG(
             default="v1",
             type="string",
             description="Code version tag written into artifact keys and PG rows.",
+        ),
+        "force_rerun": Param(
+            default=False,
+            type="boolean",
+            description=(
+                "If true, re-run stages for ds even when artifacts already exist."
+            ),
         ),
     },
     tags=["rescue-ai", "ml-pipeline", "batch"],
