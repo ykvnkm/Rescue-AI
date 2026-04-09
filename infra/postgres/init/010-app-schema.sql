@@ -58,14 +58,23 @@ CREATE TABLE IF NOT EXISTS episodes (
 CREATE INDEX IF NOT EXISTS ix_episodes_mission_found
     ON episodes (mission_id, found_by_alert);
 
--- Summary metrics for each (ds, mission, model, code) prog of the batch ML
--- pipeline. Written by the `publish` stage; one row per
--- (ds, mission_id, model_version, code_version). Re-running a single ds is
--- idempotent via ON CONFLICT ... DO UPDATE. Backfill (`airflow dags backfill
--- -s X -e Y`) reuses the same upsert path to fill the date range with
--- separate rows per day. `updated_at` tracks the wall-clock time of the
--- last write — it diverges from `ds` during backfill, which is an
--- observable signal of the backfill having happened.
+-- Fact table for the daily batch ML pipeline.
+--
+-- One row per (ds, mission_id, model_version, code_version) — that is,
+-- one row per evaluated mission, on the date the mission was created
+-- (`ds` is a Hive-style partition key matching the S3 layout, NOT a
+-- "the DAG ran on this date" marker). Missions live in exactly one
+-- partition: a mission created on 2026-04-09 produces one row for
+-- `ds=2026-04-09`, regardless of how many times the DAG runs.
+--
+-- Written by the `publish_metrics` stage of the DAG. Re-running the
+-- DAG for an existing `ds` is idempotent via ON CONFLICT ... DO UPDATE:
+-- old rows refresh in place, new missions insert. Backfill across a
+-- date range walks one `ds` at a time and uses the same upsert path,
+-- so partial backfills, partial reruns, and "fill the gap" scenarios
+-- all converge to the same correct state. `updated_at` tracks the
+-- wall-clock time of the last write and is the observable signal that
+-- a rerun actually happened.
 CREATE TABLE IF NOT EXISTS batch_pipeline_metrics (
     ds               DATE NOT NULL,
     mission_id       TEXT NOT NULL,
@@ -140,3 +149,40 @@ END $$;
 DROP TABLE IF EXISTS batch_mission_runs;
 CREATE INDEX IF NOT EXISTS ix_batch_pipeline_metrics_ds
     ON batch_pipeline_metrics (ds);
+
+-- Daily roll-up over the fact table. Aggregates the per-mission rows
+-- into one row per (ds, model_version, code_version) so dashboards can
+-- read drift signals without re-implementing the aggregation.
+CREATE OR REPLACE VIEW batch_daily_metrics AS
+SELECT
+    ds,
+    model_version,
+    code_version,
+    COUNT(*)                              AS missions_total,
+    SUM(rows_total)                       AS rows_total,
+    SUM(rows_positive)                    AS rows_positive,
+    SUM(rows_corrupted)                   AS rows_corrupted,
+    SUM(evaluation_count)                 AS evaluation_count,
+    SUM(tp)                               AS tp,
+    SUM(tn)                               AS tn,
+    SUM(fp)                               AS fp,
+    SUM(fn)                               AS fn,
+    SUM(detector_errors)                  AS detector_errors,
+    CASE
+        WHEN SUM(tp + tn + fp + fn) > 0
+        THEN ROUND((SUM(tp + tn))::numeric / SUM(tp + tn + fp + fn), 4)
+        ELSE NULL
+    END                                    AS accuracy,
+    CASE
+        WHEN SUM(tp + fp) > 0
+        THEN ROUND(SUM(tp)::numeric / SUM(tp + fp), 4)
+        ELSE NULL
+    END                                    AS precision,
+    CASE
+        WHEN SUM(tp + fn) > 0
+        THEN ROUND(SUM(tp)::numeric / SUM(tp + fn), 4)
+        ELSE NULL
+    END                                    AS recall,
+    MAX(updated_at)                       AS updated_at
+FROM batch_pipeline_metrics
+GROUP BY ds, model_version, code_version;

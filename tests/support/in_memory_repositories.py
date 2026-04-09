@@ -142,12 +142,14 @@ class InMemoryArtifactStorage:
     stored_frames: dict[tuple[str, int], str] = field(default_factory=dict)
     _reports: dict[str, dict[str, object]] = field(default_factory=dict)
 
-    def store_frame(self, mission_id: str, frame_id: int, source_uri: str) -> str:
+    def store_frame(
+        self, mission_id: str, frame_id: int, source_uri: str, ds: str
+    ) -> str:
         parsed = urlparse(source_uri)
         filename = Path(parsed.path).name if parsed.scheme == "file" else ""
         if not filename:
             filename = Path(source_uri).name or f"{frame_id}.jpg"
-        uri = f"memory://missions/{mission_id}/frames/{filename}"
+        uri = f"memory://missions/ds={ds}/{mission_id}/frames/{filename}"
         self.stored_frames[(mission_id, frame_id)] = uri
         return uri
 
@@ -160,21 +162,26 @@ class InMemoryArtifactStorage:
             )
         return None
 
-    def save_mission_report(self, mission_id: str, report: Mapping[str, object]) -> str:
-        self._reports[mission_id] = dict(report)
-        return f"memory://missions/{mission_id}/report.json"
+    def save_mission_report(
+        self, mission_id: str, ds: str, report: Mapping[str, object]
+    ) -> str:
+        self._reports[f"{ds}:{mission_id}"] = dict(report)
+        return f"memory://missions/ds={ds}/{mission_id}/report.json"
 
-    def load_mission_report(self, mission_id: str) -> Mapping[str, object] | None:
-        payload = self._reports.get(mission_id)
+    def load_mission_report(
+        self, mission_id: str, ds: str
+    ) -> Mapping[str, object] | None:
+        payload = self._reports.get(f"{ds}:{mission_id}")
         return dict(payload) if payload is not None else None
 
     def save_mission_annotations(
         self,
         mission_id: str,
+        ds: str,
         payload: Mapping[str, object],
     ) -> str:
-        self._reports[f"{mission_id}:annotations"] = dict(payload)
-        return f"memory://missions/{mission_id}/annotations/mission.json"
+        self._reports[f"{ds}:{mission_id}:labels"] = dict(payload)
+        return f"memory://missions/ds={ds}/{mission_id}/labels.json"
 
     def write_report(self, run_key: str, payload: dict[str, object]) -> str:
         self._reports[run_key] = dict(payload)

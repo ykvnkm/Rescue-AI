@@ -1,28 +1,36 @@
-"""Pipeline stage functions for the unified ML pipeline.
+"""Stage functions for the canonical Rescue-AI batch ML pipeline.
 
-Each stage is idempotent: it checks for an existing artifact and skips
-unless ``force=True``.  Stages communicate through ``StageStorage``
-(local files or S3 JSON objects) and share a ``PipelinePaths`` key
-builder so that every artifact URI is deterministic.
+Three stages, executed in order by the daily Airflow DAG::
 
-Stage flow:
-    data  →  warmup  →  evaluate  →  publish
+    prepare_dataset  ->  evaluate_model  ->  publish_metrics
 
-Semantics:
-    * ``data``     — list mission frames and build an evaluation manifest.
-    * ``warmup``   — load the deployed detector, run a probe forward pass,
-                     write a model card. This is NOT training — the model
-                     weights are fixed; the stage only verifies that the
-                     runtime can load them before spending compute on the
-                     full evaluation.
-    * ``evaluate`` — run the deployed detector over the evaluation manifest and
-                     record a confusion matrix.
-    * ``publish``  — upsert the summary row into Postgres.
+* ``prepare_dataset``  — list mission frames + labels for ``ds`` and write
+                         a deterministic dataset manifest.
+* ``evaluate_model``   — load the deployed detector, run it over the
+                         dataset manifest, write a confusion-matrix report.
+* ``publish_metrics``  — upsert one summary row per mission into Postgres.
+
+Idempotency by design
+---------------------
+There is no skip-by-exists, no ``force`` flag, no fingerprint short-circuit.
+A rerun of the DAG for an existing ``ds`` is **always** meaningful:
+
+* S3 ``put_object`` is atomic and overwrites — recomputing
+  ``dataset.json`` / ``evaluation.json`` simply replaces the previous
+  artifact in place.
+* The ``publish_metrics`` stage uses
+  ``INSERT ... ON CONFLICT (ds, mission_id, model_version, code_version)
+  DO UPDATE`` — old rows get refreshed, new missions get inserted.
+* Mission discovery is fresh on every stage (the CLI lists S3 anew),
+  so a mission added between runs is automatically picked up.
+
+This is the textbook ``PUT + UPSERT + fresh LIST`` pattern. The combination
+gives correct rerun semantics without any code path that decides
+"this work is already done, skip it".
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -41,7 +49,7 @@ class StageStorage(Protocol):
         """Read and return the JSON artifact stored at *key*."""
 
     def write_json(self, key: str, payload: dict[str, object]) -> None:
-        """Serialise *payload* as JSON and write it to *key*."""
+        """Serialise *payload* as JSON and write it to *key* (overwrites)."""
 
     def uri(self, key: str) -> str:
         """Return the canonical URI for *key*."""
@@ -52,7 +60,7 @@ class StageStorage(Protocol):
 
 @dataclass(frozen=True)
 class PipelinePaths:
-    """Builds deterministic artifact keys for every stage."""
+    """Builds deterministic artifact keys for one mission/ds."""
 
     prefix: str
     mission_id: str
@@ -64,24 +72,22 @@ class PipelinePaths:
     def base(self) -> str:
         """Return the common key prefix for all artifacts in this run."""
         prefix = self.prefix.strip("/")
-        root = f"ml_pipeline/mission={self.mission_id}/ds={self.ds}"
+        root = f"ml_pipeline/ds={self.ds}/mission={self.mission_id}"
         return f"{prefix}/{root}" if prefix else root
 
     @property
-    def data_key(self) -> str:
+    def dataset_key(self) -> str:
         """Return the storage key for the dataset manifest."""
         return f"{self.base}/dataset.json"
 
     @property
-    def model_key(self) -> str:
-        """Return the storage key for the trained model card."""
-        mv = _slug(self.model_version)
-        cv = _slug(self.code_version)
-        return f"{self.base}/model_{mv}_{cv}.json"
-
-    @property
     def evaluation_key(self) -> str:
-        """Return the storage key for the evaluation report."""
+        """Return the storage key for the evaluation report.
+
+        The model + code version are part of the filename so that several
+        evaluations of the same dataset (e.g. comparing two model versions)
+        can coexist for the same ``(ds, mission)`` partition.
+        """
         mv = _slug(self.model_version)
         cv = _slug(self.code_version)
         return f"{self.base}/evaluation_{mv}_{cv}.json"
@@ -89,7 +95,7 @@ class PipelinePaths:
 
 @dataclass
 class ValidationCounts:
-    """Accumulated confusion-matrix counters for validation."""
+    """Accumulated confusion-matrix counters for evaluation."""
 
     tp: int = 0
     tn: int = 0
@@ -116,7 +122,7 @@ class ValidationCounts:
     @property
     def accuracy(self) -> float:
         if self.total <= 0:
-            raise RuntimeError("validation has no processable samples")
+            return 1.0
         return round((self.tp + self.tn) / self.total, 4)
 
     @property
@@ -134,35 +140,23 @@ class ValidationCounts:
         return round(self.tp / predicted_positives, 4)
 
 
-# ── Stage 1: data preparation ──────────────────────────────────
+# ── Stage 1: prepare_dataset ────────────────────────────────────
 
 
-def run_data_stage(
+def run_prepare_dataset_stage(
     store: StageStorage,
     paths: PipelinePaths,
     *,
-    force: bool = False,
-    mission_loader=None,
+    mission_loader,
 ) -> dict[str, object]:
-    """Build dataset manifest from real mission frames."""
-    if mission_loader is None:
-        raise RuntimeError("mission_loader is required for data stage")
+    """Build a dataset manifest from a mission's frames and labels.
 
+    Always recomputes and overwrites — that's the whole point of the
+    rerun semantics. If the source has new frames or new labels, they
+    end up in the new manifest; if nothing changed, the manifest is
+    rewritten with the same content (no-op for downstream stages).
+    """
     mission_input = mission_loader()
-    source_fingerprint = _mission_source_fingerprint(mission_input)
-    dataset_changed = False
-    if store.exists(paths.data_key) and not force:
-        existing_dataset = store.read_json(paths.data_key)
-        existing_fingerprint = _dataset_source_fingerprint(existing_dataset)
-        if existing_fingerprint == source_fingerprint:
-            return _skip(
-                "data",
-                store.uri(paths.data_key),
-                reason="source_unchanged",
-                source_fingerprint=source_fingerprint,
-            )
-        dataset_changed = True
-
     valid_frames = [frame for frame in mission_input.frames if not frame.is_corrupted]
     corrupted_count = len(mission_input.frames) - len(valid_frames)
     if not valid_frames:
@@ -171,12 +165,11 @@ def run_data_stage(
     positives = sum(1 for frame in valid_frames if frame.gt_person_present)
 
     payload: dict[str, object] = {
-        "stage": "data",
+        "stage": "prepare_dataset",
         "created_at": _now_iso(),
         "mission_id": paths.mission_id,
         "ds": paths.ds,
         "source_uri": mission_input.source_uri,
-        "source_fingerprint": source_fingerprint,
         "gt_available": mission_input.gt_available,
         "rows_total": len(valid_frames),
         "rows_positive": positives,
@@ -189,168 +182,60 @@ def run_data_stage(
             }
             for frame in valid_frames
         ],
-        "feature_hash": hashlib.sha256(
-            f"{paths.mission_id}:{paths.ds}".encode()
-        ).hexdigest()[:16],
     }
-    store.write_json(paths.data_key, payload)
-    result = _done("data", store.uri(paths.data_key))
-    result["source_fingerprint"] = source_fingerprint
-    result["recomputed_due_to_source_change"] = dataset_changed
-    return result
+    store.write_json(paths.dataset_key, payload)
+    return _done("prepare_dataset", store.uri(paths.dataset_key))
 
 
-# ── Stage 2: warmup (load deployed model + probe) ──────────────
+# ── Stage 2: evaluate_model ─────────────────────────────────────
 
 
-def run_warmup_stage(
+def run_evaluate_model_stage(
     store: StageStorage,
     paths: PipelinePaths,
     *,
-    force: bool = False,
-    model_probe=None,
+    detector_predict,
+    detector_warmup=None,
 ) -> dict[str, object]:
-    """Load the deployed detector, run a probe, write a model card.
+    """Run the deployed detector over the dataset manifest.
 
-    This stage does NOT train anything — weights are fixed. Its job is
-    fail-fast: if the runtime cannot load the model, we stop here before
-    spending compute on the full ``evaluate`` stage.
+    Loads the dataset built by ``prepare_dataset``, optionally probes
+    the detector once at the start (fail-fast if the runtime can't load
+    the model), and runs the predictor over every frame to build a
+    confusion matrix. The result is written to S3 (overwrites any prior
+    evaluation for this ``(ds, mission, model, code)``).
     """
-    if not store.exists(paths.data_key):
-        raise RuntimeError(f"dataset is missing: {store.uri(paths.data_key)}")
-
-    dataset = store.read_json(paths.data_key)
-    source_fingerprint = _dataset_source_fingerprint(dataset)
-    model_changed = False
-    if store.exists(paths.model_key) and not force:
-        existing_model = store.read_json(paths.model_key)
-        if existing_model.get("source_fingerprint") == source_fingerprint:
-            return _skip(
-                "warmup",
-                store.uri(paths.model_key),
-                reason="source_unchanged",
-                source_fingerprint=source_fingerprint,
-            )
-        model_changed = True
-
-    rows_total = _as_int(dataset.get("rows_total"), field_name="rows_total")
-    rows_positive = _as_int(dataset.get("rows_positive"), field_name="rows_positive")
-    if rows_total <= 0:
-        raise RuntimeError("dataset has zero rows")
-    if model_probe is None:
-        raise RuntimeError("model_probe is required for warmup stage")
-
-    model_meta = model_probe()
-    if not isinstance(model_meta, dict):
-        raise RuntimeError("model_probe must return a dict")
-
-    class_ratio = rows_positive / rows_total
-    payload: dict[str, object] = {
-        "stage": "warmup",
-        "created_at": _now_iso(),
-        "mission_id": paths.mission_id,
-        "ds": paths.ds,
-        "source_fingerprint": source_fingerprint,
-        "model_version": paths.model_version,
-        "code_version": paths.code_version,
-        "dataset_uri": store.uri(paths.data_key),
-        "class_ratio": round(class_ratio, 6),
-        "evaluation_count": _as_int(
-            dataset.get("evaluation_count"), field_name="evaluation_count"
-        ),
-        "model_runtime": str(model_meta.get("runtime", "unknown")),
-        "model_url": str(model_meta.get("model_url", "")),
-        "model_ready": bool(model_meta.get("model_ready", True)),
-        "checkpoint_hash": hashlib.sha256(
-            f"{paths.model_version}:{paths.code_version}:{dataset}".encode()
-        ).hexdigest()[:16],
-    }
-    store.write_json(paths.model_key, payload)
-    result = _done("warmup", store.uri(paths.model_key))
-    result["source_fingerprint"] = source_fingerprint
-    result["recomputed_due_to_source_change"] = model_changed
-    return result
-
-
-# ── Stage 3: evaluate deployed detector on mission manifest ─────
-
-
-def _metrics_from_evaluation(payload: dict[str, object]) -> dict[str, object]:
-    """Pick metric fields out of an evaluation artifact for log output."""
-    return {
-        field: payload.get(field)
-        for field in (
-            "tp",
-            "tn",
-            "fp",
-            "fn",
-            "detector_errors",
-            "accuracy",
-            "precision",
-            "recall",
-            "gt_available",
-            "passed",
-        )
-    }
-
-
-def run_evaluate_stage(
-    store: StageStorage,
-    paths: PipelinePaths,
-    *,
-    force: bool = False,
-    detector_predict=None,
-) -> dict[str, object]:
-    """Evaluate the deployed detector on all valid mission frames.
-
-    This is the metric-generating stage: it runs the detector on every
-    frame of the evaluation manifest, builds a confusion matrix, and records
-    accuracy / precision / recall alongside the raw counts. It is intentionally NOT
-    a quality gate on accuracy — GT coverage on production mission data
-    is partial, so accuracy is an observability signal, not a pass/fail
-    threshold. The only hard failure condition is a detector crash on a
-    frame (captured in ``detector_errors``).
-    """
-    _require_evaluation_prerequisites(store, paths)
+    if not store.exists(paths.dataset_key):
+        raise RuntimeError(f"dataset is missing: {store.uri(paths.dataset_key)}")
     if detector_predict is None:
-        raise RuntimeError("detector_predict is required for evaluate stage")
+        raise RuntimeError("detector_predict is required for evaluate_model stage")
 
-    dataset = store.read_json(paths.data_key)
-    source_fingerprint = _dataset_source_fingerprint(dataset)
-    evaluation_changed = False
-    if store.exists(paths.evaluation_key) and not force:
-        existing_evaluation = store.read_json(paths.evaluation_key)
-        if existing_evaluation.get("source_fingerprint") == source_fingerprint:
-            return _skip(
-                "evaluate",
-                store.uri(paths.evaluation_key),
-                reason="source_unchanged",
-                source_fingerprint=source_fingerprint,
-            )
-        evaluation_changed = True
+    if detector_warmup is not None:
+        detector_warmup()
 
+    dataset = store.read_json(paths.dataset_key)
     _ensure_dataset_has_rows(dataset)
     gt_available = bool(dataset.get("gt_available", True))
     evaluation_manifest = _parse_evaluation_manifest(dataset)
-    counts = _evaluate_validation_manifest(
+    counts = _evaluate(
         evaluation_manifest=evaluation_manifest,
         detector_predict=detector_predict,
     )
 
     payload: dict[str, object] = {
-        "stage": "evaluate",
+        "stage": "evaluate_model",
         "created_at": _now_iso(),
         "mission_id": paths.mission_id,
         "ds": paths.ds,
-        "source_fingerprint": source_fingerprint,
-        "dataset_uri": store.uri(paths.data_key),
-        "model_uri": store.uri(paths.model_key),
+        "model_version": paths.model_version,
+        "code_version": paths.code_version,
+        "dataset_uri": store.uri(paths.dataset_key),
         "tp": counts.tp,
         "tn": counts.tn,
         "fp": counts.fp,
         "fn": counts.fn,
         "detector_errors": counts.detector_errors,
-        "accuracy": counts.accuracy if counts.total > 0 else 1.0,
+        "accuracy": counts.accuracy,
         "precision": counts.precision,
         "recall": counts.recall,
         "gt_available": gt_available,
@@ -362,14 +247,12 @@ def run_evaluate_stage(
         raise RuntimeError(
             f"evaluation failed: detector_errors={counts.detector_errors}"
         )
-    result = _done("evaluate", store.uri(paths.evaluation_key))
-    result["source_fingerprint"] = source_fingerprint
-    result["recomputed_due_to_source_change"] = evaluation_changed
-    result["metrics"] = _metrics_from_evaluation(payload)
+    result = _done("evaluate_model", store.uri(paths.evaluation_key))
+    result["metrics"] = _metric_summary(payload)
     return result
 
 
-# ── Stage 4: publish summary metrics to Postgres ───────────────
+# ── Stage 3: publish_metrics ────────────────────────────────────
 
 
 class BatchMetricsWriter(Protocol):
@@ -379,33 +262,28 @@ class BatchMetricsWriter(Protocol):
         """Upsert one summary row into the backing store."""
 
 
-def run_publish_stage(
+def run_publish_metrics_stage(
     store: StageStorage,
     paths: PipelinePaths,
     *,
     metrics_writer,
     record_factory,
 ) -> dict[str, object]:
-    """Read stage artifacts and upsert a summary row.
+    """Read stage artifacts and upsert one summary row into Postgres.
 
-    This stage is the only place where the batch pipeline writes into
-    the application Postgres. It is always safe to re-run — the
-    repository uses ``ON CONFLICT ... DO UPDATE`` keyed on
-    ``(ds, mission_id, model_version, code_version)``, so rerunning the
-    DAG for the same ds updates the row in place, while rerunning for a
-    different ds (e.g. via ``airflow dags backfill``) inserts a new row.
+    This stage is the only place where the batch pipeline writes into the
+    application Postgres. It is always safe to re-run — the repository
+    uses ``ON CONFLICT (ds, mission_id, model_version, code_version) DO
+    UPDATE``, so re-running for the same ``ds`` overwrites the row in
+    place, while a backfill across a date range inserts one row per ``ds``
+    (one per ``(ds, mission)`` to be exact).
     """
-    for required_key, label in (
-        (paths.data_key, "dataset"),
-        (paths.model_key, "model"),
-        (paths.evaluation_key, "evaluation"),
-    ):
-        if not store.exists(required_key):
-            raise RuntimeError(
-                f"{label} artifact is missing: {store.uri(required_key)}"
-            )
+    if not store.exists(paths.dataset_key):
+        raise RuntimeError(f"dataset is missing: {store.uri(paths.dataset_key)}")
+    if not store.exists(paths.evaluation_key):
+        raise RuntimeError(f"evaluation is missing: {store.uri(paths.evaluation_key)}")
 
-    dataset = store.read_json(paths.data_key)
+    dataset = store.read_json(paths.dataset_key)
     evaluation = store.read_json(paths.evaluation_key)
 
     record = record_factory(
@@ -413,18 +291,17 @@ def run_publish_stage(
         dataset=dataset,
         evaluation=evaluation,
         artifact_uris={
-            "dataset_uri": store.uri(paths.data_key),
-            "model_uri": store.uri(paths.model_key),
+            "dataset_uri": store.uri(paths.dataset_key),
             "evaluation_uri": store.uri(paths.evaluation_key),
         },
     )
     metrics_writer.upsert(record)
     return {
-        "stage": "publish",
+        "stage": "publish_metrics",
         "status": "completed",
         "ds": paths.ds,
         "mission_id": paths.mission_id,
-        "metrics": _metrics_from_evaluation(evaluation)
+        "metrics": _metric_summary(evaluation)
         | {
             "rows_total": dataset.get("rows_total"),
             "rows_positive": dataset.get("rows_positive"),
@@ -437,53 +314,8 @@ def run_publish_stage(
 # ── Helpers ─────────────────────────────────────────────────────
 
 
-def _skip(
-    stage: str,
-    uri: str,
-    *,
-    reason: str | None = None,
-    source_fingerprint: str | None = None,
-) -> dict[str, object]:
-    result: dict[str, object] = {
-        "stage": stage,
-        "status": "idempotent_skip",
-        "output_uri": uri,
-    }
-    if reason:
-        result["skip_reason"] = reason
-    if source_fingerprint:
-        result["source_fingerprint"] = source_fingerprint
-    return result
-
-
 def _done(stage: str, uri: str) -> dict[str, object]:
     return {"stage": stage, "status": "completed", "output_uri": uri}
-
-
-def _mission_source_fingerprint(mission_input: object) -> str:
-    frames_raw = getattr(mission_input, "frames", [])
-    records: list[tuple[int, str, bool, bool]] = []
-    for frame in frames_raw:
-        frame_id = int(getattr(frame, "frame_id", 0))
-        image_uri = str(getattr(frame, "image_uri", ""))
-        gt_person_present = bool(getattr(frame, "gt_person_present", False))
-        is_corrupted = bool(getattr(frame, "is_corrupted", False))
-        records.append((frame_id, image_uri, gt_person_present, is_corrupted))
-    records.sort()
-    payload = {
-        "source_uri": str(getattr(mission_input, "source_uri", "")),
-        "gt_available": bool(getattr(mission_input, "gt_available", False)),
-        "frames": records,
-    }
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
-
-
-def _dataset_source_fingerprint(dataset: dict[str, object]) -> str:
-    value = dataset.get("source_fingerprint")
-    if isinstance(value, str) and value.strip():
-        return value
-    raise RuntimeError("source_fingerprint is missing in dataset artifact")
 
 
 def _slug(value: str) -> str:
@@ -523,16 +355,6 @@ def _as_bool(value: object, *, field_name: str) -> bool:
     raise RuntimeError(f"{field_name} must be boolean")
 
 
-def _require_evaluation_prerequisites(
-    store: StageStorage,
-    paths: PipelinePaths,
-) -> None:
-    if not store.exists(paths.data_key):
-        raise RuntimeError(f"dataset is missing: {store.uri(paths.data_key)}")
-    if not store.exists(paths.model_key):
-        raise RuntimeError(f"model artifact is missing: {store.uri(paths.model_key)}")
-
-
 def _ensure_dataset_has_rows(dataset: dict[str, object]) -> None:
     rows_total = _as_int(dataset.get("rows_total"), field_name="rows_total")
     if rows_total <= 0:
@@ -540,15 +362,15 @@ def _ensure_dataset_has_rows(dataset: dict[str, object]) -> None:
 
 
 def _parse_evaluation_manifest(dataset: dict[str, object]) -> list[dict[str, object]]:
-    evaluation_manifest_raw = dataset.get("evaluation_manifest")
-    if not isinstance(evaluation_manifest_raw, list) or not evaluation_manifest_raw:
+    raw = dataset.get("evaluation_manifest")
+    if not isinstance(raw, list) or not raw:
         raise RuntimeError("evaluation_manifest is missing in dataset artifact")
-    if not all(isinstance(item, dict) for item in evaluation_manifest_raw):
+    if not all(isinstance(item, dict) for item in raw):
         raise RuntimeError("evaluation_manifest item must be an object")
-    return [item for item in evaluation_manifest_raw if isinstance(item, dict)]
+    return [item for item in raw if isinstance(item, dict)]
 
 
-def _evaluate_validation_manifest(
+def _evaluate(
     *,
     evaluation_manifest: list[dict[str, object]],
     detector_predict,
@@ -570,13 +392,26 @@ def _evaluate_validation_manifest(
     return counts
 
 
-def print_result(result: dict[str, object]) -> None:
-    """Print stage result to stdout in a log-friendly form.
+def _metric_summary(payload: dict[str, object]) -> dict[str, object]:
+    return {
+        field: payload.get(field)
+        for field in (
+            "tp",
+            "tn",
+            "fp",
+            "fn",
+            "detector_errors",
+            "accuracy",
+            "precision",
+            "recall",
+            "gt_available",
+            "passed",
+        )
+    }
 
-    Metrics (if present) are printed as a readable key=value block so they
-    land in Airflow task logs as actual numbers, not just an S3 URI pointing
-    at a report JSON that nobody opens during a live defense.
-    """
+
+def print_result(result: dict[str, object]) -> None:
+    """Print stage result to stdout in a log-friendly form."""
     stage = result.get("stage", "?")
     status = result.get("status", "?")
     header_parts = [f"[{stage}] status={status}"]
@@ -586,12 +421,6 @@ def print_result(result: dict[str, object]) -> None:
         header_parts.append(f"mission={result['mission_id']}")
     if "ds" in result:
         header_parts.append(f"ds={result['ds']}")
-    if "skip_reason" in result:
-        header_parts.append(f"reason={result['skip_reason']}")
-    if "source_fingerprint" in result:
-        header_parts.append(f"fp={result['source_fingerprint']}")
-    if result.get("recomputed_due_to_source_change"):
-        header_parts.append("recomputed=true")
     print(" ".join(header_parts))
     metrics = result.get("metrics")
     if isinstance(metrics, dict) and metrics:

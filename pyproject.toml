@@ -35,11 +35,15 @@ postgres = [
 batch = [
   "boto3==1.42.65",
   "psycopg[binary]==3.2.3",
+  "pydantic>=2,<3",
+  "pydantic-settings==2.7.1",
 ]
 airflow = [
   "apache-airflow==2.9.3",
   "apache-airflow-providers-docker==3.11.0",
   "psycopg2-binary==2.9.10",
+  "pydantic>=2,<3",
+  "pydantic-settings==2.7.1",
 ]
 
 [[tool.uv.index]]

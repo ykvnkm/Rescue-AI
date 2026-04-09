@@ -1,5 +1,8 @@
+"""Tests for the canonical S3 mission source."""
+
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from rescue_ai.infrastructure.artifact_storage import S3ArtifactBackendSettings
@@ -13,11 +16,33 @@ class _FakeS3Client:
     def list_objects_v2(self, **kwargs):
         prefix = str(kwargs["Prefix"])
         max_keys = kwargs.get("MaxKeys")
-        keys = [key for key in self._mapping if key.startswith(prefix)]
-        keys.sort()
+        keys = sorted(key for key in self._mapping if key.startswith(prefix))
         if isinstance(max_keys, int):
             keys = keys[:max_keys]
         return {"Contents": [{"Key": key} for key in keys]}
+
+    def get_paginator(self, _name: str):
+        client = self
+
+        class _Paginator:
+            def paginate(self, **kwargs):
+                yield client.list_objects_v2(**kwargs)
+
+        return _Paginator()
+
+    def get_object(self, **kwargs):
+        key = kwargs["Key"]
+        if key not in self._mapping:
+            raise KeyError(key)
+
+        class _Body:
+            def __init__(self, data: bytes) -> None:
+                self._data = data
+
+            def read(self) -> bytes:
+                return self._data
+
+        return {"Body": _Body(self._mapping[key])}
 
     def download_file(self, bucket_name: str, key: str, filename: str):
         _ = bucket_name
@@ -35,19 +60,14 @@ class _FakeBoto3:
         return self._client
 
 
-def test_s3_mission_source_marks_corrupted_images(monkeypatch) -> None:
-    mapping = {
-        "missions/mission-1/2026-03-01/images/frame_0001.jpg": b"\xff\xd8\xff\xd9",
-        "missions/mission-1/2026-03-01/images/frame_0002.jpg": b"not-an-image",
-    }
+def _build_source(monkeypatch, mapping: dict[str, bytes]) -> S3MissionSource:
     fake_client = _FakeS3Client(mapping)
     fake_boto3 = _FakeBoto3(fake_client)
-
     import sys
 
     monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
 
-    source = S3MissionSource(
+    return S3MissionSource(
         settings=S3ArtifactBackendSettings(
             endpoint="https://storage.yandexcloud.net",
             region="ru-central1",
@@ -58,12 +78,59 @@ def test_s3_mission_source_marks_corrupted_images(monkeypatch) -> None:
         source_prefix="missions",
         fps=2.0,
     )
-    mission_input = source.load(
-        mission_id="mission-1",
-        ds="2026-03-01",
-    )
+
+
+def test_loads_canonical_ds_partitioned_layout(monkeypatch) -> None:
+    mapping = {
+        "missions/ds=2026-04-09/mission-1/frames/frame_0001.jpg": b"\xff\xd8\xff\xd9",
+        "missions/ds=2026-04-09/mission-1/frames/frame_0002.jpg": b"\xff\xd8\xff\xd9",
+        "missions/ds=2026-04-09/mission-1/labels.json": json.dumps(
+            {"frame_0001.jpg": True, "frame_0002.jpg": False}
+        ).encode("utf-8"),
+    }
+    source = _build_source(monkeypatch, mapping)
+    mission_input = source.load(mission_id="mission-1", ds="2026-04-09")
 
     assert len(mission_input.frames) == 2
+    assert mission_input.gt_available is True
+    assert mission_input.frames[0].gt_person_present is True
+    assert mission_input.frames[1].gt_person_present is False
+    assert mission_input.source_uri == "s3://bucket/missions/ds=2026-04-09/mission-1"
+
+
+def test_marks_corrupted_image(monkeypatch) -> None:
+    mapping = {
+        "missions/ds=2026-04-09/mission-1/frames/frame_0001.jpg": b"\xff\xd8\xff\xd9",
+        "missions/ds=2026-04-09/mission-1/frames/frame_0002.jpg": b"not-an-image",
+    }
+    source = _build_source(monkeypatch, mapping)
+    mission_input = source.load(mission_id="mission-1", ds="2026-04-09")
+
     assert mission_input.frames[0].is_corrupted is False
     assert mission_input.frames[1].is_corrupted is True
-    assert mission_input.source_uri == "s3://bucket/missions/mission-1/2026-03-01"
+    assert mission_input.gt_available is False  # no labels.json present
+
+
+def test_missing_frames_directory_raises(monkeypatch) -> None:
+    mapping: dict[str, bytes] = {}
+    source = _build_source(monkeypatch, mapping)
+
+    try:
+        source.load(mission_id="mission-1", ds="2026-04-09")
+    except ValueError as error:
+        assert "No frame images found" in str(error)
+    else:
+        raise AssertionError("expected ValueError on missing frames")
+
+
+def test_labels_support_nested_shape(monkeypatch) -> None:
+    mapping = {
+        "missions/ds=2026-04-09/mission-1/frames/frame_0001.jpg": b"\xff\xd8\xff\xd9",
+        "missions/ds=2026-04-09/mission-1/labels.json": json.dumps(
+            {"frame_0001.jpg": {"gt_person_present": True}}
+        ).encode("utf-8"),
+    }
+    source = _build_source(monkeypatch, mapping)
+    mission_input = source.load(mission_id="mission-1", ds="2026-04-09")
+
+    assert mission_input.frames[0].gt_person_present is True

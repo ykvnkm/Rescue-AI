@@ -17,33 +17,6 @@ def teardown_function() -> None:
     get_settings.cache_clear()
 
 
-def test_build_artifact_store_uses_s3_settings(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    class _FakeS3ArtifactStorage:
-        def __init__(self, settings) -> None:
-            captured["endpoint"] = settings.endpoint
-            captured["bucket"] = settings.bucket
-            captured["access_key_id"] = settings.access_key_id
-            captured["secret_access_key"] = settings.secret_access_key
-            captured["region"] = settings.region
-
-    monkeypatch.setenv("ARTIFACTS_S3_BUCKET", "bucket-a")
-    monkeypatch.setenv("ARTIFACTS_S3_ENDPOINT", "https://storage.yandexcloud.net")
-    monkeypatch.setenv("ARTIFACTS_S3_ACCESS_KEY_ID", "key-a")
-    monkeypatch.setenv("ARTIFACTS_S3_SECRET_ACCESS_KEY", "secret-a")
-    monkeypatch.setenv("ARTIFACTS_S3_REGION", "ru-central1")
-    monkeypatch.setattr(batch_main, "S3ArtifactStorage", _FakeS3ArtifactStorage)
-
-    _ = batch_main.build_artifact_store()
-
-    assert captured["bucket"] == "bucket-a"
-    assert captured["endpoint"] == "https://storage.yandexcloud.net"
-    assert captured["access_key_id"] == "key-a"
-    assert captured["secret_access_key"] == "secret-a"
-    assert captured["region"] == "ru-central1"
-
-
 def test_build_source_uses_s3_prefix(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -72,23 +45,28 @@ def test_parse_args_smoke(monkeypatch) -> None:
         [
             "batch",
             "--stage",
-            "data",
-            "--mission-id",
-            "m",
+            "prepare_dataset",
             "--ds",
-            "2026-03-01",
-            "--force",
+            "2026-04-09",
         ],
     )
     args = batch_main.parse_args()
 
     assert isinstance(args, argparse.Namespace)
-    assert args.stage == "data"
-    assert args.force is True
+    assert args.stage == "prepare_dataset"
+    assert args.ds == "2026-04-09"
 
 
-def test_main_data_stage_smoke(monkeypatch, capsys) -> None:
-    """Smoke test: run data stage end-to-end via main()."""
+def _setup_env(monkeypatch) -> None:
+    monkeypatch.setenv("ARTIFACTS_S3_BUCKET", "bucket-a")
+    monkeypatch.setenv("ARTIFACTS_S3_ACCESS_KEY_ID", "key-a")
+    monkeypatch.setenv("ARTIFACTS_S3_SECRET_ACCESS_KEY", "secret-a")
+    monkeypatch.setenv("ARTIFACTS_S3_PREFIX", "missions")
+
+
+def test_main_prepare_dataset_stage_smoke(monkeypatch, capsys) -> None:
+    """Smoke test: run prepare_dataset stage end-to-end via main()."""
+    _setup_env(monkeypatch)
 
     class _FakeStore:
         pass
@@ -100,13 +78,12 @@ def test_main_data_stage_smoke(monkeypatch, capsys) -> None:
 
     calls: dict[str, object] = {}
 
-    def _fake_run_data_stage(store, paths, *, force, mission_loader):
+    def _fake_run(store, paths, *, mission_loader):
         _ = mission_loader
         calls["store"] = store
         calls["mission_id"] = paths.mission_id
         calls["ds"] = paths.ds
-        calls["force"] = force
-        return {"stage": "data", "status": "completed"}
+        return {"stage": "prepare_dataset", "status": "completed"}
 
     def _fake_build_stage_store() -> _FakeStore:
         return _FakeStore()
@@ -114,20 +91,27 @@ def test_main_data_stage_smoke(monkeypatch, capsys) -> None:
     def _fake_build_source() -> _FakeSource:
         return _FakeSource()
 
+    def _fake_resolve_mission_ids(args, *, client, batch_prefix):
+        _ = (args, client, batch_prefix)
+        return ["m"]
+
+    def _fake_build_s3_client():
+        return object()
+
     monkeypatch.setattr(batch_main, "build_stage_store", _fake_build_stage_store)
     monkeypatch.setattr(batch_main, "build_source", _fake_build_source)
-    monkeypatch.setattr(batch_main, "run_data_stage", _fake_run_data_stage)
+    monkeypatch.setattr(batch_main, "_resolve_mission_ids", _fake_resolve_mission_ids)
+    monkeypatch.setattr(batch_main, "_build_s3_client", _fake_build_s3_client)
+    monkeypatch.setattr(batch_main, "run_prepare_dataset_stage", _fake_run)
 
     monkeypatch.setattr(
         "sys.argv",
         [
             "batch",
             "--stage",
-            "data",
-            "--mission-id",
-            "m",
+            "prepare_dataset",
             "--ds",
-            "2026-03-01",
+            "2026-04-09",
         ],
     )
 
@@ -136,9 +120,40 @@ def test_main_data_stage_smoke(monkeypatch, capsys) -> None:
     captured = capsys.readouterr().out
     json_line = captured.strip().splitlines()[-1]
     output = json.loads(json_line)
-    assert output["stage"] == "data"
+    assert output["stage"] == "prepare_dataset"
     assert output["status"] == "completed"
-    assert "[data] status=completed" in captured
+    assert "[prepare_dataset] status=completed" in captured
     assert calls["mission_id"] == "m"
-    assert calls["ds"] == "2026-03-01"
-    assert calls["force"] is False
+    assert calls["ds"] == "2026-04-09"
+
+
+def test_main_no_missions_logs_and_exits(monkeypatch, capsys) -> None:
+    """Empty discovery → log line, no row, exit success."""
+    _setup_env(monkeypatch)
+
+    def _fake_resolve_mission_ids(args, *, client, batch_prefix):
+        _ = (args, client, batch_prefix)
+        return []
+
+    def _new_object() -> object:
+        return object()
+
+    monkeypatch.setattr(batch_main, "build_stage_store", _new_object)
+    monkeypatch.setattr(batch_main, "_build_s3_client", _new_object)
+    monkeypatch.setattr(batch_main, "_resolve_mission_ids", _fake_resolve_mission_ids)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "batch",
+            "--stage",
+            "prepare_dataset",
+            "--ds",
+            "2026-04-09",
+        ],
+    )
+
+    batch_main.main()
+
+    captured = capsys.readouterr().out
+    assert "no missions discovered for ds=2026-04-09" in captured
