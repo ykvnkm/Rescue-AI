@@ -134,7 +134,9 @@ class S3MissionSource:
             if coco_positive_filenames is not None:
                 gt_present = frame_path.name in coco_positive_filenames
             else:
-                gt_present = bool(_label_for(labels, frame_path.name)) if labels else False
+                gt_present = (
+                    bool(_label_for(labels, frame_path.name)) if labels else False
+                )
             s3_uri = f"s3://{self._bucket}/{source_root}/frames/{frame_path.name}"
             frames.append(
                 FrameRecord(
@@ -173,7 +175,9 @@ def _label_for(labels: dict[str, object] | None, filename: str) -> bool:
     return False
 
 
-def _coco_person_positive_filenames(labels: dict[str, object] | None) -> set[str] | None:
+def _coco_person_positive_filenames(
+    labels: dict[str, object] | None,
+) -> set[str] | None:
     """Return positive frame filenames if labels follow COCO shape.
 
     Returns ``None`` when payload is not COCO-like, so callers can fallback
