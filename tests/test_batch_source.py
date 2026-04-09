@@ -82,9 +82,9 @@ def _build_source(monkeypatch, mapping: dict[str, bytes]) -> S3MissionSource:
 
 def test_loads_canonical_ds_partitioned_layout(monkeypatch) -> None:
     mapping = {
-        "missions/ds=2026-04-09/mission-1/frames/frame_0001.jpg": b"\xff\xd8\xff\xd9",
-        "missions/ds=2026-04-09/mission-1/frames/frame_0002.jpg": b"\xff\xd8\xff\xd9",
-        "missions/ds=2026-04-09/mission-1/labels.json": json.dumps(
+        "missions/2026-04-09/mission-1/frames/frame_0001.jpg": b"\xff\xd8\xff\xd9",
+        "missions/2026-04-09/mission-1/frames/frame_0002.jpg": b"\xff\xd8\xff\xd9",
+        "missions/2026-04-09/mission-1/labels.json": json.dumps(
             {"frame_0001.jpg": True, "frame_0002.jpg": False}
         ).encode("utf-8"),
     }
@@ -95,13 +95,13 @@ def test_loads_canonical_ds_partitioned_layout(monkeypatch) -> None:
     assert mission_input.gt_available is True
     assert mission_input.frames[0].gt_person_present is True
     assert mission_input.frames[1].gt_person_present is False
-    assert mission_input.source_uri == "s3://bucket/missions/ds=2026-04-09/mission-1"
+    assert mission_input.source_uri == "s3://bucket/missions/2026-04-09/mission-1"
 
 
 def test_marks_corrupted_image(monkeypatch) -> None:
     mapping = {
-        "missions/ds=2026-04-09/mission-1/frames/frame_0001.jpg": b"\xff\xd8\xff\xd9",
-        "missions/ds=2026-04-09/mission-1/frames/frame_0002.jpg": b"not-an-image",
+        "missions/2026-04-09/mission-1/frames/frame_0001.jpg": b"\xff\xd8\xff\xd9",
+        "missions/2026-04-09/mission-1/frames/frame_0002.jpg": b"not-an-image",
     }
     source = _build_source(monkeypatch, mapping)
     mission_input = source.load(mission_id="mission-1", ds="2026-04-09")
@@ -125,8 +125,8 @@ def test_missing_frames_directory_raises(monkeypatch) -> None:
 
 def test_labels_support_nested_shape(monkeypatch) -> None:
     mapping = {
-        "missions/ds=2026-04-09/mission-1/frames/frame_0001.jpg": b"\xff\xd8\xff\xd9",
-        "missions/ds=2026-04-09/mission-1/labels.json": json.dumps(
+        "missions/2026-04-09/mission-1/frames/frame_0001.jpg": b"\xff\xd8\xff\xd9",
+        "missions/2026-04-09/mission-1/labels.json": json.dumps(
             {"frame_0001.jpg": {"gt_person_present": True}}
         ).encode("utf-8"),
     }
