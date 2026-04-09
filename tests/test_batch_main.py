@@ -130,7 +130,7 @@ def test_main_prepare_dataset_stage_smoke(monkeypatch, capsys) -> None:
 
 
 def test_main_no_missions_logs_and_exits(monkeypatch, capsys) -> None:
-    """Empty discovery → log line, no row, exit success."""
+    """Empty discovery → log line, special exit code for Airflow skip."""
     _setup_env(monkeypatch)
 
     def _fake_resolve_mission_ids(args, *, client, batch_prefix):
@@ -155,10 +155,40 @@ def test_main_no_missions_logs_and_exits(monkeypatch, capsys) -> None:
         ],
     )
 
-    batch_main.main()
+    with pytest.raises(SystemExit) as exc:
+        batch_main.main()
 
     captured = capsys.readouterr().out
+    assert exc.value.code == batch_main.NO_DATA_EXIT_CODE
     assert "no missions discovered for ds=2026-04-09" in captured
+
+
+def test_main_reads_ds_from_env_when_flag_missing(monkeypatch, capsys) -> None:
+    _setup_env(monkeypatch)
+    monkeypatch.setenv("BATCH_TARGET_DATE", "2026-04-10")
+
+    def _fake_resolve_mission_ids(args, *, client, batch_prefix):
+        _ = (client, batch_prefix)
+        assert args.ds == "2026-04-10"
+        return []
+
+    monkeypatch.setattr(batch_main, "build_stage_store", object)
+    monkeypatch.setattr(batch_main, "_build_s3_client", object)
+    monkeypatch.setattr(batch_main, "_resolve_mission_ids", _fake_resolve_mission_ids)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "batch",
+            "--stage",
+            "prepare_dataset",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        batch_main.main()
+
+    _ = capsys.readouterr()
+    assert exc.value.code == batch_main.NO_DATA_EXIT_CODE
 
 
 def test_build_metrics_record_normalizes_types() -> None:
