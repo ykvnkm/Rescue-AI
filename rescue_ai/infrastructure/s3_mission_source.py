@@ -129,8 +129,14 @@ class S3MissionSource:
         labels: dict[str, Any] | None,
     ) -> list[FrameRecord]:
         frames: list[FrameRecord] = []
+        coco_positive_filenames = _coco_person_positive_filenames(labels)
         for idx, frame_path in enumerate(frame_paths, start=1):
-            gt_present = bool(_label_for(labels, frame_path.name)) if labels else False
+            if coco_positive_filenames is not None:
+                gt_present = frame_path.name in coco_positive_filenames
+            else:
+                gt_present = (
+                    bool(_label_for(labels, frame_path.name)) if labels else False
+                )
             s3_uri = f"s3://{self._bucket}/{source_root}/frames/{frame_path.name}"
             frames.append(
                 FrameRecord(
@@ -167,6 +173,89 @@ def _label_for(labels: dict[str, object] | None, filename: str) -> bool:
     if isinstance(entry, dict):
         return bool(entry.get("gt_person_present"))
     return False
+
+
+def _coco_person_positive_filenames(
+    labels: dict[str, object] | None,
+) -> set[str] | None:
+    """Return positive frame filenames if labels follow COCO shape.
+
+    Returns ``None`` when payload is not COCO-like, so callers can fallback
+    to legacy per-file mapping logic.
+    """
+    if not isinstance(labels, dict):
+        return None
+
+    raw_images = labels.get("images")
+    raw_annotations = labels.get("annotations")
+    if not isinstance(raw_images, list) or not isinstance(raw_annotations, list):
+        return None
+
+    image_id_to_name: dict[int, str] = {}
+    for item in raw_images:
+        if not isinstance(item, dict):
+            continue
+        image_id = item.get("id")
+        file_name = item.get("file_name")
+        if isinstance(image_id, bool) or not isinstance(image_id, int):
+            continue
+        if not isinstance(file_name, str) or not file_name.strip():
+            continue
+        image_id_to_name[image_id] = Path(file_name).name
+
+    if not image_id_to_name:
+        return set()
+
+    person_category_ids = _coco_person_category_ids(labels.get("categories"))
+    positive_image_ids: set[int] = set()
+    for item in raw_annotations:
+        if not isinstance(item, dict):
+            continue
+        image_id = item.get("image_id")
+        if isinstance(image_id, bool) or not isinstance(image_id, int):
+            continue
+        if image_id not in image_id_to_name:
+            continue
+        category_id = item.get("category_id")
+        if not _matches_person_category(category_id, person_category_ids):
+            continue
+        positive_image_ids.add(image_id)
+
+    return {image_id_to_name[image_id] for image_id in positive_image_ids}
+
+
+def _coco_person_category_ids(raw_categories: object) -> set[int] | None:
+    """Resolve COCO category ids for class name ``person``.
+
+    Returns ``None`` when categories are absent/invalid, meaning "do not
+    filter by category id".
+    """
+    if not isinstance(raw_categories, list):
+        return None
+
+    person_ids: set[int] = set()
+    for item in raw_categories:
+        if not isinstance(item, dict):
+            continue
+        category_id = item.get("id")
+        name = item.get("name")
+        if isinstance(category_id, bool) or not isinstance(category_id, int):
+            continue
+        if isinstance(name, str) and name.strip().lower() == "person":
+            person_ids.add(category_id)
+
+    return person_ids if person_ids else None
+
+
+def _matches_person_category(
+    category_id: object, person_category_ids: set[int] | None
+) -> bool:
+    """Return True when annotation category passes the optional person filter."""
+    if person_category_ids is None:
+        return True
+    if isinstance(category_id, bool) or not isinstance(category_id, int):
+        return False
+    return category_id in person_category_ids
 
 
 def _is_corrupted_image(frame_path: Path) -> bool:

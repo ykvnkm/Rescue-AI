@@ -134,3 +134,27 @@ def test_labels_support_nested_shape(monkeypatch) -> None:
     mission_input = source.load(mission_id="mission-1", ds="2026-04-09")
 
     assert mission_input.frames[0].gt_person_present is True
+
+
+def test_labels_support_coco_shape(monkeypatch) -> None:
+    mapping = {
+        "missions/2026-04-09/mission-1/frames/frame_0001.jpg": b"\xff\xd8\xff\xd9",
+        "missions/2026-04-09/mission-1/frames/frame_0002.jpg": b"\xff\xd8\xff\xd9",
+        "missions/2026-04-09/mission-1/labels.json": json.dumps(
+            {
+                "images": [
+                    {"id": 1, "file_name": "frame_0001.jpg"},
+                    {"id": 2, "file_name": "frame_0002.jpg"},
+                ],
+                "annotations": [
+                    {"id": 11, "image_id": 1, "category_id": 1},
+                ],
+                "categories": [{"id": 1, "name": "person"}],
+            }
+        ).encode("utf-8"),
+    }
+    source = _build_source(monkeypatch, mapping)
+    mission_input = source.load(mission_id="mission-1", ds="2026-04-09")
+
+    assert mission_input.frames[0].gt_person_present is True
+    assert mission_input.frames[1].gt_person_present is False
