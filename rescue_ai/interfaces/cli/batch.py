@@ -8,6 +8,7 @@ Invoked one stage at a time by the Airflow DAG.
 from __future__ import annotations
 
 import argparse
+import os
 import tempfile
 from pathlib import Path
 from typing import Any, Callable
@@ -34,6 +35,7 @@ from rescue_ai.infrastructure.yolo_detector import YoloDetector
 STAGES = ("prepare_dataset", "evaluate_model", "publish_metrics")
 DEFAULT_BATCH_OUTPUT_SUFFIX = "batch"
 DEFAULT_SOURCE_FPS = 6.0
+NO_DATA_EXIT_CODE = 42
 
 
 def _build_metrics_record(
@@ -90,14 +92,35 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--stage", required=True, choices=STAGES)
     parser.add_argument(
-        "--ds", required=True, help="Partition date in YYYY-MM-DD format"
+        "--ds",
+        default=None,
+        help=(
+            "Partition date in YYYY-MM-DD format "
+            "(fallback: BATCH_TARGET_DATE env var)"
+        ),
     )
     parser.add_argument(
         "--mission-ids-csv",
-        default="",
-        help="Optional comma-separated allow-list of mission IDs",
+        default=None,
+        help=(
+            "Optional comma-separated allow-list of mission IDs "
+            "(fallback: BATCH_MISSION_IDS_CSV env var)"
+        ),
     )
     return parser.parse_args()
+
+
+def _resolve_ds(ds_arg: str | None) -> str:
+    ds = (ds_arg or "").strip() or os.getenv("BATCH_TARGET_DATE", "").strip()
+    if not ds:
+        raise ValueError("--ds is required or set BATCH_TARGET_DATE in environment")
+    return ds
+
+
+def _resolve_mission_ids_csv(mission_ids_arg: str | None) -> str:
+    return (mission_ids_arg or "").strip() or os.getenv(
+        "BATCH_MISSION_IDS_CSV", ""
+    ).strip()
 
 
 # ── S3 wiring ───────────────────────────────────────────────────
@@ -331,6 +354,8 @@ def _run_publish_metrics(
 def main() -> None:
     """Run a single stage over every mission discovered for ``ds``."""
     args = parse_args()
+    args.ds = _resolve_ds(args.ds)
+    args.mission_ids_csv = _resolve_mission_ids_csv(args.mission_ids_csv)
     settings = get_settings()
 
     store = build_stage_store()
@@ -357,7 +382,7 @@ def main() -> None:
 
     if not mission_ids:
         print(f"[{args.stage}] no missions discovered for ds={args.ds}, nothing to do")
-        return
+        raise SystemExit(NO_DATA_EXIT_CODE)
 
     stage_handlers: dict[
         str,

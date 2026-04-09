@@ -52,8 +52,10 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 
 Канонический контракт stage-runner (`rescue_ai/interfaces/cli/batch.py`):
 
-- Вход: `--stage`, `--ds`, опционально `--mission-ids-csv`.
+- Вход: `--stage`, дата через `--ds` или `BATCH_TARGET_DATE`,
+  опциональный allow-list через `--mission-ids-csv` или `BATCH_MISSION_IDS_CSV`.
 - Выход: `status`, `output_uri` (JSON в stdout).
+- Пустой день: процесс завершаетcя с exit code `42`, а DAG таск помечается как `skipped`.
 
 ## Пошаговый запуск Airflow и что смотреть
 

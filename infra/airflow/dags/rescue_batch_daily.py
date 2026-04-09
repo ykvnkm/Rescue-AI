@@ -12,106 +12,126 @@ from airflow.models.param import Param
 from airflow.providers.docker.operators.docker import DockerOperator
 from pendulum import datetime
 
-# ── Constants ────────────────────────────────────────────────────
-
 DAG_ID = "rescue_batch_pipeline"
 BATCH_IMAGE = os.environ["BATCH_IMAGE"]
+NO_DATA_EXIT_CODE = 42
 
 APP_DB_CONN_ID = "rescue_app_db"
 S3_CONN_ID = "rescue_s3"
 
+TARGET_DATE_TEMPLATE = "{{ params.run_ds | default(ds, true) }}"
+MISSION_IDS_TEMPLATE = "{{ params.mission_ids_csv | default('', true) }}"
 
-def _build_base_env() -> dict[str, str]:
-    db_conn = BaseHook.get_connection(APP_DB_CONN_ID)
-    s3_conn = BaseHook.get_connection(S3_CONN_ID)
-    s3_extra = s3_conn.extra_dejson or {}
+default_args = {
+    "owner": "rescue-ai",
+    "depends_on_past": False,
+    "retries": 1,
+    "retry_delay": timedelta(minutes=15),
+}
 
-    bucket = s3_extra.get("bucket") or s3_extra.get("s3_bucket") or ""
-    prefix = s3_extra.get("prefix") or s3_extra.get("s3_prefix") or "missions"
+_db_conn = BaseHook.get_connection(APP_DB_CONN_ID)
+_s3_conn = BaseHook.get_connection(S3_CONN_ID)
+_s3_extra = _s3_conn.extra_dejson or {}
 
-    return {
-        "DB_DSN": db_conn.get_uri(),
-        "ARTIFACTS_S3_ENDPOINT": s3_extra.get("endpoint_url", ""),
-        "ARTIFACTS_S3_REGION": s3_extra.get("region_name", ""),
-        "ARTIFACTS_S3_ACCESS_KEY_ID": s3_conn.login or "",
-        "ARTIFACTS_S3_SECRET_ACCESS_KEY": s3_conn.password or "",
-        "ARTIFACTS_S3_BUCKET": bucket,
-        "ARTIFACTS_S3_PREFIX": prefix,
-    }
+_TASK_ENV = {
+    "DB_DSN": _db_conn.get_uri(),
+    "ARTIFACTS_S3_ENDPOINT": _s3_extra.get("endpoint_url", ""),
+    "ARTIFACTS_S3_REGION": _s3_extra.get("region_name", ""),
+    "ARTIFACTS_S3_ACCESS_KEY_ID": _s3_conn.login or "",
+    "ARTIFACTS_S3_SECRET_ACCESS_KEY": _s3_conn.password or "",
+    "ARTIFACTS_S3_BUCKET": _s3_extra.get("bucket") or _s3_extra.get("s3_bucket") or "",
+    "ARTIFACTS_S3_PREFIX": _s3_extra.get("prefix")
+    or _s3_extra.get("s3_prefix")
+    or "missions",
+}
 
-
-def _build_stage_command(stage: str) -> list[str]:
-    command = (
-        "python -m rescue_ai.interfaces.cli.batch "
-        f"--stage {stage} "
-        '--ds "{{ params.run_ds | default(ds, true) }}" '
-        "--mission-ids-csv "
-        "\"{{ params.mission_ids_csv | default('', true) }}\""
-    )
-    return ["bash", "-lc", command]
-
-
-# ── DAG definition ──────────────────────────────────────────────
+_COMMON: dict[str, Any] = {
+    "image": BATCH_IMAGE,
+    "docker_url": "unix://var/run/docker.sock",
+    "api_version": "auto",
+    "auto_remove": "success",
+    "mount_tmp_dir": False,
+    "skip_exit_code": NO_DATA_EXIT_CODE,
+}
 
 with DAG(
     dag_id=DAG_ID,
-    start_date=datetime(2026, 4, 1),
+    description="Daily batch ML pipeline over mission artifacts in S3",
+    default_args=default_args,
     schedule="@daily",
+    start_date=datetime(2026, 4, 1),
     catchup=True,
     max_active_runs=1,
-    default_args={
-        "retries": 1,
-        "retry_delay": timedelta(minutes=15),
-    },
     params={
         "run_ds": Param(
             default=None,
             type=["null", "string"],
+            format="date",
             description=(
-                "Optional YYYY-MM-DD override for the partition date. "
-                "Empty -> use the run's logical date ({{ ds }})."
+                "Date to process in YYYY-MM-DD. " "Defaults to the run logical date."
             ),
         ),
         "mission_ids_csv": Param(
             default=None,
             type=["null", "string"],
-            description=(
-                "Optional comma-separated mission IDs allow-list. "
-                "Empty -> process all discovered missions for ds."
-            ),
+            description="Optional comma-separated mission IDs allow-list.",
         ),
     },
     tags=["rescue-ai", "ml-pipeline", "batch"],
 ) as dag:
-    _docker_defaults: dict[str, Any] = {
-        "image": BATCH_IMAGE,
-        "docker_url": "unix://var/run/docker.sock",
-        "api_version": "auto",
-        "force_pull": False,
-        "auto_remove": "success",
-        "mount_tmp_dir": False,
-        "environment": _build_base_env(),
-    }
 
     prepare_dataset = DockerOperator(
         task_id="prepare_dataset",
+        command=[
+            "python",
+            "-m",
+            "rescue_ai.interfaces.cli.batch",
+            "--stage",
+            "prepare_dataset",
+        ],
+        environment={
+            **_TASK_ENV,
+            "BATCH_TARGET_DATE": TARGET_DATE_TEMPLATE,
+            "BATCH_MISSION_IDS_CSV": MISSION_IDS_TEMPLATE,
+        },
         execution_timeout=timedelta(minutes=30),
-        command=_build_stage_command("prepare_dataset"),
-        **_docker_defaults,
+        **_COMMON,
     )
 
     evaluate_model = DockerOperator(
         task_id="evaluate_model",
+        command=[
+            "python",
+            "-m",
+            "rescue_ai.interfaces.cli.batch",
+            "--stage",
+            "evaluate_model",
+        ],
+        environment={
+            **_TASK_ENV,
+            "BATCH_TARGET_DATE": TARGET_DATE_TEMPLATE,
+            "BATCH_MISSION_IDS_CSV": MISSION_IDS_TEMPLATE,
+        },
         execution_timeout=timedelta(hours=1),
-        command=_build_stage_command("evaluate_model"),
-        **_docker_defaults,
+        **_COMMON,
     )
 
     publish_metrics = DockerOperator(
         task_id="publish_metrics",
+        command=[
+            "python",
+            "-m",
+            "rescue_ai.interfaces.cli.batch",
+            "--stage",
+            "publish_metrics",
+        ],
+        environment={
+            **_TASK_ENV,
+            "BATCH_TARGET_DATE": TARGET_DATE_TEMPLATE,
+            "BATCH_MISSION_IDS_CSV": MISSION_IDS_TEMPLATE,
+        },
         execution_timeout=timedelta(minutes=10),
-        command=_build_stage_command("publish_metrics"),
-        **_docker_defaults,
+        **_COMMON,
     )
 
     prepare_dataset.set_downstream(evaluate_model)
