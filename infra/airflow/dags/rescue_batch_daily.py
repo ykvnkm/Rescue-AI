@@ -12,24 +12,16 @@ from airflow.models.param import Param
 from airflow.providers.docker.operators.docker import DockerOperator
 from pendulum import datetime
 
-from rescue_ai.config import get_settings
-
 # ── Constants ────────────────────────────────────────────────────
 
 DAG_ID = "rescue_batch_pipeline"
 BATCH_IMAGE = os.environ["BATCH_IMAGE"]
-DEFAULT_MODEL_VERSION = get_settings().batch.default_model_version
 
 APP_DB_CONN_ID = "rescue_app_db"
 S3_CONN_ID = "rescue_s3"
 
 
 def _build_base_env() -> dict[str, str]:
-    """Compose the env dict passed into every DockerOperator.
-
-    Reads secrets exclusively from Airflow Connections registered via the
-    standard ``AIRFLOW_CONN_*`` environment variable mechanism.
-    """
     db_conn = BaseHook.get_connection(APP_DB_CONN_ID)
     s3_conn = BaseHook.get_connection(S3_CONN_ID)
     s3_extra = s3_conn.extra_dejson or {}
@@ -49,14 +41,12 @@ def _build_base_env() -> dict[str, str]:
 
 
 def _build_stage_command(stage: str) -> list[str]:
-    """Return the templated shell command for one pipeline stage."""
     command = (
         "python -m rescue_ai.interfaces.cli.batch "
         f"--stage {stage} "
-        '--ds "{{ ds }}" '
+        '--ds "{{ params.run_ds | default(ds, true) }}" '
         "--mission-ids-csv "
-        "\"{{ params.mission_ids_csv | default('', true) }}\" "
-        '--model-version "{{ params.model_version }}"'
+        "\"{{ params.mission_ids_csv | default('', true) }}\""
     )
     return ["bash", "-lc", command]
 
@@ -65,11 +55,7 @@ def _build_stage_command(stage: str) -> list[str]:
 
 with DAG(
     dag_id=DAG_ID,
-    description=(
-        "Rescue-AI daily batch ML pipeline: "
-        "prepare_dataset -> evaluate_model -> publish_metrics"
-    ),
-    start_date=datetime(2026, 4, 6),
+    start_date=datetime(2026, 4, 1),
     schedule="@daily",
     catchup=True,
     max_active_runs=1,
@@ -78,6 +64,14 @@ with DAG(
         "retry_delay": timedelta(minutes=15),
     },
     params={
+        "run_ds": Param(
+            default=None,
+            type=["null", "string"],
+            description=(
+                "Optional YYYY-MM-DD override for the partition date. "
+                "Empty -> use the run's logical date ({{ ds }})."
+            ),
+        ),
         "mission_ids_csv": Param(
             default=None,
             type=["null", "string"],
@@ -85,11 +79,6 @@ with DAG(
                 "Optional comma-separated mission IDs allow-list. "
                 "Empty -> process all discovered missions for ds."
             ),
-        ),
-        "model_version": Param(
-            default=DEFAULT_MODEL_VERSION,
-            type="string",
-            description="Model version tag written into artifact keys and PG rows.",
         ),
     },
     tags=["rescue-ai", "ml-pipeline", "batch"],

@@ -27,7 +27,6 @@ def paths() -> PipelinePaths:
         prefix="test",
         mission_id="mission-1",
         ds="2026-04-09",
-        model_version="yolov8n",
     )
 
 
@@ -108,13 +107,12 @@ class TestPipelinePaths:
             prefix="",
             mission_id="m",
             ds="2026-04-09",
-            model_version="mv",
         )
         assert p.base == "ml_pipeline/ds=2026-04-09/mission=m"
 
     def test_dataset_and_evaluation_keys_distinct(self, paths: PipelinePaths) -> None:
         assert paths.dataset_key.endswith("/dataset.json")
-        assert paths.evaluation_key.endswith("/evaluation_yolov8n.json")
+        assert paths.evaluation_key.endswith("/evaluation.json")
         assert paths.dataset_key != paths.evaluation_key
 
 
@@ -160,7 +158,7 @@ class TestEvaluateModelStage:
         )
         assert result["status"] == "completed"
         payload = store.read_json(paths.evaluation_key)
-        assert payload["passed"] is True
+        assert payload["gt_available"] is True
         assert payload["tp"] == 1  # f1 is positive and detected
         assert payload["tn"] == 1  # f2 is negative and not detected
 

@@ -60,11 +60,11 @@ CREATE INDEX IF NOT EXISTS ix_episodes_mission_found
 
 -- Fact table for the daily batch ML pipeline.
 --
--- One row per (ds, mission_id, model_version) — one row per evaluated
--- mission, on the date the mission was created (`ds` is a Hive-style
--- partition key matching the S3 layout). Missions live in exactly one
--- partition: a mission created on 2026-04-09 produces one row for
--- `ds=2026-04-09`, regardless of how many times the DAG runs.
+-- One row per (ds, mission_id) — one row per evaluated mission, on the
+-- date the mission was created (`ds` is a Hive-style partition key
+-- matching the S3 layout). Missions live in exactly one partition: a
+-- mission created on 2026-04-09 produces one row for `ds=2026-04-09`,
+-- regardless of how many times the DAG runs.
 --
 -- Written by the `publish_metrics` stage. Re-running the DAG for an
 -- existing `ds` is idempotent via ON CONFLICT ... DO UPDATE: old rows
@@ -74,7 +74,6 @@ CREATE INDEX IF NOT EXISTS ix_episodes_mission_found
 CREATE TABLE IF NOT EXISTS batch_pipeline_metrics (
     ds               DATE NOT NULL,
     mission_id       TEXT NOT NULL,
-    model_version    TEXT NOT NULL,
     rows_total       INTEGER NOT NULL,
     rows_positive    INTEGER NOT NULL,
     rows_corrupted   INTEGER NOT NULL,
@@ -88,20 +87,23 @@ CREATE TABLE IF NOT EXISTS batch_pipeline_metrics (
     precision        DOUBLE PRECISION NOT NULL DEFAULT 0,
     recall           DOUBLE PRECISION NOT NULL DEFAULT 0,
     gt_available     BOOLEAN NOT NULL,
-    validate_passed  BOOLEAN NOT NULL,
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (ds, mission_id, model_version)
+    PRIMARY KEY (ds, mission_id)
 );
 CREATE INDEX IF NOT EXISTS ix_batch_pipeline_metrics_ds
     ON batch_pipeline_metrics (ds);
 
 -- Daily roll-up over the fact table. Aggregates the per-mission rows
--- into one row per (ds, model_version) so dashboards can read drift
--- signals without re-implementing the aggregation.
-CREATE OR REPLACE VIEW batch_daily_metrics AS
+-- into one row per `ds` so dashboards can read drift signals without
+-- re-implementing the aggregation.
+--
+-- We drop/recreate instead of CREATE OR REPLACE because replacing a
+-- view cannot remove columns in Postgres and fails with:
+-- "cannot drop columns from view".
+DROP VIEW IF EXISTS batch_daily_metrics;
+CREATE VIEW batch_daily_metrics AS
 SELECT
     ds,
-    model_version,
     COUNT(*)                              AS missions_total,
     SUM(rows_total)                       AS rows_total,
     SUM(rows_positive)                    AS rows_positive,
@@ -129,4 +131,4 @@ SELECT
     END                                    AS recall,
     MAX(updated_at)                       AS updated_at
 FROM batch_pipeline_metrics
-GROUP BY ds, model_version;
+GROUP BY ds;

@@ -7,7 +7,7 @@ Three stages invoked in order by the daily DAG:
 * ``publish_metrics``  — upsert one summary row per mission into Postgres.
 
 Rerun semantics: S3 ``put_object`` overwrites artifacts in place, and
-``publish_metrics`` upserts on ``(ds, mission_id, model_version)``.
+``publish_metrics`` upserts on ``(ds, mission_id)``.
 """
 
 from __future__ import annotations
@@ -46,7 +46,6 @@ class PipelinePaths:
     prefix: str
     mission_id: str
     ds: str
-    model_version: str
 
     @property
     def base(self) -> str:
@@ -62,13 +61,8 @@ class PipelinePaths:
 
     @property
     def evaluation_key(self) -> str:
-        """Return the storage key for the evaluation report.
-
-        The model version is part of the filename so that evaluations of
-        the same dataset under different model versions can coexist for
-        the same ``(ds, mission)`` partition.
-        """
-        return f"{self.base}/evaluation_{_slug(self.model_version)}.json"
+        """Return the storage key for the evaluation report."""
+        return f"{self.base}/evaluation.json"
 
 
 @dataclass
@@ -179,7 +173,7 @@ def run_evaluate_model_stage(
     Loads the dataset built by ``prepare_dataset``, runs the predictor
     over every frame to build a confusion matrix, and writes the result
     to S3 (overwrites any prior evaluation for this
-    ``(ds, mission, model, code)``).
+    ``(ds, mission)``).
     """
     if not store.exists(paths.dataset_key):
         raise RuntimeError(f"dataset is missing: {store.uri(paths.dataset_key)}")
@@ -200,7 +194,6 @@ def run_evaluate_model_stage(
         "created_at": _now_iso(),
         "mission_id": paths.mission_id,
         "ds": paths.ds,
-        "model_version": paths.model_version,
         "dataset_uri": store.uri(paths.dataset_key),
         "tp": counts.tp,
         "tn": counts.tn,
@@ -211,7 +204,6 @@ def run_evaluate_model_stage(
         "precision": counts.precision,
         "recall": counts.recall,
         "gt_available": gt_available,
-        "passed": counts.detector_errors == 0,
     }
     store.write_json(paths.evaluation_key, payload)
 
@@ -245,9 +237,9 @@ def run_publish_metrics_stage(
 
     This stage is the only place where the batch pipeline writes into the
     application Postgres. It is always safe to re-run — the repository
-    uses ``ON CONFLICT (ds, mission_id, model_version) DO UPDATE``, so
-    re-running for the same ``ds`` overwrites the row in place, while a
-    backfill across a date range inserts one row per ``(ds, mission)``.
+    uses ``ON CONFLICT (ds, mission_id) DO UPDATE``, so re-running for
+    the same ``ds`` overwrites the row in place, while a backfill across
+    a date range inserts one row per ``(ds, mission)``.
     """
     if not store.exists(paths.dataset_key):
         raise RuntimeError(f"dataset is missing: {store.uri(paths.dataset_key)}")
@@ -283,12 +275,6 @@ def run_publish_metrics_stage(
 
 def _done(stage: str, uri: str) -> dict[str, object]:
     return {"stage": stage, "status": "completed", "output_uri": uri}
-
-
-def _slug(value: str) -> str:
-    return "".join(ch if ch.isalnum() else "_" for ch in value.strip().lower()).strip(
-        "_"
-    )
 
 
 def _now_iso() -> str:
@@ -372,7 +358,6 @@ def _metric_summary(payload: dict[str, object]) -> dict[str, object]:
             "precision",
             "recall",
             "gt_available",
-            "passed",
         )
     }
 

@@ -64,7 +64,6 @@ def _build_metrics_record(
     return BatchPipelineMetricsRecord(
         ds=paths.ds,
         mission_id=paths.mission_id,
-        model_version=paths.model_version,
         rows_total=_int(dataset.get("rows_total")),
         rows_positive=_int(dataset.get("rows_positive")),
         rows_corrupted=_int(dataset.get("rows_corrupted")),
@@ -78,7 +77,6 @@ def _build_metrics_record(
         precision=_float(evaluation.get("precision")),
         recall=_float(evaluation.get("recall")),
         gt_available=_bool(evaluation.get("gt_available")),
-        validate_passed=_bool(evaluation.get("passed")),
     )
 
 
@@ -98,14 +96,6 @@ def parse_args() -> argparse.Namespace:
         "--mission-ids-csv",
         default="",
         help="Optional comma-separated allow-list of mission IDs",
-    )
-    parser.add_argument(
-        "--model-version",
-        default=None,
-        help=(
-            "Model version tag. Defaults to "
-            "rescue_ai.config.BatchSettings.default_model_version."
-        ),
     )
     return parser.parse_args()
 
@@ -232,23 +222,11 @@ def _has_any_keys(client: Any, *, bucket: str, prefix: str) -> bool:
     return bool(response.get("Contents"))
 
 
-def _evaluation_filename(model_version: str) -> str:
-    """Return the evaluation filename for the given model version."""
-    paths = PipelinePaths(
-        prefix="",
-        mission_id="x",
-        ds="x",
-        model_version=model_version,
-    )
-    return paths.evaluation_key.rsplit("/", maxsplit=1)[-1]
-
-
 def _resolve_mission_ids(
     args: argparse.Namespace,
     *,
     client: Any,
     batch_prefix: str,
-    model_version: str,
 ) -> list[str]:
     """Discover the mission set this stage should iterate over."""
     if args.stage == "prepare_dataset":
@@ -264,7 +242,7 @@ def _resolve_mission_ids(
         client,
         ds=args.ds,
         batch_prefix=batch_prefix,
-        artifact_filename=_evaluation_filename(model_version),
+        artifact_filename="evaluation.json",
     )
 
 
@@ -296,9 +274,7 @@ def _run_evaluate_model(
 ) -> dict[str, object]:
     _ = (settings, args)
     contract = load_stream_contract()
-    detector = YoloDetector(
-        config=contract.inference, model_version=paths.model_version
-    )
+    detector = YoloDetector(config=contract.inference)
     val_tmp = Path(tempfile.mkdtemp(prefix="rescue_ai_eval_"))
     s3_settings = _build_s3_settings()
 
@@ -356,7 +332,6 @@ def main() -> None:
     """Run a single stage over every mission discovered for ``ds``."""
     args = parse_args()
     settings = get_settings()
-    model_version = args.model_version or settings.batch.default_model_version
 
     store = build_stage_store()
     root_prefix = settings.storage.s3_prefix.strip("/")
@@ -371,7 +346,6 @@ def main() -> None:
         args,
         client=client,
         batch_prefix=batch_prefix,
-        model_version=model_version,
     )
 
     mission_ids_csv = args.mission_ids_csv.strip()
@@ -400,7 +374,6 @@ def main() -> None:
             prefix=batch_prefix,
             mission_id=mission_id,
             ds=args.ds,
-            model_version=model_version,
         )
         result = handler(args, settings=settings, store=store, paths=paths)
         print_result(result)

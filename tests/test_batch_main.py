@@ -93,8 +93,8 @@ def test_main_prepare_dataset_stage_smoke(monkeypatch, capsys) -> None:
     def _fake_build_source() -> _FakeSource:
         return _FakeSource()
 
-    def _fake_resolve_mission_ids(args, *, client, batch_prefix, model_version):
-        _ = (args, client, batch_prefix, model_version)
+    def _fake_resolve_mission_ids(args, *, client, batch_prefix):
+        _ = (args, client, batch_prefix)
         return ["m"]
 
     def _fake_build_s3_client():
@@ -133,8 +133,8 @@ def test_main_no_missions_logs_and_exits(monkeypatch, capsys) -> None:
     """Empty discovery → log line, no row, exit success."""
     _setup_env(monkeypatch)
 
-    def _fake_resolve_mission_ids(args, *, client, batch_prefix, model_version):
-        _ = (args, client, batch_prefix, model_version)
+    def _fake_resolve_mission_ids(args, *, client, batch_prefix):
+        _ = (args, client, batch_prefix)
         return []
 
     def _new_object() -> object:
@@ -166,7 +166,6 @@ def test_build_metrics_record_normalizes_types() -> None:
         prefix="batch",
         mission_id="mission-1",
         ds="2026-04-09",
-        model_version="mv",
     )
     dataset = {
         "rows_total": 10.9,
@@ -184,7 +183,6 @@ def test_build_metrics_record_normalizes_types() -> None:
         "precision": 0.66,
         "recall": True,  # bool must fallback to 0.0
         "gt_available": True,
-        "passed": "yes",
     }
 
     record = batch_main._build_metrics_record(
@@ -201,7 +199,6 @@ def test_build_metrics_record_normalizes_types() -> None:
     assert record.fn == 0
     assert record.recall == 0.0
     assert record.gt_available is True
-    assert record.validate_passed is False
 
 
 def test_build_s3_settings_requires_bucket(monkeypatch) -> None:
@@ -228,11 +225,6 @@ def test_join_s3_and_has_any_keys() -> None:
     assert path == "a/b/c"
     assert batch_main._has_any_keys(client, bucket="bucket-a", prefix="pfx/")
     assert client.calls == [{"Bucket": "bucket-a", "Prefix": "pfx/", "MaxKeys": 1}]
-
-
-def test_evaluation_filename_uses_slug() -> None:
-    filename = batch_main._evaluation_filename("YOLO v8.1+beta")
-    assert filename == "evaluation_yolo_v8_1_beta.json"
 
 
 def test_list_input_missions_discovers_and_deduplicates(monkeypatch) -> None:
@@ -316,7 +308,6 @@ def test_resolve_mission_ids_routes_to_stage_specific_discovery(monkeypatch) -> 
     args = argparse.Namespace(
         stage="prepare_dataset",
         ds="2026-04-09",
-        model_version="mv",
     )
     monkeypatch.setattr(
         batch_main, "_list_input_missions", lambda client, *, ds: [f"input-{ds}"]
@@ -328,26 +319,26 @@ def test_resolve_mission_ids_routes_to_stage_specific_discovery(monkeypatch) -> 
     )
 
     assert batch_main._resolve_mission_ids(
-        args, client=object(), batch_prefix="prefix", model_version="mv"
+        args, client=object(), batch_prefix="prefix"
     ) == ["input-2026-04-09"]
 
     args.stage = "evaluate_model"
     assert batch_main._resolve_mission_ids(
-        args, client=object(), batch_prefix="prefix", model_version="mv"
+        args, client=object(), batch_prefix="prefix"
     ) == ["output-dataset.json"]
 
     args.stage = "publish_metrics"
     assert batch_main._resolve_mission_ids(
-        args, client=object(), batch_prefix="prefix", model_version="mv"
-    ) == ["output-evaluation_mv.json"]
+        args, client=object(), batch_prefix="prefix"
+    ) == ["output-evaluation.json"]
 
 
 def test_main_filters_missions_by_mission_ids_csv(monkeypatch, capsys) -> None:
     _setup_env(monkeypatch)
     executed: list[str] = []
 
-    def _fake_resolve_mission_ids(args, *, client, batch_prefix, model_version):
-        _ = (args, client, batch_prefix, model_version)
+    def _fake_resolve_mission_ids(args, *, client, batch_prefix):
+        _ = (args, client, batch_prefix)
         return ["mission-a", "mission-b", "mission-c"]
 
     def _fake_run(store, paths, *, mission_loader):

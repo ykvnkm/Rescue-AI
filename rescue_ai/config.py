@@ -54,13 +54,6 @@ class RpiSettings(BaseEnvSettings):
     timeout_sec: float = Field(default=10.0, alias="RPI_TIMEOUT_SEC")
 
 
-class BatchSettings(BaseEnvSettings):
-    default_model_version: str = Field(
-        default="yolov8n_multiscale",
-        alias="BATCH_DEFAULT_MODEL_VERSION",
-    )
-
-
 class DetectionSettings(BaseEnvSettings):
     http_timeout_sec: float = Field(default=1.0, alias="DETECTION_HTTP_TIMEOUT_SEC")
 
@@ -71,7 +64,6 @@ class Settings(BaseSettings):
     database: DatabaseSettings
     storage: StorageSettings
     rpi: RpiSettings
-    batch: BatchSettings
     detection: DetectionSettings
 
 
@@ -83,6 +75,5 @@ def get_settings() -> Settings:
         database=DatabaseSettings(),
         storage=StorageSettings(),
         rpi=RpiSettings(),
-        batch=BatchSettings(),
         detection=DetectionSettings(),
     )

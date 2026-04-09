@@ -52,8 +52,7 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 
 Канонический контракт stage-runner (`rescue_ai/interfaces/cli/batch.py`):
 
-- Вход: `--stage`, `--ds`, опционально `--mission-ids-csv`,
-  `--model-version`, `--code-version`.
+- Вход: `--stage`, `--ds`, опционально `--mission-ids-csv`.
 - Выход: `status`, `output_uri` (JSON в stdout).
 
 ## Пошаговый запуск Airflow и что смотреть
@@ -87,8 +86,7 @@ docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.en
 `<ARTIFACTS_S3_PREFIX>/batch/ml_pipeline/ds=<ds>/mission=<mission_id>/`.
 
 7. Проверьте сводные строки в Postgres по ключу
-`(ds, mission_id, model_version, code_version)` в таблице
-`batch_pipeline_metrics`.
+`(ds, mission_id)` в таблице `batch_pipeline_metrics`.
 
 ## Runbook (failed/partial)
 

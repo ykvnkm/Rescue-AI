@@ -30,10 +30,10 @@ docker compose -f docker-compose.platform.yml --env-file platform.env exec airfl
 В S3 должны появиться для каждой `(ds, mission)`:
 
 - `{prefix}/batch/ml_pipeline/ds=<ds>/mission=<id>/dataset.json`
-- `{prefix}/batch/ml_pipeline/ds=<ds>/mission=<id>/evaluation_<mv>_<cv>.json`
+- `{prefix}/batch/ml_pipeline/ds=<ds>/mission=<id>/evaluation.json`
 
-В Postgres — одна строка на `(ds, mission_id, model_version, code_version)`
-в таблице `batch_pipeline_metrics`.
+В Postgres — одна строка на `(ds, mission_id)` в таблице
+`batch_pipeline_metrics`.
 
 ## Проверка rerun
 

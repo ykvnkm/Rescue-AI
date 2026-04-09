@@ -40,7 +40,6 @@ def _settings() -> Settings:
     from rescue_ai.config import (
         ApiSettings,
         AppSettings,
-        BatchSettings,
         DatabaseSettings,
         DetectionSettings,
         RpiSettings,
@@ -58,7 +57,6 @@ def _settings() -> Settings:
             RPI_RTSP_PATH_PREFIX="live",
             RPI_TIMEOUT_SEC=1.0,
         ),
-        batch=BatchSettings(),
         detection=DetectionSettings(),
     )
 
