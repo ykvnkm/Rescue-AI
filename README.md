@@ -114,25 +114,22 @@ docker compose -f docker-compose.platform.yml up -d
 
 Airflow UI: `http://localhost:8080`
 
-DAG `rescue_batch_daily` сам находит миссии в S3 на текущую `ds`
-(без ручного `BATCH_MISSION_ID`) и запускает pipeline для каждой найденной миссии.
+DAG `rescue_batch_pipeline` сам находит миссии в S3 на текущую `ds`
+и запускает пайплайн для каждой найденной миссии.
 
 ### Ручной запуск batch без Airflow
 
 ```bash
 # Запуск отдельной стадии пайплайна
 uv run python -m rescue_ai.interfaces.cli.batch \
-  --stage data \
-  --mission-id demo_mission \
+  --stage prepare_dataset \
   --ds 2026-03-01
 
 # Все стадии последовательно
-for stage in data warmup evaluate publish; do
+for stage in prepare_dataset evaluate_model publish_metrics; do
   uv run python -m rescue_ai.interfaces.cli.batch \
     --stage $stage \
-    --mission-id demo_mission \
-    --ds 2026-03-01 \
-    --model-version yolov8n_baseline_multiscale
+    --ds 2026-03-01
 done
 ```
 

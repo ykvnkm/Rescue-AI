@@ -8,7 +8,7 @@
 - [x] CI тестов
 - [x] Push-based CD workflow (`.github/workflows/deploy.yml`)
 - [x] Публикация двух образов в GHCR (`rescue-ai-online`, `rescue-ai-batch`)
-- [x] Airflow DAG задеплоен в прод-контур (`rescue_batch_daily`, `@daily`, `catchup=false`)
+- [x] Airflow DAG задеплоен в прод-контур (`rescue_batch_pipeline`, `@daily`, `catchup=true`)
 - [x] mission_id для batch auto-discovery из S3 (без ручного `BATCH_MISSION_ID`)
 - [x] Логическое разделение в одном Postgres: `app` schema (продуктовые таблицы) и `airflow` schema (метаданные Airflow)
 - [x] Секреты через GitHub Secrets + `.env` на сервере

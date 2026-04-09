@@ -1,12 +1,10 @@
 """Postgres repository for summary metrics of the batch ML pipeline.
 
 Each pipeline run of the DAG upserts one row per
-``(ds, mission_id, model_version, code_version)`` tuple into the
+``(ds, mission_id, model_version)`` tuple into the
 ``batch_pipeline_metrics`` table. Re-running the same ds is idempotent:
 ``ON CONFLICT ... DO UPDATE`` overwrites the row and refreshes
-``updated_at``. Running an ``airflow dags backfill`` across a date range
-inserts one row per ds — ``updated_at`` then diverges from ``ds`` and
-becomes an observable signal that the backfill actually ran.
+``updated_at``.
 """
 
 from __future__ import annotations
@@ -23,7 +21,6 @@ class BatchPipelineMetricsRecord:
     ds: str
     mission_id: str
     model_version: str
-    code_version: str
     rows_total: int
     rows_positive: int
     rows_corrupted: int
@@ -52,21 +49,21 @@ class PostgresBatchMetricsRepository:
                 cursor.execute(
                     """
                     INSERT INTO batch_pipeline_metrics (
-                        ds, mission_id, model_version, code_version,
+                        ds, mission_id, model_version,
                         rows_total, rows_positive, rows_corrupted,
                         evaluation_count,
                         tp, tn, fp, fn, detector_errors,
                         accuracy, precision, recall, gt_available, validate_passed,
                         updated_at
                     ) VALUES (
-                        %s, %s, %s, %s,
+                        %s, %s, %s,
                         %s, %s, %s,
                         %s,
                         %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s,
                         NOW()
                     )
-                    ON CONFLICT (ds, mission_id, model_version, code_version)
+                    ON CONFLICT (ds, mission_id, model_version)
                     DO UPDATE SET
                         rows_total        = EXCLUDED.rows_total,
                         rows_positive     = EXCLUDED.rows_positive,
@@ -88,7 +85,6 @@ class PostgresBatchMetricsRepository:
                         record.ds,
                         record.mission_id,
                         record.model_version,
-                        record.code_version,
                         record.rows_total,
                         record.rows_positive,
                         record.rows_corrupted,

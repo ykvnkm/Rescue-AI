@@ -56,4 +56,4 @@ batch-logs:
 	$(PLATFORM_COMPOSE) logs -f airflow-webserver
 
 batch-backfill:
-	$(PLATFORM_COMPOSE) exec airflow-webserver airflow dags backfill rescue_batch_daily -s 2026-03-10 -e 2026-03-12
+	$(PLATFORM_COMPOSE) exec airflow-webserver airflow dags backfill rescue_batch_pipeline -s 2026-03-10 -e 2026-03-12

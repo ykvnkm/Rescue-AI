@@ -60,26 +60,21 @@ CREATE INDEX IF NOT EXISTS ix_episodes_mission_found
 
 -- Fact table for the daily batch ML pipeline.
 --
--- One row per (ds, mission_id, model_version, code_version) — that is,
--- one row per evaluated mission, on the date the mission was created
--- (`ds` is a Hive-style partition key matching the S3 layout, NOT a
--- "the DAG ran on this date" marker). Missions live in exactly one
+-- One row per (ds, mission_id, model_version) — one row per evaluated
+-- mission, on the date the mission was created (`ds` is a Hive-style
+-- partition key matching the S3 layout). Missions live in exactly one
 -- partition: a mission created on 2026-04-09 produces one row for
 -- `ds=2026-04-09`, regardless of how many times the DAG runs.
 --
--- Written by the `publish_metrics` stage of the DAG. Re-running the
--- DAG for an existing `ds` is idempotent via ON CONFLICT ... DO UPDATE:
--- old rows refresh in place, new missions insert. Backfill across a
--- date range walks one `ds` at a time and uses the same upsert path,
--- so partial backfills, partial reruns, and "fill the gap" scenarios
--- all converge to the same correct state. `updated_at` tracks the
+-- Written by the `publish_metrics` stage. Re-running the DAG for an
+-- existing `ds` is idempotent via ON CONFLICT ... DO UPDATE: old rows
+-- refresh in place, new missions insert. `updated_at` tracks the
 -- wall-clock time of the last write and is the observable signal that
 -- a rerun actually happened.
 CREATE TABLE IF NOT EXISTS batch_pipeline_metrics (
     ds               DATE NOT NULL,
     mission_id       TEXT NOT NULL,
     model_version    TEXT NOT NULL,
-    code_version     TEXT NOT NULL,
     rows_total       INTEGER NOT NULL,
     rows_positive    INTEGER NOT NULL,
     rows_corrupted   INTEGER NOT NULL,
@@ -95,69 +90,18 @@ CREATE TABLE IF NOT EXISTS batch_pipeline_metrics (
     gt_available     BOOLEAN NOT NULL,
     validate_passed  BOOLEAN NOT NULL,
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (ds, mission_id, model_version, code_version)
+    PRIMARY KEY (ds, mission_id, model_version)
 );
-ALTER TABLE batch_pipeline_metrics
-    ADD COLUMN IF NOT EXISTS precision DOUBLE PRECISION NOT NULL DEFAULT 0;
-ALTER TABLE batch_pipeline_metrics
-    ADD COLUMN IF NOT EXISTS recall DOUBLE PRECISION NOT NULL DEFAULT 0;
-ALTER TABLE batch_pipeline_metrics
-    ADD COLUMN IF NOT EXISTS evaluation_count INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE batch_pipeline_metrics
-    DROP COLUMN IF EXISTS train_count;
-ALTER TABLE batch_pipeline_metrics
-    DROP COLUMN IF EXISTS val_count;
-ALTER TABLE batch_pipeline_metrics
-    DROP COLUMN IF EXISTS samples_total;
-ALTER TABLE batch_pipeline_metrics
-    DROP COLUMN IF EXISTS inference_status;
-ALTER TABLE batch_pipeline_metrics
-    DROP COLUMN IF EXISTS inference_run_key;
-ALTER TABLE batch_pipeline_metrics
-    DROP COLUMN IF EXISTS inference_uri;
-ALTER TABLE batch_pipeline_metrics
-    DROP COLUMN IF EXISTS validation_report_json;
-ALTER TABLE batch_pipeline_metrics
-    DROP COLUMN IF EXISTS dataset_uri;
-ALTER TABLE batch_pipeline_metrics
-    DROP COLUMN IF EXISTS model_uri;
-ALTER TABLE batch_pipeline_metrics
-    DROP COLUMN IF EXISTS validation_uri;
--- Idempotent migration: if an existing deployment has the mission-level PK
--- (without ds), switch it back to the (ds, mission, model, code) composite
--- PK. Existing rows stay intact — each becomes the row for its current ds.
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM information_schema.table_constraints
-        WHERE table_name = 'batch_pipeline_metrics'
-          AND constraint_type = 'PRIMARY KEY'
-          AND constraint_name = 'batch_pipeline_metrics_pkey'
-    ) AND NOT EXISTS (
-        SELECT 1
-        FROM information_schema.key_column_usage
-        WHERE constraint_name = 'batch_pipeline_metrics_pkey'
-          AND column_name = 'ds'
-    ) THEN
-        ALTER TABLE batch_pipeline_metrics
-            DROP CONSTRAINT batch_pipeline_metrics_pkey;
-        ALTER TABLE batch_pipeline_metrics
-            ADD PRIMARY KEY (ds, mission_id, model_version, code_version);
-    END IF;
-END $$;
-DROP TABLE IF EXISTS batch_mission_runs;
 CREATE INDEX IF NOT EXISTS ix_batch_pipeline_metrics_ds
     ON batch_pipeline_metrics (ds);
 
 -- Daily roll-up over the fact table. Aggregates the per-mission rows
--- into one row per (ds, model_version, code_version) so dashboards can
--- read drift signals without re-implementing the aggregation.
+-- into one row per (ds, model_version) so dashboards can read drift
+-- signals without re-implementing the aggregation.
 CREATE OR REPLACE VIEW batch_daily_metrics AS
 SELECT
     ds,
     model_version,
-    code_version,
     COUNT(*)                              AS missions_total,
     SUM(rows_total)                       AS rows_total,
     SUM(rows_positive)                    AS rows_positive,
@@ -185,4 +129,4 @@ SELECT
     END                                    AS recall,
     MAX(updated_at)                       AS updated_at
 FROM batch_pipeline_metrics
-GROUP BY ds, model_version, code_version;
+GROUP BY ds, model_version;

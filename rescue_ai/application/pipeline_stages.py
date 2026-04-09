@@ -1,32 +1,13 @@
-"""Stage functions for the canonical Rescue-AI batch ML pipeline.
+"""Stage functions for the batch ML pipeline.
 
-Three stages, executed in order by the daily Airflow DAG::
+Three stages invoked in order by the daily DAG:
 
-    prepare_dataset  ->  evaluate_model  ->  publish_metrics
-
-* ``prepare_dataset``  — list mission frames + labels for ``ds`` and write
-                         a deterministic dataset manifest.
-* ``evaluate_model``   — load the deployed detector, run it over the
-                         dataset manifest, write a confusion-matrix report.
+* ``prepare_dataset``  — build a dataset manifest from a mission's frames.
+* ``evaluate_model``   — run the detector over the manifest, write metrics.
 * ``publish_metrics``  — upsert one summary row per mission into Postgres.
 
-Idempotency by design
----------------------
-There is no skip-by-exists, no ``force`` flag, no fingerprint short-circuit.
-A rerun of the DAG for an existing ``ds`` is **always** meaningful:
-
-* S3 ``put_object`` is atomic and overwrites — recomputing
-  ``dataset.json`` / ``evaluation.json`` simply replaces the previous
-  artifact in place.
-* The ``publish_metrics`` stage uses
-  ``INSERT ... ON CONFLICT (ds, mission_id, model_version, code_version)
-  DO UPDATE`` — old rows get refreshed, new missions get inserted.
-* Mission discovery is fresh on every stage (the CLI lists S3 anew),
-  so a mission added between runs is automatically picked up.
-
-This is the textbook ``PUT + UPSERT + fresh LIST`` pattern. The combination
-gives correct rerun semantics without any code path that decides
-"this work is already done, skip it".
+Rerun semantics: S3 ``put_object`` overwrites artifacts in place, and
+``publish_metrics`` upserts on ``(ds, mission_id, model_version)``.
 """
 
 from __future__ import annotations
@@ -66,7 +47,6 @@ class PipelinePaths:
     mission_id: str
     ds: str
     model_version: str
-    code_version: str
 
     @property
     def base(self) -> str:
@@ -84,13 +64,11 @@ class PipelinePaths:
     def evaluation_key(self) -> str:
         """Return the storage key for the evaluation report.
 
-        The model + code version are part of the filename so that several
-        evaluations of the same dataset (e.g. comparing two model versions)
-        can coexist for the same ``(ds, mission)`` partition.
+        The model version is part of the filename so that evaluations of
+        the same dataset under different model versions can coexist for
+        the same ``(ds, mission)`` partition.
         """
-        mv = _slug(self.model_version)
-        cv = _slug(self.code_version)
-        return f"{self.base}/evaluation_{mv}_{cv}.json"
+        return f"{self.base}/evaluation_{_slug(self.model_version)}.json"
 
 
 @dataclass
@@ -195,23 +173,18 @@ def run_evaluate_model_stage(
     paths: PipelinePaths,
     *,
     detector_predict,
-    detector_warmup=None,
 ) -> dict[str, object]:
     """Run the deployed detector over the dataset manifest.
 
-    Loads the dataset built by ``prepare_dataset``, optionally probes
-    the detector once at the start (fail-fast if the runtime can't load
-    the model), and runs the predictor over every frame to build a
-    confusion matrix. The result is written to S3 (overwrites any prior
-    evaluation for this ``(ds, mission, model, code)``).
+    Loads the dataset built by ``prepare_dataset``, runs the predictor
+    over every frame to build a confusion matrix, and writes the result
+    to S3 (overwrites any prior evaluation for this
+    ``(ds, mission, model, code)``).
     """
     if not store.exists(paths.dataset_key):
         raise RuntimeError(f"dataset is missing: {store.uri(paths.dataset_key)}")
     if detector_predict is None:
         raise RuntimeError("detector_predict is required for evaluate_model stage")
-
-    if detector_warmup is not None:
-        detector_warmup()
 
     dataset = store.read_json(paths.dataset_key)
     _ensure_dataset_has_rows(dataset)
@@ -228,7 +201,6 @@ def run_evaluate_model_stage(
         "mission_id": paths.mission_id,
         "ds": paths.ds,
         "model_version": paths.model_version,
-        "code_version": paths.code_version,
         "dataset_uri": store.uri(paths.dataset_key),
         "tp": counts.tp,
         "tn": counts.tn,
@@ -273,10 +245,9 @@ def run_publish_metrics_stage(
 
     This stage is the only place where the batch pipeline writes into the
     application Postgres. It is always safe to re-run — the repository
-    uses ``ON CONFLICT (ds, mission_id, model_version, code_version) DO
-    UPDATE``, so re-running for the same ``ds`` overwrites the row in
-    place, while a backfill across a date range inserts one row per ``ds``
-    (one per ``(ds, mission)`` to be exact).
+    uses ``ON CONFLICT (ds, mission_id, model_version) DO UPDATE``, so
+    re-running for the same ``ds`` overwrites the row in place, while a
+    backfill across a date range inserts one row per ``(ds, mission)``.
     """
     if not store.exists(paths.dataset_key):
         raise RuntimeError(f"dataset is missing: {store.uri(paths.dataset_key)}")
@@ -290,10 +261,6 @@ def run_publish_metrics_stage(
         paths=paths,
         dataset=dataset,
         evaluation=evaluation,
-        artifact_uris={
-            "dataset_uri": store.uri(paths.dataset_key),
-            "evaluation_uri": store.uri(paths.evaluation_key),
-        },
     )
     metrics_writer.upsert(record)
     return {

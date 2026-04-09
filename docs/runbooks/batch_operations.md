@@ -1,47 +1,44 @@
 # Batch Operations Runbook
 
+## Пайплайн
+
+DAG `rescue_batch_pipeline` запускает три стадии последовательно:
+
+1. `prepare_dataset` — собирает манифест датасета из кадров и лейблов миссии.
+2. `evaluate_model` — прогоняет детектор по манифесту, пишет confusion matrix.
+3. `publish_metrics` — апсертит одну строку на миссию в `batch_pipeline_metrics`.
+
 ## Статусы задач Airflow
 
 - `success`: stage завершился успешно.
 - `failed`: stage завершился с ошибкой.
-- `up_for_retry`: stage ушел в retry.
-- `skipped`: stage пропущен политикой выполнения.
+- `up_for_retry`: stage ушёл в retry.
 
 ## Диагностика
 
-1. Проверить логи stage-задач `data/warmup/evaluate/publish` в Airflow.
-2. Проверить JSON-артефакты stage в S3 (`dataset/model/evaluation`).
-3. Проверить метрики в `batch_pipeline_metrics` (Postgres).
+1. Проверить логи stage-задач `prepare_dataset / evaluate_model / publish_metrics` в Airflow.
+2. Проверить JSON-артефакты в S3:
+   `{prefix}/batch/ml_pipeline/ds=YYYY-MM-DD/mission={id}/{dataset,evaluation_<mv>_<cv>}.json`.
+3. Проверить строки в `batch_pipeline_metrics` (Postgres) по
+   `(ds, mission_id, model_version, code_version)`.
 
-## Причины статусов
+## Rerun
 
-- `failed` + `reason=empty_input`: для даты запуска нет кадров.
-- `failed` + `reason=no_processable_frames`: кадры есть, но ни один не обработан.
-- `evaluate failed`: ошибки детектора на кадрах (`detector_errors > 0`).
-- `publish failed`: ошибка записи в Postgres.
+Rerun через clear таски в Airflow UI всегда безопасен:
 
-## Safe rerun
-
-- Если stage-артефакт уже существует в S3, повторный запуск без `--force` вернет `idempotent_skip`.
-- Для осознанного повтора после фикса входа запускать с `--force`.
-
-Пример:
-
-```bash
-uv run python -m rescue_ai.interfaces.cli.batch --stage evaluate --mission-id demo_mission --ds 2026-03-01 --force
-```
+- `prepare_dataset` и `evaluate_model` перезаписывают свои JSON-артефакты в S3
+  (атомарный `put_object`).
+- `publish_metrics` делает `INSERT ... ON CONFLICT ... DO UPDATE` на ключе
+  `(ds, mission_id, model_version, code_version)`.
+- Discovery миссий пересчитывается на каждом запуске через свежий
+  `list_objects_v2`, так что новые миссии, добавленные между прогонами,
+  подхватятся автоматически.
 
 ## Backfill
 
 ```bash
-airflow dags backfill rescue_batch_daily -s 2026-03-01 -e 2026-03-05
+airflow dags backfill rescue_batch_pipeline -s 2026-03-01 -e 2026-03-05
 ```
 
-После backfill проверить артефакты:
-
-- `dataset/model/evaluation` JSON для каждой даты.
-- upsert строк в `batch_pipeline_metrics` по ключу `(ds, mission_id, model_version, code_version)`.
-
-## Детектор
-
-- В batch-контуре используется `YoloDetector` для stage `warmup/evaluate`.
+После backfill проверить, что для каждой `ds` лежат оба JSON-артефакта и
+появились строки в `batch_pipeline_metrics`.

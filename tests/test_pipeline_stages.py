@@ -28,7 +28,6 @@ def paths() -> PipelinePaths:
         mission_id="mission-1",
         ds="2026-04-09",
         model_version="yolov8n",
-        code_version="v1",
     )
 
 
@@ -110,13 +109,12 @@ class TestPipelinePaths:
             mission_id="m",
             ds="2026-04-09",
             model_version="mv",
-            code_version="cv",
         )
         assert p.base == "ml_pipeline/ds=2026-04-09/mission=m"
 
     def test_dataset_and_evaluation_keys_distinct(self, paths: PipelinePaths) -> None:
         assert paths.dataset_key.endswith("/dataset.json")
-        assert paths.evaluation_key.endswith("/evaluation_yolov8n_v1.json")
+        assert paths.evaluation_key.endswith("/evaluation_yolov8n.json")
         assert paths.dataset_key != paths.evaluation_key
 
 
@@ -166,21 +164,6 @@ class TestEvaluateModelStage:
         assert payload["tp"] == 1  # f1 is positive and detected
         assert payload["tn"] == 1  # f2 is negative and not detected
 
-    def test_warmup_invoked(self, store, paths) -> None:
-        run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader)
-        called = []
-
-        def _warmup() -> None:
-            called.append(True)
-
-        run_evaluate_model_stage(
-            store,
-            paths,
-            detector_predict=_predict_only_f1,
-            detector_warmup=_warmup,
-        )
-        assert called == [True]
-
     def test_requires_dataset(self, store, paths) -> None:
         with pytest.raises(RuntimeError, match="dataset is missing"):
             run_evaluate_model_stage(store, paths, detector_predict=_predict_true)
@@ -216,14 +199,13 @@ class _FakeMetricsWriter:
         self.records.append(record)
 
 
-def _record_factory(*, paths, dataset, evaluation, artifact_uris):
+def _record_factory(*, paths, dataset, evaluation):
     return {
         "ds": paths.ds,
         "mission_id": paths.mission_id,
         "rows_total": dataset.get("rows_total"),
         "tp": evaluation.get("tp"),
         "fp": evaluation.get("fp"),
-        "uris": artifact_uris,
     }
 
 

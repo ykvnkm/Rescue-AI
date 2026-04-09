@@ -1,14 +1,15 @@
 # Batch Demo Playbook (Real Data, YOLO)
 
 ## Цель
-Показать end-to-end batch-контур на реальных данных: backfill, idempotency, артефакты и метрики качества.
+Показать end-to-end batch-контур на реальных данных: backfill, rerun,
+артефакты в S3 и сводные метрики в Postgres.
 
 ## Предусловия
-- В S3 по префиксу `ARTIFACTS_S3_PREFIX/<mission_id>/<ds>/images` и `annotations/` лежат реальные данные.
+- В S3 по префиксу `{ARTIFACTS_S3_PREFIX}/ds=YYYY-MM-DD/{mission_id}/`
+  лежат `frames/*.jpg` и `labels.json`.
 - Платформа поднята (`infra/docker-compose.platform.yml`).
 
 ## Рекомендуемый сценарий
-- `mission_id`: `pilot_eval_mission`
 - `date range`: `2026-03-01..2026-03-03`
 - Запуск через Airflow backfill.
 
@@ -21,39 +22,21 @@ cp platform.env.example platform.env
 docker compose -f docker-compose.platform.yml --env-file platform.env up -d
 
 docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
-  airflow dags backfill rescue_batch_daily -s 2026-03-01 -e 2026-03-03
+  airflow dags backfill rescue_batch_pipeline -s 2026-03-01 -e 2026-03-03
 ```
 
-## Проверка артефактов и статусов
+## Проверка артефактов
 
-```bash
-docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
-  ls -la /opt/airflow/data/artifacts /opt/airflow/data/status
-```
+В S3 должны появиться для каждой `(ds, mission)`:
 
-## Quality gates
-- `recall_event >= 0.7` (или проектный порог 0.9 для строгой оценки)
-- `fp_per_minute <= 5`
-- `ttfc_sec <= 6.5`
+- `{prefix}/batch/ml_pipeline/ds=<ds>/mission=<id>/dataset.json`
+- `{prefix}/batch/ml_pipeline/ds=<ds>/mission=<id>/evaluation_<mv>_<cv>.json`
 
-Проверка report:
+В Postgres — одна строка на `(ds, mission_id, model_version, code_version)`
+в таблице `batch_pipeline_metrics`.
 
-```bash
-uv run python scripts/batch/check_report_quality.py \
-  --report /path/to/report.json \
-  --min-recall 0.7 \
-  --max-fp-per-minute 5 \
-  --max-ttfc-sec 6.5
-```
+## Проверка rerun
 
-## Проверка idempotency
-
-```bash
-docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
-  uv run python -m rescue_ai.interfaces.cli.batch --stage inference --mission-id pilot_eval_mission --ds 2026-03-01
-
-docker compose -f docker-compose.platform.yml --env-file platform.env exec airflow-webserver \
-  uv run python -m rescue_ai.interfaces.cli.batch --stage inference --mission-id pilot_eval_mission --ds 2026-03-01
-```
-
-Ожидание: второй запуск без `--force` возвращает `idempotent_skip`.
+Повторный clear любой таски в Airflow UI за ту же `ds` должен успешно
+перезаписать артефакты в S3 и апсертнуть строку в Postgres —
+skip-by-exists в пайплайне нет.

@@ -55,7 +55,10 @@ class RpiSettings(BaseEnvSettings):
 
 
 class BatchSettings(BaseEnvSettings):
-    """Reserved for future batch-specific runtime settings."""
+    default_model_version: str = Field(
+        default="yolov8n_multiscale",
+        alias="BATCH_DEFAULT_MODEL_VERSION",
+    )
 
 
 class DetectionSettings(BaseEnvSettings):

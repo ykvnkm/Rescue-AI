@@ -1,13 +1,4 @@
-"""Daily batch evaluation of the deployed detector against labeled missions.
-
-Three sequential stages, one DockerOperator each::
-
-    prepare_dataset  ->  evaluate_model  ->  publish_metrics
-
-Input layout:  ``missions/ds=YYYY-MM-DD/{mission_id}/{frames/*.jpg, labels.json}``
-Output layout:
-``missions/batch/ml_pipeline/ds=YYYY-MM-DD/mission={id}/{dataset,evaluation_<mv>_<cv>}.json``
-"""
+"""Daily batch DAG: prepare_dataset -> evaluate_model -> publish_metrics."""
 
 from __future__ import annotations
 
@@ -19,13 +10,15 @@ from airflow import DAG
 from airflow.hooks.base import BaseHook
 from airflow.models.param import Param
 from airflow.providers.docker.operators.docker import DockerOperator
-from docker.types import Mount
 from pendulum import datetime
+
+from rescue_ai.config import get_settings
 
 # ── Constants ────────────────────────────────────────────────────
 
 DAG_ID = "rescue_batch_pipeline"
-BATCH_IMAGE = os.environ.get("BATCH_IMAGE", "rescue-ai-batch:latest")
+BATCH_IMAGE = os.environ["BATCH_IMAGE"]
+DEFAULT_MODEL_VERSION = get_settings().batch.default_model_version
 
 APP_DB_CONN_ID = "rescue_app_db"
 S3_CONN_ID = "rescue_s3"
@@ -63,8 +56,7 @@ def _build_stage_command(stage: str) -> list[str]:
         '--ds "{{ ds }}" '
         "--mission-ids-csv "
         "\"{{ params.mission_ids_csv | default('', true) }}\" "
-        '--model-version "{{ params.model_version }}" '
-        '--code-version "{{ params.code_version }}"'
+        '--model-version "{{ params.model_version }}"'
     )
     return ["bash", "-lc", command]
 
@@ -95,14 +87,9 @@ with DAG(
             ),
         ),
         "model_version": Param(
-            default="yolov8n_multiscale",
+            default=DEFAULT_MODEL_VERSION,
             type="string",
             description="Model version tag written into artifact keys and PG rows.",
-        ),
-        "code_version": Param(
-            default="v1",
-            type="string",
-            description="Code version tag written into artifact keys and PG rows.",
         ),
     },
     tags=["rescue-ai", "ml-pipeline", "batch"],
@@ -112,17 +99,9 @@ with DAG(
         "docker_url": "unix://var/run/docker.sock",
         "api_version": "auto",
         "force_pull": False,
-        "do_xcom_push": True,
         "auto_remove": "success",
         "mount_tmp_dir": False,
         "environment": _build_base_env(),
-        "mounts": [
-            Mount(
-                source="airflow_shared_data",
-                target="/opt/airflow/data",
-                type="volume",
-            )
-        ],
     }
 
     prepare_dataset = DockerOperator(

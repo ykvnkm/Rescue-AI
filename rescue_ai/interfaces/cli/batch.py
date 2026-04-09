@@ -1,19 +1,8 @@
-"""CLI entry point for the canonical Rescue-AI batch ML pipeline.
+"""CLI entry point for the batch ML pipeline.
 
-Three stages, executed in order by the daily Airflow DAG::
-
-    prepare_dataset  ->  evaluate_model  ->  publish_metrics
-
-Each stage discovers its mission set fresh from S3 (one
-``list_objects_v2`` call), iterates over those missions, and writes its
-artifacts. There is no ``--force`` flag, no skip-by-exists, no manifest
-cache: rerun semantics fall out of ``PUT + UPSERT + fresh LIST``.
-
-Usage::
-
-    python -m rescue_ai.interfaces.cli.batch --stage prepare_dataset --ds 2026-04-09
-    python -m rescue_ai.interfaces.cli.batch --stage evaluate_model  --ds 2026-04-09
-    python -m rescue_ai.interfaces.cli.batch --stage publish_metrics --ds 2026-04-09
+Runs a single stage (``prepare_dataset`` / ``evaluate_model`` /
+``publish_metrics``) over every mission discovered for ``--ds``.
+Invoked one stage at a time by the Airflow DAG.
 """
 
 from __future__ import annotations
@@ -21,7 +10,7 @@ from __future__ import annotations
 import argparse
 import tempfile
 from pathlib import Path
-from typing import Any, Callable, TypedDict
+from typing import Any, Callable
 
 from rescue_ai.application.pipeline_stages import (
     PipelinePaths,
@@ -45,15 +34,6 @@ from rescue_ai.infrastructure.yolo_detector import YoloDetector
 STAGES = ("prepare_dataset", "evaluate_model", "publish_metrics")
 DEFAULT_BATCH_OUTPUT_SUFFIX = "batch"
 DEFAULT_SOURCE_FPS = 6.0
-DEFAULT_MODEL_VERSION = "yolov8n_multiscale"
-DEFAULT_CODE_VERSION = "v1"
-
-
-class ArtifactUris(TypedDict):
-    """Resolved artifact URIs used to flatten stage outputs into one row."""
-
-    dataset_uri: str
-    evaluation_uri: str
 
 
 def _build_metrics_record(
@@ -61,10 +41,8 @@ def _build_metrics_record(
     paths: PipelinePaths,
     dataset: dict[str, object],
     evaluation: dict[str, object],
-    artifact_uris: ArtifactUris,
 ) -> BatchPipelineMetricsRecord:
     """Flatten stage artifacts into a row for ``batch_pipeline_metrics``."""
-    _ = artifact_uris
 
     def _int(value: object, default: int = 0) -> int:
         if isinstance(value, bool):
@@ -87,7 +65,6 @@ def _build_metrics_record(
         ds=paths.ds,
         mission_id=paths.mission_id,
         model_version=paths.model_version,
-        code_version=paths.code_version,
         rows_total=_int(dataset.get("rows_total")),
         rows_positive=_int(dataset.get("rows_positive")),
         rows_corrupted=_int(dataset.get("rows_corrupted")),
@@ -122,8 +99,14 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional comma-separated allow-list of mission IDs",
     )
-    parser.add_argument("--model-version", default=DEFAULT_MODEL_VERSION)
-    parser.add_argument("--code-version", default=DEFAULT_CODE_VERSION)
+    parser.add_argument(
+        "--model-version",
+        default=None,
+        help=(
+            "Model version tag. Defaults to "
+            "rescue_ai.config.BatchSettings.default_model_version."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -217,7 +200,7 @@ def _list_output_missions_with_artifact(
     """List mission IDs that already have ``artifact_filename`` under ``ds``.
 
     Used by ``evaluate_model`` (looking for ``dataset.json``) and
-    ``publish_metrics`` (looking for ``evaluation_<mv>_<cv>.json``). Each
+    ``publish_metrics`` (looking for ``evaluation_<mv>.json``). Each
     stage operates on the intersection of its discovery and the upstream
     artifact existence — that is the canonical "stage runs over what its
     upstream produced" pattern.
@@ -249,14 +232,13 @@ def _has_any_keys(client: Any, *, bucket: str, prefix: str) -> bool:
     return bool(response.get("Contents"))
 
 
-def _evaluation_filename(model_version: str, code_version: str) -> str:
-    """Return the evaluation filename for the given model/code version."""
+def _evaluation_filename(model_version: str) -> str:
+    """Return the evaluation filename for the given model version."""
     paths = PipelinePaths(
         prefix="",
         mission_id="x",
         ds="x",
         model_version=model_version,
-        code_version=code_version,
     )
     return paths.evaluation_key.rsplit("/", maxsplit=1)[-1]
 
@@ -266,6 +248,7 @@ def _resolve_mission_ids(
     *,
     client: Any,
     batch_prefix: str,
+    model_version: str,
 ) -> list[str]:
     """Discover the mission set this stage should iterate over."""
     if args.stage == "prepare_dataset":
@@ -281,7 +264,7 @@ def _resolve_mission_ids(
         client,
         ds=args.ds,
         batch_prefix=batch_prefix,
-        artifact_filename=_evaluation_filename(args.model_version, args.code_version),
+        artifact_filename=_evaluation_filename(model_version),
     )
 
 
@@ -342,7 +325,6 @@ def _run_evaluate_model(
         store,
         paths,
         detector_predict=_detector_predict,
-        detector_warmup=detector.warmup,
     )
 
 
@@ -374,6 +356,7 @@ def main() -> None:
     """Run a single stage over every mission discovered for ``ds``."""
     args = parse_args()
     settings = get_settings()
+    model_version = args.model_version or settings.batch.default_model_version
 
     store = build_stage_store()
     root_prefix = settings.storage.s3_prefix.strip("/")
@@ -384,7 +367,12 @@ def main() -> None:
     )
 
     client = _build_s3_client()
-    mission_ids = _resolve_mission_ids(args, client=client, batch_prefix=batch_prefix)
+    mission_ids = _resolve_mission_ids(
+        args,
+        client=client,
+        batch_prefix=batch_prefix,
+        model_version=model_version,
+    )
 
     mission_ids_csv = args.mission_ids_csv.strip()
     if mission_ids_csv:
@@ -412,8 +400,7 @@ def main() -> None:
             prefix=batch_prefix,
             mission_id=mission_id,
             ds=args.ds,
-            model_version=args.model_version,
-            code_version=args.code_version,
+            model_version=model_version,
         )
         result = handler(args, settings=settings, store=store, paths=paths)
         print_result(result)
