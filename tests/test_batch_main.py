@@ -265,10 +265,10 @@ def test_list_input_missions_discovers_and_deduplicates(monkeypatch) -> None:
             return [
                 {
                     "CommonPrefixes": [
-                        {"Prefix": "missions/ds=2026-04-09/mission-b/"},
-                        {"Prefix": "missions/ds=2026-04-09/mission-a/"},
-                        {"Prefix": "missions/ds=2026-04-09/mission-a/"},
-                        {"Prefix": "missions/ds=2026-04-09//"},
+                        {"Prefix": "missions/2026-04-09/mission-b/"},
+                        {"Prefix": "missions/2026-04-09/mission-a/"},
+                        {"Prefix": "missions/2026-04-09/mission-a/"},
+                        {"Prefix": "missions/2026-04-09//"},
                     ]
                 }
             ]

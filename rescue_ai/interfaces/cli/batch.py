@@ -180,11 +180,11 @@ def _join_s3(*parts: str) -> str:
 
 
 def _list_input_missions(client: Any, *, ds: str) -> list[str]:
-    """List mission IDs that have a frames/ folder under ``ds=<ds>/``."""
+    """List mission IDs that have a frames/ folder under ``<ds>/``."""
     settings = get_settings()
     bucket = settings.storage.s3_bucket
     prefix = settings.storage.s3_prefix.strip("/")
-    search_prefix = _join_s3(prefix, f"ds={ds}") + "/"
+    search_prefix = _join_s3(prefix, ds) + "/"
 
     paginator = client.get_paginator("list_objects_v2")
     found: list[str] = []

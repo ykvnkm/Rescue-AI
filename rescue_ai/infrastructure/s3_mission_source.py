@@ -1,10 +1,9 @@
 """S3-backed mission source for the batch ML pipeline.
 
-Reads one mission/day dataset from the canonical Hive-style layout the
-online side writes::
+Reads one mission/day dataset from the canonical date-partitioned layout::
 
-    {prefix}/ds=YYYY-MM-DD/{mission_id}/frames/<frame>.jpg
-    {prefix}/ds=YYYY-MM-DD/{mission_id}/labels.json
+    {prefix}/YYYY-MM-DD/{mission_id}/frames/<frame>.jpg
+    {prefix}/YYYY-MM-DD/{mission_id}/labels.json
 
 Frames and labels are decoupled on purpose: frames land in real time as
 the drone uploads them, labels arrive later (operator review of alerts
@@ -90,7 +89,7 @@ class S3MissionSource:
         return f"s3://{self._bucket}/{self._source_prefix}"
 
     def _mission_root(self, mission_id: str, ds: str) -> str:
-        return self._join(self._source_prefix, f"ds={ds}", mission_id)
+        return self._join(self._source_prefix, ds, mission_id)
 
     def _list_keys(self, prefix: str) -> list[str]:
         paginator = self._client.get_paginator("list_objects_v2")
