@@ -1,4 +1,4 @@
-"""Tests for the unified pipeline stage functions."""
+"""Tests for the canonical batch pipeline stage functions."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ import pytest
 from rescue_ai.application.batch_dtos import FrameRecord, MissionInput
 from rescue_ai.application.pipeline_stages import (
     PipelinePaths,
-    run_data_stage,
-    run_evaluate_stage,
-    run_warmup_stage,
+    run_evaluate_model_stage,
+    run_prepare_dataset_stage,
+    run_publish_metrics_stage,
 )
 from rescue_ai.infrastructure.stage_store import LocalStageStore
 
@@ -26,10 +26,75 @@ def paths() -> PipelinePaths:
     return PipelinePaths(
         prefix="test",
         mission_id="mission-1",
-        ds="2026-03-01",
+        ds="2026-04-09",
         model_version="yolov8n",
         code_version="v1",
     )
+
+
+def _frames(*, with_extra: bool = False) -> list[FrameRecord]:
+    base = [
+        FrameRecord(
+            frame_id=1,
+            ts_sec=0.0,
+            frame_path=Path("/tmp/f1.jpg"),
+            image_uri="/tmp/f1.jpg",
+            gt_person_present=True,
+            is_corrupted=False,
+        ),
+        FrameRecord(
+            frame_id=2,
+            ts_sec=0.1,
+            frame_path=Path("/tmp/f2.jpg"),
+            image_uri="/tmp/f2.jpg",
+            gt_person_present=False,
+            is_corrupted=False,
+        ),
+        FrameRecord(
+            frame_id=3,
+            ts_sec=0.2,
+            frame_path=Path("/tmp/f3.jpg"),
+            image_uri="/tmp/f3.jpg",
+            gt_person_present=True,
+            is_corrupted=True,
+        ),
+    ]
+    if with_extra:
+        base.append(
+            FrameRecord(
+                frame_id=4,
+                ts_sec=0.3,
+                frame_path=Path("/tmp/f4.jpg"),
+                image_uri="/tmp/f4.jpg",
+                gt_person_present=True,
+                is_corrupted=False,
+            )
+        )
+    return base
+
+
+def _mission(with_extra: bool = False) -> MissionInput:
+    return MissionInput(
+        source_uri="s3://bucket/missions/ds=2026-04-09/mission-1",
+        frames=_frames(with_extra=with_extra),
+        gt_available=True,
+    )
+
+
+def _mission_loader() -> MissionInput:
+    return _mission()
+
+
+def _mission_loader_extra() -> MissionInput:
+    return _mission(with_extra=True)
+
+
+def _predict_true(_image_uri: str) -> bool:
+    return True
+
+
+def _predict_false(_image_uri: str) -> bool:
+    return False
 
 
 # ── PipelinePaths ───────────────────────────────────────────────
@@ -37,265 +102,180 @@ def paths() -> PipelinePaths:
 
 class TestPipelinePaths:
     def test_base_with_prefix(self, paths: PipelinePaths) -> None:
-        assert paths.base == "test/ml_pipeline/mission=mission-1/ds=2026-03-01"
+        assert paths.base == "test/ml_pipeline/ds=2026-04-09/mission=mission-1"
 
     def test_base_without_prefix(self) -> None:
         p = PipelinePaths(
-            prefix="", mission_id="m", ds="d", model_version="mv", code_version="cv"
+            prefix="",
+            mission_id="m",
+            ds="2026-04-09",
+            model_version="mv",
+            code_version="cv",
         )
-        assert p.base == "ml_pipeline/mission=m/ds=d"
+        assert p.base == "ml_pipeline/ds=2026-04-09/mission=m"
 
-    def test_all_keys_unique(self, paths: PipelinePaths) -> None:
-        keys = {
-            paths.data_key,
-            paths.model_key,
-            paths.evaluation_key,
-        }
-        assert len(keys) == 3
+    def test_dataset_and_evaluation_keys_distinct(self, paths: PipelinePaths) -> None:
+        assert paths.dataset_key.endswith("/dataset.json")
+        assert paths.evaluation_key.endswith("/evaluation_yolov8n_v1.json")
+        assert paths.dataset_key != paths.evaluation_key
 
 
-# ── Data stage ──────────────────────────────────────────────────
+# ── prepare_dataset ─────────────────────────────────────────────
 
 
-class TestDataStage:
-    @staticmethod
-    def _mission_loader_variant(include_extra: bool = False) -> MissionInput:
-        frames = [
-            FrameRecord(
-                frame_id=1,
-                ts_sec=0.0,
-                frame_path=Path("/tmp/f1.jpg"),
-                image_uri="/tmp/f1.jpg",
-                gt_person_present=True,
-                is_corrupted=False,
-            ),
-            FrameRecord(
-                frame_id=2,
-                ts_sec=0.1,
-                frame_path=Path("/tmp/f2.jpg"),
-                image_uri="/tmp/f2.jpg",
-                gt_person_present=False,
-                is_corrupted=False,
-            ),
-            FrameRecord(
-                frame_id=3,
-                ts_sec=0.2,
-                frame_path=Path("/tmp/f3.jpg"),
-                image_uri="/tmp/f3.jpg",
-                gt_person_present=True,
-                is_corrupted=True,
-            ),
-        ]
-        if include_extra:
-            frames.append(
-                FrameRecord(
-                    frame_id=4,
-                    ts_sec=0.3,
-                    frame_path=Path("/tmp/f4.jpg"),
-                    image_uri="/tmp/f4.jpg",
-                    gt_person_present=True,
-                    is_corrupted=False,
-                )
-            )
-        return MissionInput(
-            source_uri="local:///mission-1/2026-03-01",
-            frames=frames,
-            gt_available=True,
-        )
-
-    @staticmethod
-    def _mission_loader() -> MissionInput:
-        return TestDataStage._mission_loader_variant()
-
-    def test_creates_dataset(self, store, paths) -> None:
-        result = run_data_stage(store, paths, mission_loader=self._mission_loader)
+class TestPrepareDatasetStage:
+    def test_writes_manifest(self, store, paths) -> None:
+        result = run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader)
         assert result["status"] == "completed"
-        assert store.exists(paths.data_key)
-        payload = store.read_json(paths.data_key)
-        assert payload["stage"] == "data"
-        assert payload["rows_total"] > 0
-        assert payload["evaluation_count"] == payload["rows_total"]
+        assert store.exists(paths.dataset_key)
+        payload = store.read_json(paths.dataset_key)
+        assert payload["stage"] == "prepare_dataset"
+        assert payload["rows_total"] == 2  # one corrupted frame dropped
         assert payload["rows_corrupted"] == 1
-        assert len(payload["evaluation_manifest"]) > 0
+        assert len(payload["evaluation_manifest"]) == 2
 
-    def test_idempotent_skip(self, store, paths) -> None:
-        run_data_stage(store, paths, mission_loader=self._mission_loader)
-        result = run_data_stage(store, paths, mission_loader=self._mission_loader)
-        assert result["status"] == "idempotent_skip"
-
-    def test_rerun_rebuilds_when_source_changes(self, store, paths) -> None:
-        run_data_stage(
-            store,
-            paths,
-            mission_loader=lambda: self._mission_loader_variant(include_extra=False),
-        )
-        result = run_data_stage(
-            store,
-            paths,
-            mission_loader=lambda: self._mission_loader_variant(include_extra=True),
-        )
-        assert result["status"] == "completed"
-        payload = store.read_json(paths.data_key)
+    def test_rerun_overwrites_with_new_frames(self, store, paths) -> None:
+        run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader)
+        run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader_extra)
+        payload = store.read_json(paths.dataset_key)
         assert payload["rows_total"] == 3
         assert payload["evaluation_count"] == 3
 
-    def test_force_overwrites(self, store, paths) -> None:
-        run_data_stage(store, paths, mission_loader=self._mission_loader)
-        result = run_data_stage(
-            store,
-            paths,
-            force=True,
-            mission_loader=self._mission_loader,
-        )
-        assert result["status"] == "completed"
-
-    def test_requires_mission_loader(self, store, paths) -> None:
-        with pytest.raises(RuntimeError, match="mission_loader is required"):
-            run_data_stage(store, paths)
+    def test_empty_input_raises(self, store, paths) -> None:
+        empty = MissionInput(source_uri="s", frames=[], gt_available=True)
+        with pytest.raises(RuntimeError, match="no valid frames"):
+            run_prepare_dataset_stage(store, paths, mission_loader=lambda: empty)
 
 
-# ── Warmup stage ────────────────────────────────────────────────
+# ── evaluate_model ──────────────────────────────────────────────
 
 
-class TestWarmupStage:
-    @staticmethod
-    def _model_probe() -> dict[str, object]:
-        return {
-            "runtime": "fake",
-            "model_url": "https://example.test/model.pt",
-            "model_ready": True,
-        }
-
-    def test_creates_model_card(self, store, paths) -> None:
-        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        result = run_warmup_stage(store, paths, model_probe=self._model_probe)
-        assert result["status"] == "completed"
-        assert store.exists(paths.model_key)
-        payload = store.read_json(paths.model_key)
-        assert payload["stage"] == "warmup"
-        assert "checkpoint_hash" in payload
-        assert payload["model_runtime"] == "fake"
-
-    def test_requires_dataset(self, store, paths) -> None:
-        with pytest.raises(RuntimeError, match="dataset is missing"):
-            run_warmup_stage(store, paths, model_probe=self._model_probe)
-
-    def test_idempotent_skip(self, store, paths) -> None:
-        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        run_warmup_stage(store, paths, model_probe=self._model_probe)
-        result = run_warmup_stage(store, paths, model_probe=self._model_probe)
-        assert result["status"] == "idempotent_skip"
-
-    def test_rerun_rebuilds_when_dataset_changes(self, store, paths) -> None:
-        run_data_stage(
-            store,
-            paths,
-            mission_loader=lambda: TestDataStage._mission_loader_variant(
-                include_extra=False
-            ),
-        )
-        run_warmup_stage(store, paths, model_probe=self._model_probe)
-        run_data_stage(
-            store,
-            paths,
-            mission_loader=lambda: TestDataStage._mission_loader_variant(
-                include_extra=True
-            ),
-        )
-        result = run_warmup_stage(store, paths, model_probe=self._model_probe)
-        assert result["status"] == "completed"
-
-    def test_requires_model_probe(self, store, paths) -> None:
-        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        with pytest.raises(RuntimeError, match="model_probe is required"):
-            run_warmup_stage(store, paths)
+def _predict_only_f1(image_uri: str) -> bool:
+    return image_uri.endswith("f1.jpg")
 
 
-# ── Evaluate stage ──────────────────────────────────────────────
-
-
-class TestEvaluateStage:
-    @staticmethod
-    def _predict_all_correct(image_uri: str) -> bool:
-        return image_uri.endswith("f1.jpg")
-
-    def test_smoke_test_passes(self, store, paths) -> None:
-        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        run_warmup_stage(store, paths, model_probe=TestWarmupStage._model_probe)
-        result = run_evaluate_stage(
-            store,
-            paths,
-            detector_predict=self._predict_all_correct,
+class TestEvaluateModelStage:
+    def test_writes_evaluation(self, store, paths) -> None:
+        run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader)
+        result = run_evaluate_model_stage(
+            store, paths, detector_predict=_predict_only_f1
         )
         assert result["status"] == "completed"
         payload = store.read_json(paths.evaluation_key)
         assert payload["passed"] is True
+        assert payload["tp"] == 1  # f1 is positive and detected
+        assert payload["tn"] == 1  # f2 is negative and not detected
 
-    def test_smoke_test_fails_when_detector_raises(self, store, paths) -> None:
-        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        run_warmup_stage(store, paths, model_probe=TestWarmupStage._model_probe)
+    def test_warmup_invoked(self, store, paths) -> None:
+        run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader)
+        called = []
 
-        def _broken(_image_uri: str) -> bool:
-            raise RuntimeError("detector is down")
+        def _warmup() -> None:
+            called.append(True)
 
-        with pytest.raises(RuntimeError, match="detector failed"):
-            run_evaluate_stage(
-                store,
-                paths,
-                detector_predict=_broken,
-            )
+        run_evaluate_model_stage(
+            store,
+            paths,
+            detector_predict=_predict_only_f1,
+            detector_warmup=_warmup,
+        )
+        assert called == [True]
 
     def test_requires_dataset(self, store, paths) -> None:
         with pytest.raises(RuntimeError, match="dataset is missing"):
-            run_evaluate_stage(store, paths, detector_predict=lambda _: True)
+            run_evaluate_model_stage(store, paths, detector_predict=_predict_true)
 
-    def test_requires_model(self, store, paths) -> None:
-        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        with pytest.raises(RuntimeError, match="model artifact is missing"):
-            run_evaluate_stage(store, paths, detector_predict=lambda _: True)
+    def test_detector_failure_propagates(self, store, paths) -> None:
+        run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader)
 
-    def test_idempotent_skip(self, store, paths) -> None:
-        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        run_warmup_stage(store, paths, model_probe=TestWarmupStage._model_probe)
-        run_evaluate_stage(
-            store,
-            paths,
-            detector_predict=self._predict_all_correct,
-        )
-        result = run_evaluate_stage(
-            store,
-            paths,
-            detector_predict=self._predict_all_correct,
-        )
-        assert result["status"] == "idempotent_skip"
+        def _broken(_uri: str) -> bool:
+            raise RuntimeError("detector down")
 
-    def test_rerun_rebuilds_when_dataset_changes(self, store, paths) -> None:
-        run_data_stage(
+        with pytest.raises(RuntimeError, match="detector failed"):
+            run_evaluate_model_stage(store, paths, detector_predict=_broken)
+
+    def test_rerun_overwrites_evaluation(self, store, paths) -> None:
+        run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader)
+        run_evaluate_model_stage(store, paths, detector_predict=_predict_only_f1)
+        # Rerun with a different predictor → evaluation must be overwritten,
+        # not skipped.
+        run_evaluate_model_stage(store, paths, detector_predict=_predict_false)
+        payload = store.read_json(paths.evaluation_key)
+        assert payload["tp"] == 0
+        assert payload["fn"] == 1
+
+
+# ── publish_metrics ─────────────────────────────────────────────
+
+
+class _FakeMetricsWriter:
+    def __init__(self) -> None:
+        self.records: list[object] = []
+
+    def upsert(self, record: object) -> None:
+        self.records.append(record)
+
+
+def _record_factory(*, paths, dataset, evaluation, artifact_uris):
+    return {
+        "ds": paths.ds,
+        "mission_id": paths.mission_id,
+        "rows_total": dataset.get("rows_total"),
+        "tp": evaluation.get("tp"),
+        "fp": evaluation.get("fp"),
+        "uris": artifact_uris,
+    }
+
+
+class TestPublishMetricsStage:
+    def test_upserts_record(self, store, paths) -> None:
+        run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader)
+        run_evaluate_model_stage(store, paths, detector_predict=_predict_only_f1)
+        writer = _FakeMetricsWriter()
+        result = run_publish_metrics_stage(
             store,
             paths,
-            mission_loader=lambda: TestDataStage._mission_loader_variant(
-                include_extra=False
-            ),
-        )
-        run_warmup_stage(store, paths, model_probe=TestWarmupStage._model_probe)
-        run_evaluate_stage(store, paths, detector_predict=self._predict_all_correct)
-        run_data_stage(
-            store,
-            paths,
-            mission_loader=lambda: TestDataStage._mission_loader_variant(
-                include_extra=True
-            ),
-        )
-        run_warmup_stage(store, paths, model_probe=TestWarmupStage._model_probe)
-        result = run_evaluate_stage(
-            store,
-            paths,
-            detector_predict=self._predict_all_correct,
+            metrics_writer=writer,
+            record_factory=_record_factory,
         )
         assert result["status"] == "completed"
+        assert len(writer.records) == 1
 
-    def test_requires_detector_predict(self, store, paths) -> None:
-        run_data_stage(store, paths, mission_loader=TestDataStage._mission_loader)
-        run_warmup_stage(store, paths, model_probe=TestWarmupStage._model_probe)
-        with pytest.raises(RuntimeError, match="detector_predict is required"):
-            run_evaluate_stage(store, paths)
+    def test_requires_dataset(self, store, paths) -> None:
+        writer = _FakeMetricsWriter()
+        with pytest.raises(RuntimeError, match="dataset is missing"):
+            run_publish_metrics_stage(
+                store,
+                paths,
+                metrics_writer=writer,
+                record_factory=_record_factory,
+            )
+
+    def test_requires_evaluation(self, store, paths) -> None:
+        run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader)
+        writer = _FakeMetricsWriter()
+        with pytest.raises(RuntimeError, match="evaluation is missing"):
+            run_publish_metrics_stage(
+                store,
+                paths,
+                metrics_writer=writer,
+                record_factory=_record_factory,
+            )
+
+    def test_rerun_calls_upsert_again(self, store, paths) -> None:
+        run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader)
+        run_evaluate_model_stage(store, paths, detector_predict=_predict_only_f1)
+        writer = _FakeMetricsWriter()
+        run_publish_metrics_stage(
+            store,
+            paths,
+            metrics_writer=writer,
+            record_factory=_record_factory,
+        )
+        run_publish_metrics_stage(
+            store,
+            paths,
+            metrics_writer=writer,
+            record_factory=_record_factory,
+        )
+        assert len(writer.records) == 2  # no skip-by-exists

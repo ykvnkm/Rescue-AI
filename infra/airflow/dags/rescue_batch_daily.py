@@ -1,69 +1,12 @@
-"""Rescue-AI daily batch ML pipeline.
+"""Daily batch evaluation of the deployed detector against labeled missions.
 
-One DAG, runs once per day, processes every mission that has frames in
-S3 through the four stages of the pipeline::
+Three sequential stages, one DockerOperator each::
 
-    data → warmup → evaluate → publish
+    prepare_dataset  ->  evaluate_model  ->  publish_metrics
 
-This DAG does **continuous evaluation** of a fixed detector against the
-labeled mission corpus — it does NOT train or fine-tune weights. The
-``warmup`` stage loads the deployed detector and probes it (fail-fast on
-a broken runtime before the heavy ``evaluate`` stage). The ``evaluate``
-stage runs the detector over the val manifest and records a confusion
-matrix. Honest naming matters: a task called ``train`` that doesn't
-actually train weights is a lie the reviewer will catch.
-
-Design notes for defence
-------------------------
-* **Simple graph** — exactly 4 DockerOperator tasks in UI:
-  ``data -> warmup -> evaluate -> publish``.
-  No dynamic mapping and no helper ``build_*`` tasks.
-
-* **Idempotency — two layers, different jobs:**
-
-    1. *Per-ds artifact skip (S3).* Every stage writes a deterministic
-       JSON key under ``ml_pipeline/mission={id}/ds={ds}/...`` and checks
-       ``store.exists(...)`` before doing any work. Retry of a failed
-       task skips already-completed stages.
-
-    2. *Per-ds upsert (Postgres).* The ``publish`` stage upserts into
-       ``batch_pipeline_metrics`` keyed on
-       ``(ds, mission_id, model_version, code_version)``. Re-running a
-       single ds is idempotent (``ON CONFLICT ... DO UPDATE``);
-       ``airflow dags backfill -s X -e Y`` inserts one row per day in
-       the range, and ``updated_at`` diverges from ``ds`` — an
-       observable signal that the backfill actually ran. The table
-       grows ``O(N_missions × N_days × N_model_versions × N_code_versions)``
-       which for the realistic corpus (~10 labeled missions × 365 days)
-       is negligible.
-
-* **Mission discovery is cached.** Only the ``data`` stage calls
-  ``list_objects_v2``; it writes the resolved mission set to a small
-  JSON manifest at ``.../ml_pipeline/ds={ds}/missions.json``. Downstream
-  stages read that manifest with a single ``get_object``, so the DAG
-  makes ~1 LIST per day instead of 4, and the mission set is pinned for
-  the whole run (no races if a new mission is uploaded mid-run).
-
-* **``catchup=True`` is intentional.** ``ds`` is part of the PK, so
-  backfilling a date range fills one row per day. This gives a drift
-  signal over time (recall/accuracy per ds) and lets the reviewer see
-  ``airflow dags backfill -s X -e Y`` actually do something observable
-  (divergence of ``updated_at`` from ``ds``).
-
-* **Secrets** come from Airflow Connections registered via the standard
-  ``AIRFLOW_CONN_*`` environment variable mechanism, populated from
-  GitHub Secrets in CI. Nothing is hardcoded; ``BaseHook.get_connection``
-  is the single source of truth.
-
-* **conf parameters** (``dag_run.conf``):
-    - ``mission_ids_csv`` — optional comma-separated mission IDs to
-      restrict processing to a subset (filters the manifest, does not
-      bypass it);
-    - ``model_version`` / ``code_version`` — labels written into
-      artifact keys and PG rows.
-
-S3 layout (input): ``missions/{mission_uuid}/frames/*.jpg``
-S3 layout (output): ``missions/batch/ml_pipeline/mission=<uuid>/*.json``
+Input layout:  ``missions/ds=YYYY-MM-DD/{mission_id}/{frames/*.jpg, labels.json}``
+Output layout:
+``missions/batch/ml_pipeline/ds=YYYY-MM-DD/mission={id}/{dataset,evaluation_<mv>_<cv>}.json``
 """
 
 from __future__ import annotations
@@ -82,21 +25,17 @@ from pendulum import datetime
 # ── Constants ────────────────────────────────────────────────────
 
 DAG_ID = "rescue_batch_pipeline"
-BATCH_IMAGE = os.environ["BATCH_IMAGE"]
+BATCH_IMAGE = os.environ.get("BATCH_IMAGE", "rescue-ai-batch:latest")
 
 APP_DB_CONN_ID = "rescue_app_db"
 S3_CONN_ID = "rescue_s3"
-
-
-# ── Secret wiring via Airflow Connections (standard mechanism) ──
 
 
 def _build_base_env() -> dict[str, str]:
     """Compose the env dict passed into every DockerOperator.
 
     Reads secrets exclusively from Airflow Connections registered via the
-    standard ``AIRFLOW_CONN_*`` environment variable mechanism. No secrets
-    are read from the DAG's own ``os.environ``.
+    standard ``AIRFLOW_CONN_*`` environment variable mechanism.
     """
     db_conn = BaseHook.get_connection(APP_DB_CONN_ID)
     s3_conn = BaseHook.get_connection(S3_CONN_ID)
@@ -117,33 +56,27 @@ def _build_base_env() -> dict[str, str]:
 
 
 def _build_stage_command(stage: str) -> list[str]:
-    """Return templated shell command for one pipeline stage."""
+    """Return the templated shell command for one pipeline stage."""
     command = (
         "python -m rescue_ai.interfaces.cli.batch "
         f"--stage {stage} "
-        "--all-missions "
+        '--ds "{{ ds }}" '
         "--mission-ids-csv "
         "\"{{ params.mission_ids_csv | default('', true) }}\" "
-        '--ds "{{ ds }}" '
         '--model-version "{{ params.model_version }}" '
-        '--code-version "{{ params.code_version }}" '
-        "{% set run_type = dag_run.run_type if dag_run else '' %}"
-        "{% if params.force_rerun or run_type in ['manual', 'backfill'] %}"
-        "--force"
-        "{% endif %}"
+        '--code-version "{{ params.code_version }}"'
     )
-    return [
-        "bash",
-        "-lc",
-        command,
-    ]
+    return ["bash", "-lc", command]
 
 
 # ── DAG definition ──────────────────────────────────────────────
 
 with DAG(
     dag_id=DAG_ID,
-    description="Rescue-AI daily batch: data → warmup → evaluate → publish",
+    description=(
+        "Rescue-AI daily batch ML pipeline: "
+        "prepare_dataset -> evaluate_model -> publish_metrics"
+    ),
     start_date=datetime(2026, 4, 6),
     schedule="@daily",
     catchup=True,
@@ -171,18 +104,9 @@ with DAG(
             type="string",
             description="Code version tag written into artifact keys and PG rows.",
         ),
-        "force_rerun": Param(
-            default=False,
-            type="boolean",
-            description=(
-                "If true, re-run stages for ds even when artifacts already exist."
-            ),
-        ),
     },
     tags=["rescue-ai", "ml-pipeline", "batch"],
 ) as dag:
-    # -- Shared DockerOperator defaults ------------------------------
-
     _docker_defaults: dict[str, Any] = {
         "image": BATCH_IMAGE,
         "docker_url": "unix://var/run/docker.sock",
@@ -201,36 +125,26 @@ with DAG(
         ],
     }
 
-    # -- Four fixed stage tasks --------------------------------------
-
-    stage_data = DockerOperator(
-        task_id="data",
+    prepare_dataset = DockerOperator(
+        task_id="prepare_dataset",
         execution_timeout=timedelta(minutes=30),
-        command=_build_stage_command("data"),
+        command=_build_stage_command("prepare_dataset"),
         **_docker_defaults,
     )
 
-    stage_warmup = DockerOperator(
-        task_id="warmup",
-        execution_timeout=timedelta(minutes=15),
-        command=_build_stage_command("warmup"),
-        **_docker_defaults,
-    )
-
-    stage_evaluate = DockerOperator(
-        task_id="evaluate",
+    evaluate_model = DockerOperator(
+        task_id="evaluate_model",
         execution_timeout=timedelta(hours=1),
-        command=_build_stage_command("evaluate"),
+        command=_build_stage_command("evaluate_model"),
         **_docker_defaults,
     )
 
-    stage_publish = DockerOperator(
-        task_id="publish",
+    publish_metrics = DockerOperator(
+        task_id="publish_metrics",
         execution_timeout=timedelta(minutes=10),
-        command=_build_stage_command("publish"),
+        command=_build_stage_command("publish_metrics"),
         **_docker_defaults,
     )
 
-    stage_warmup.set_upstream(stage_data)
-    stage_evaluate.set_upstream(stage_warmup)
-    stage_publish.set_upstream(stage_evaluate)
+    prepare_dataset.set_downstream(evaluate_model)
+    evaluate_model.set_downstream(publish_metrics)

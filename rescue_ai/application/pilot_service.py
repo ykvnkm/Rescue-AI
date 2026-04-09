@@ -205,6 +205,7 @@ class PilotService:
                 mission_id=frame_event.mission_id,
                 frame_id=frame_event.frame_id,
                 source_uri=frame_event.image_uri,
+                ds=_mission_ds(mission),
             )
         frame_event.image_uri = stored_image_uri
         self._deps.frame_event_repository.add(frame_event)
@@ -258,13 +259,16 @@ class PilotService:
         if mission is None:
             raise ValueError("Mission not found")
 
+        ds = _mission_ds(mission)
         if mission.status == "completed":
-            cached_report = self._deps.artifact_storage.load_mission_report(mission_id)
+            cached_report = self._deps.artifact_storage.load_mission_report(
+                mission_id, ds
+            )
             if cached_report is not None:
                 return dict(cached_report)
 
         report = self._build_mission_report(mission_id, mission.completed_frame_id)
-        self._deps.artifact_storage.save_mission_report(mission_id, report)
+        self._deps.artifact_storage.save_mission_report(mission_id, ds, report)
         return report
 
     def save_mission_annotations(
@@ -278,6 +282,7 @@ class PilotService:
             raise ValueError("Mission not found")
         return self._deps.artifact_storage.save_mission_annotations(
             mission_id,
+            _mission_ds(mission),
             payload,
         )
 
@@ -466,6 +471,23 @@ class PilotService:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _mission_ds(mission: Mission) -> str:
+    """Return the canonical ``ds`` partition string for a mission.
+
+    A mission belongs to exactly one ``ds`` for its entire lifetime —
+    the date the mission was created (in UTC). This guarantees that all
+    frames of a mission, even one that crosses midnight, land under the
+    same ``ds=YYYY-MM-DD/{mission_id}/`` prefix in S3, and that the batch
+    DAG processes that mission exactly once when it runs for that ``ds``.
+    """
+    created_at = (mission.created_at or "").strip()
+    if len(created_at) < 10:
+        raise ValueError(
+            f"Mission {mission.mission_id} has no usable created_at: {created_at!r}"
+        )
+    return created_at[:10]
 
 
 def _stable_mission_id(source_name: str) -> str:

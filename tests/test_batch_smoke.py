@@ -9,6 +9,7 @@ from pathlib import Path
 def test_batch_module_imports() -> None:
     module = importlib.import_module("rescue_ai.interfaces.cli.batch")
     assert hasattr(module, "main")
+    assert module.STAGES == ("prepare_dataset", "evaluate_model", "publish_metrics")
 
 
 def test_batch_dag_import_and_task_command() -> None:
@@ -17,7 +18,13 @@ def test_batch_dag_import_and_task_command() -> None:
     assert 'DAG_ID = "rescue_batch_pipeline"' in payload
     assert "DockerOperator(" in payload
     assert "rescue_ai.interfaces.cli.batch" in payload
-    assert "--all-missions" in payload
+    assert 'task_id="prepare_dataset"' in payload
+    assert 'task_id="evaluate_model"' in payload
+    assert 'task_id="publish_metrics"' in payload
+    # No skip-by-exists shortcuts left in the DAG: the stage command must
+    # not pass --force, and there must be no force_rerun Param.
+    assert "--force " not in payload
+    assert "force_rerun" not in payload
 
 
 def test_batch_cli_parse_args_smoke(monkeypatch) -> None:
@@ -30,17 +37,13 @@ def test_batch_cli_parse_args_smoke(monkeypatch) -> None:
         [
             "batch",
             "--stage",
-            "data",
-            "--mission-id",
-            "mission-1",
+            "prepare_dataset",
             "--ds",
-            "2026-03-01",
-            "--force",
+            "2026-04-09",
         ],
     )
     args = module.parse_args()
 
-    assert args.mission_id == "mission-1"
-    assert args.ds == "2026-03-01"
-    assert args.stage == "data"
-    assert args.force is True
+    assert args.ds == "2026-04-09"
+    assert args.stage == "prepare_dataset"
+    assert not hasattr(args, "force") or args.force is False

@@ -90,7 +90,9 @@ class S3ArtifactStorage:
             aws_secret_access_key=self._settings.secret_access_key,
         )
 
-    def store_frame(self, mission_id: str, frame_id: int, source_uri: str) -> str:
+    def store_frame(
+        self, mission_id: str, frame_id: int, source_uri: str, ds: str
+    ) -> str:
         source_path = _local_path_from_uri(source_uri)
         if source_path is None or not source_path.exists() or not source_path.is_file():
             return source_uri
@@ -99,6 +101,7 @@ class S3ArtifactStorage:
         filename = source_path.name or "frame.bin"
         key = self._key_for_mission_file(
             mission_id=mission_id,
+            ds=ds,
             leaf=f"frames/{filename}",
         )
         s3_uri = f"s3://{self._settings.bucket}/{key}"
@@ -148,8 +151,10 @@ class S3ArtifactStorage:
             filename=Path(key).name or "frame.bin",
         )
 
-    def save_mission_report(self, mission_id: str, report: Mapping[str, object]) -> str:
-        key = self._report_key(mission_id)
+    def save_mission_report(
+        self, mission_id: str, ds: str, report: Mapping[str, object]
+    ) -> str:
+        key = self._report_key(mission_id, ds)
         payload = json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8")
         self._client.put_object(
             Bucket=self._settings.bucket,
@@ -162,9 +167,10 @@ class S3ArtifactStorage:
     def save_mission_annotations(
         self,
         mission_id: str,
+        ds: str,
         payload: Mapping[str, object],
     ) -> str:
-        key = self._annotations_key(mission_id)
+        key = self._labels_key(mission_id, ds)
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         self._client.put_object(
             Bucket=self._settings.bucket,
@@ -174,8 +180,10 @@ class S3ArtifactStorage:
         )
         return f"s3://{self._settings.bucket}/{key}"
 
-    def load_mission_report(self, mission_id: str) -> Mapping[str, object] | None:
-        key = self._report_key(mission_id)
+    def load_mission_report(
+        self, mission_id: str, ds: str
+    ) -> Mapping[str, object] | None:
+        key = self._report_key(mission_id, ds)
         try:
             response = self._client.get_object(Bucket=self._settings.bucket, Key=key)
         except S3_OPERATION_ERRORS as error:
@@ -216,13 +224,16 @@ class S3ArtifactStorage:
         )
         return f"s3://{self._settings.bucket}/{key}"
 
-    def _report_key(self, mission_id: str) -> str:
-        return self._key_for_mission_file(mission_id=mission_id, leaf="report.json")
+    def _report_key(self, mission_id: str, ds: str) -> str:
+        return self._key_for_mission_file(
+            mission_id=mission_id, ds=ds, leaf="report.json"
+        )
 
-    def _annotations_key(self, mission_id: str) -> str:
+    def _labels_key(self, mission_id: str, ds: str) -> str:
         return self._key_for_mission_file(
             mission_id=mission_id,
-            leaf="annotations/mission.json",
+            ds=ds,
+            leaf="labels.json",
         )
 
     def _batch_report_key(self, safe_run_key: str) -> str:
@@ -243,8 +254,8 @@ class S3ArtifactStorage:
             "debug.csv",
         )
 
-    def _key_for_mission_file(self, *, mission_id: str, leaf: str) -> str:
-        return self._join(self._settings.prefix or "", mission_id, leaf)
+    def _key_for_mission_file(self, *, mission_id: str, ds: str, leaf: str) -> str:
+        return self._join(self._settings.prefix or "", f"ds={ds}", mission_id, leaf)
 
     @staticmethod
     def _join(*parts: str) -> str:

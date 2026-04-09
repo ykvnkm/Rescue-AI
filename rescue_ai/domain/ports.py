@@ -114,21 +114,32 @@ class FrameEventRepository(Protocol):
 
 
 class ArtifactStorage(Protocol):
-    """Storage contract for mission artifacts (frames, reports, batch outputs)."""
+    """Storage contract for mission artifacts (frames, reports, batch outputs).
 
-    def store_frame(self, mission_id: str, frame_id: int, source_uri: str) -> str: ...
+    All mission-scoped writes are partitioned by ``ds`` (the date-string the
+    mission belongs to, derived from its ``created_at``). The on-disk layout
+    is canonical Hive-style ``ds=YYYY-MM-DD/{mission_id}/...`` so that the
+    offline batch DAG sees exactly the same partitioning the online side
+    wrote.
+    """
+
+    def store_frame(
+        self, mission_id: str, frame_id: int, source_uri: str, ds: str
+    ) -> str: ...
 
     def load_frame(self, image_uri: str) -> ArtifactBlob | None: ...
 
     def save_mission_report(
-        self, mission_id: str, report: Mapping[str, object]
+        self, mission_id: str, ds: str, report: Mapping[str, object]
     ) -> str: ...
 
     def save_mission_annotations(
-        self, mission_id: str, payload: Mapping[str, object]
+        self, mission_id: str, ds: str, payload: Mapping[str, object]
     ) -> str: ...
 
-    def load_mission_report(self, mission_id: str) -> Mapping[str, object] | None: ...
+    def load_mission_report(
+        self, mission_id: str, ds: str
+    ) -> Mapping[str, object] | None: ...
 
 
 class DetectorPort(Protocol):
