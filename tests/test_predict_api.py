@@ -119,7 +119,6 @@ def test_ready_not_ready_without_env(monkeypatch) -> None:
     from rescue_ai.config import (
         ApiSettings,
         AppSettings,
-        BatchSettings,
         DatabaseSettings,
         DetectionSettings,
         RpiSettings,
@@ -141,7 +140,6 @@ def test_ready_not_ready_without_env(monkeypatch) -> None:
                 ARTIFACTS_S3_SECRET_ACCESS_KEY="",
             ),
             rpi=RpiSettings(RPI_BASE_URL=""),
-            batch=BatchSettings(),
             detection=DetectionSettings(),
         ),
     )

@@ -48,9 +48,7 @@ class ReportMetadataPayload(TypedDict, total=False):
     model_url: str
     model_sha256: str
     service_version: str
-    code_version: str
     ds: str
-    model_version: str
     run_key: str
 
 

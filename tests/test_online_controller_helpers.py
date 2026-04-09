@@ -14,7 +14,6 @@ from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.config import (
     ApiSettings,
     AppSettings,
-    BatchSettings,
     DatabaseSettings,
     DetectionSettings,
     RpiSettings,
@@ -136,7 +135,6 @@ def _settings() -> Settings:
             RPI_RTSP_PORT=8554,
             RPI_RTSP_PATH_PREFIX="live",
         ),
-        batch=BatchSettings(),
         detection=DetectionSettings(),
     )
 
