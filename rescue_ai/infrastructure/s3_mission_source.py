@@ -217,7 +217,7 @@ def _coco_person_positive_filenames(
         if image_id not in image_id_to_name:
             continue
         category_id = item.get("category_id")
-        if person_category_ids is not None and category_id not in person_category_ids:
+        if not _matches_person_category(category_id, person_category_ids):
             continue
         positive_image_ids.add(image_id)
 
@@ -245,6 +245,17 @@ def _coco_person_category_ids(raw_categories: object) -> set[int] | None:
             person_ids.add(category_id)
 
     return person_ids if person_ids else None
+
+
+def _matches_person_category(
+    category_id: object, person_category_ids: set[int] | None
+) -> bool:
+    """Return True when annotation category passes the optional person filter."""
+    if person_category_ids is None:
+        return True
+    if isinstance(category_id, bool) or not isinstance(category_id, int):
+        return False
+    return category_id in person_category_ids
 
 
 def _is_corrupted_image(frame_path: Path) -> bool:
