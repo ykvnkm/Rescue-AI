@@ -149,7 +149,7 @@ class InMemoryArtifactStorage:
         filename = Path(parsed.path).name if parsed.scheme == "file" else ""
         if not filename:
             filename = Path(source_uri).name or f"{frame_id}.jpg"
-        uri = f"memory://missions/ds={ds}/{mission_id}/frames/{filename}"
+        uri = f"memory://missions/{ds}/{mission_id}/frames/{filename}"
         self.stored_frames[(mission_id, frame_id)] = uri
         return uri
 
@@ -166,7 +166,7 @@ class InMemoryArtifactStorage:
         self, mission_id: str, ds: str, report: Mapping[str, object]
     ) -> str:
         self._reports[f"{ds}:{mission_id}"] = dict(report)
-        return f"memory://missions/ds={ds}/{mission_id}/report.json"
+        return f"memory://missions/{ds}/{mission_id}/report.json"
 
     def load_mission_report(
         self, mission_id: str, ds: str
@@ -181,7 +181,7 @@ class InMemoryArtifactStorage:
         payload: Mapping[str, object],
     ) -> str:
         self._reports[f"{ds}:{mission_id}:labels"] = dict(payload)
-        return f"memory://missions/ds={ds}/{mission_id}/labels.json"
+        return f"memory://missions/{ds}/{mission_id}/labels.json"
 
     def write_report(self, run_key: str, payload: dict[str, object]) -> str:
         self._reports[run_key] = dict(payload)

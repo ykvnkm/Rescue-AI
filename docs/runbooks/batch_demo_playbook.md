@@ -5,7 +5,7 @@
 артефакты в S3 и сводные метрики в Postgres.
 
 ## Предусловия
-- В S3 по префиксу `{ARTIFACTS_S3_PREFIX}/ds=YYYY-MM-DD/{mission_id}/`
+- В S3 по префиксу `{ARTIFACTS_S3_PREFIX}/YYYY-MM-DD/{mission_id}/`
   лежат `frames/*.jpg` и `labels.json`.
 - Платформа поднята (`infra/docker-compose.platform.yml`).
 

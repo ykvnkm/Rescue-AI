@@ -115,10 +115,9 @@ class ArtifactStorage(Protocol):
     """Storage contract for mission artifacts (frames, reports, batch outputs).
 
     All mission-scoped writes are partitioned by ``ds`` (the date-string the
-    mission belongs to, derived from its ``created_at``). The on-disk layout
-    is canonical Hive-style ``ds=YYYY-MM-DD/{mission_id}/...`` so that the
-    offline batch DAG sees exactly the same partitioning the online side
-    wrote.
+    mission belongs to, derived from its ``created_at``). The canonical layout
+    is ``YYYY-MM-DD/{mission_id}/...`` so the offline batch DAG sees exactly
+    the same partitioning the online side wrote.
     """
 
     def store_frame(

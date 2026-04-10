@@ -305,6 +305,11 @@ def complete_mission(mission_id: str) -> dict[str, object]:
         )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Artifact/report storage error: {type(error).__name__}: {error}",
+        ) from error
     if mission is None:
         raise HTTPException(status_code=404, detail="Mission not found")
 
@@ -379,6 +384,11 @@ def force_complete_mission(
         )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Artifact/report storage error: {type(error).__name__}: {error}",
+        ) from error
     if completed is None:
         raise HTTPException(status_code=404, detail="Mission not found")
 

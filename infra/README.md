@@ -40,7 +40,7 @@ docker compose -f docker-compose.platform.yml --env-file platform.env down
 - Три таски `DockerOperator`, идут последовательно:
   `prepare_dataset -> evaluate_model -> publish_metrics`.
 - Каждая стадия на старте делает свежий `list_objects_v2` по
-  `{prefix}/ds={ds}/` и итерируется по всем обнаруженным миссиям.
+  `{prefix}/{ds}/` и итерируется по всем обнаруженным миссиям.
 - Передача между тасками идёт через S3:
   `prepare_dataset` пишет `dataset.json`, `evaluate_model` читает его и
   пишет `evaluation_<mv>_<cv>.json`, `publish_metrics` апсертит сводную

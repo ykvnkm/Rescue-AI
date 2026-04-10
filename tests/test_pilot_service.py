@@ -80,7 +80,7 @@ def test_ingest_frame_event_persists_stored_image_uri_for_frame_and_alert() -> N
 
     mission_ds = mission.created_at[:10]
     expected_uri = (
-        f"memory://missions/ds={mission_ds}/{mission.mission_id}/frames/frame.jpg"
+        f"memory://missions/{mission_ds}/{mission.mission_id}/frames/frame.jpg"
     )
     assert len(alerts) == 1
     assert alerts[0].image_uri == expected_uri
@@ -332,3 +332,78 @@ def test_reingest_same_frame_keeps_single_alert_and_frame_event() -> None:
     assert not second_alerts
     assert len(db.alerts) == 1
     assert len(db.mission_frames[mission.mission_id]) == 1
+
+
+def test_complete_mission_writes_labels_payload_from_reviewed_alerts() -> None:
+    artifacts = InMemoryArtifactStorage()
+    service, _ = _build_pilot_service(artifact_storage=artifacts)
+    mission = service.create_mission(source_name="pilot", total_frames=2, fps=2.0)
+    service.start_mission(mission.mission_id)
+
+    first_alert = service.ingest_frame_event(
+        frame_event=FrameEvent(
+            mission_id=mission.mission_id,
+            frame_id=1,
+            ts_sec=0.0,
+            image_uri="file:///tmp/frame_0001.jpg",
+            gt_person_present=False,
+            gt_episode_id=None,
+        ),
+        detections=[
+            Detection(
+                bbox=(10.0, 20.0, 30.0, 40.0),
+                score=0.99,
+                label="person",
+                model_name="yolo8n",
+                explanation="strong-hit",
+            )
+        ],
+    )[0]
+    second_alert = service.ingest_frame_event(
+        frame_event=FrameEvent(
+            mission_id=mission.mission_id,
+            frame_id=2,
+            ts_sec=2.0,
+            image_uri="file:///tmp/frame_0002.jpg",
+            gt_person_present=False,
+            gt_episode_id=None,
+        ),
+        detections=[
+            Detection(
+                bbox=(11.0, 21.0, 31.0, 41.0),
+                score=0.98,
+                label="person",
+                model_name="yolo8n",
+                explanation="second-hit",
+            )
+        ],
+    )[0]
+
+    service.review_alert(
+        first_alert.alert_id,
+        {
+            "status": AlertStatus.REVIEWED_CONFIRMED,
+            "reviewed_by": "operator",
+            "reviewed_at_sec": 0.1,
+            "decision_reason": "true positive",
+        },
+    )
+    service.review_alert(
+        second_alert.alert_id,
+        {
+            "status": AlertStatus.REVIEWED_REJECTED,
+            "reviewed_by": "operator",
+            "reviewed_at_sec": 0.6,
+            "decision_reason": "false alarm",
+        },
+    )
+
+    completed = service.complete_mission(mission.mission_id, completed_frame_id=2)
+    assert completed is not None
+
+    mission_ds = mission.created_at[:10]
+    labels = artifacts._reports[f"{mission_ds}:{mission.mission_id}:labels"]
+    assert labels == {
+        "frame_0001.jpg": {"gt_person_present": True},
+        "frame_0002.jpg": {"gt_person_present": False},
+    }
