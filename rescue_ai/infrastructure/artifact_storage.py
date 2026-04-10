@@ -255,7 +255,7 @@ class S3ArtifactStorage:
         )
 
     def _key_for_mission_file(self, *, mission_id: str, ds: str, leaf: str) -> str:
-        return self._join(self._settings.prefix or "", f"ds={ds}", mission_id, leaf)
+        return self._join(self._settings.prefix or "", ds, mission_id, leaf)
 
     @staticmethod
     def _join(*parts: str) -> str:

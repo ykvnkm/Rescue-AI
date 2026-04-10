@@ -73,7 +73,7 @@ def _frames(*, with_extra: bool = False) -> list[FrameRecord]:
 
 def _mission(with_extra: bool = False) -> MissionInput:
     return MissionInput(
-        source_uri="s3://bucket/missions/ds=2026-04-09/mission-1",
+        source_uri="s3://bucket/missions/2026-04-09/mission-1",
         frames=_frames(with_extra=with_extra),
         gt_available=True,
     )

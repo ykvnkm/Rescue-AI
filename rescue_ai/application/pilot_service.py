@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Protocol, cast
+from urllib.parse import urlparse
 from uuid import NAMESPACE_URL, uuid5
 
 from rescue_ai.domain.alert_policy import MissionAlertState, evaluate_alert
@@ -172,11 +174,23 @@ class PilotService:
             raise ValueError(
                 f"Cannot complete mission with queued alerts: {len(queued)}"
             )
-        return self._deps.mission_repository.update_status(
+        completed = self._deps.mission_repository.update_status(
             mission_id=mission_id,
             status="completed",
             completed_frame_id=completed_frame_id,
         )
+        if completed is None:
+            return None
+        labels_payload = self._build_labels_payload(
+            mission_id=mission_id,
+            completed_frame_id=completed_frame_id,
+        )
+        self._deps.artifact_storage.save_mission_annotations(
+            mission_id=mission_id,
+            ds=_mission_ds(completed),
+            payload=labels_payload,
+        )
+        return completed
 
     def ingest_frame_event(
         self,
@@ -468,6 +482,40 @@ class PilotService:
         )
         return alert
 
+    def _build_labels_payload(
+        self,
+        *,
+        mission_id: str,
+        completed_frame_id: int | None,
+    ) -> dict[str, object]:
+        """Build one mission-scoped labels payload from reviewed alerts."""
+        frames = sorted(
+            self._deps.frame_event_repository.list_by_mission(mission_id),
+            key=lambda item: item.frame_id,
+        )
+        alerts = self._deps.alert_repository.list(mission_id=mission_id)
+        if completed_frame_id is not None:
+            frames = [item for item in frames if item.frame_id <= completed_frame_id]
+            alerts = [item for item in alerts if item.frame_id <= completed_frame_id]
+
+        labels_by_frame: dict[int, bool] = {frame.frame_id: False for frame in frames}
+        for alert in alerts:
+            if alert.status == "reviewed_confirmed":
+                labels_by_frame[alert.frame_id] = True
+                continue
+            if alert.status == "reviewed_rejected":
+                labels_by_frame.setdefault(alert.frame_id, False)
+
+        frame_id_to_filename = {
+            frame.frame_id: _frame_filename(frame.image_uri, frame.frame_id)
+            for frame in frames
+        }
+        return {
+            frame_id_to_filename[frame_id]: {"gt_person_present": gt_present}
+            for frame_id, gt_present in labels_by_frame.items()
+            if frame_id in frame_id_to_filename
+        }
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -479,7 +527,7 @@ def _mission_ds(mission: Mission) -> str:
     A mission belongs to exactly one ``ds`` for its entire lifetime —
     the date the mission was created (in UTC). This guarantees that all
     frames of a mission, even one that crosses midnight, land under the
-    same ``ds=YYYY-MM-DD/{mission_id}/`` prefix in S3, and that the batch
+    same ``YYYY-MM-DD/{mission_id}/`` prefix in S3, and that the batch
     DAG processes that mission exactly once when it runs for that ``ds``.
     """
     created_at = (mission.created_at or "").strip()
@@ -496,3 +544,14 @@ def _stable_mission_id(source_name: str) -> str:
 
 def _stable_alert_id(mission_id: str, frame_id: int) -> str:
     return str(uuid5(NAMESPACE_URL, f"rescue-ai/alert/{mission_id}/{frame_id}"))
+
+
+def _frame_filename(image_uri: str, frame_id: int) -> str:
+    parsed = urlparse(image_uri)
+    candidate = Path(parsed.path).name if parsed.path else ""
+    if candidate:
+        return candidate
+    fallback = Path(image_uri).name
+    if fallback:
+        return fallback
+    return f"frame_{frame_id:06d}.jpg"

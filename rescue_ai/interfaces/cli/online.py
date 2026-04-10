@@ -504,6 +504,14 @@ class DetectionStreamController:
                 ctx.mission_id,
                 error,
             )
+        except (RuntimeError, OSError, TypeError) as error:
+            ctx.state.end_reason = "mission_complete_failed"
+            logger.exception(
+                "Mission auto-complete failed with storage/runtime error: "
+                "mission=%s: %s",
+                ctx.mission_id,
+                error,
+            )
 
     def _build_loop_context(
         self,
