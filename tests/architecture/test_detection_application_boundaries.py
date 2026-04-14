@@ -1,3 +1,5 @@
+"""Architecture tests: detection/application layer import boundaries."""
+
 from __future__ import annotations
 
 from pathlib import Path

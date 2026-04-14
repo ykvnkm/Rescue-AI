@@ -1,3 +1,5 @@
+"""Tests for batch pilot engine integration."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

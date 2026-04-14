@@ -1,3 +1,5 @@
+"""Architecture tests: batch module import boundary enforcement."""
+
 from __future__ import annotations
 
 from pathlib import Path

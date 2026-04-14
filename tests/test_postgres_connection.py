@@ -1,3 +1,5 @@
+"""Tests for PostgreSQL connection and DSN handling."""
+
 from __future__ import annotations
 
 from urllib.parse import parse_qs, urlparse

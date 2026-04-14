@@ -1,3 +1,5 @@
+"""Tests for batch report quality gate validation."""
+
 from __future__ import annotations
 
 from scripts.batch.check_report_quality import validate

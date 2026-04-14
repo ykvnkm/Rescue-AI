@@ -72,6 +72,8 @@ class PredictRequest(BaseModel):
 
 
 class DetectionResponse(BaseModel):
+    """Single detection result returned by /predict endpoint."""
+
     bbox: tuple[float, float, float, float]
     score: float
     label: str
@@ -79,6 +81,8 @@ class DetectionResponse(BaseModel):
 
 
 class PredictResponse(BaseModel):
+    """Aggregated detection results for a single image."""
+
     image_uri: str
     detections: list[DetectionResponse]
     count: int
