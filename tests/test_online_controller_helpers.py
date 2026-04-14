@@ -474,7 +474,7 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
 
     monkeypatch.setattr(online_main, "_build_detector", _build_detector)
 
-    pilot_service, stream_controller, reset_hook, detector = (
+    pilot_service, stream_controller, reset_hook, detector, artifact_storage = (
         online_main.build_api_runtime()
     )
 
@@ -482,6 +482,7 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
     assert stream_controller is not None
     assert callable(reset_hook)
     assert detector is not None
+    assert artifact_storage is not None
 
     calls: dict[str, object] = {}
     monkeypatch.setattr(
@@ -492,7 +493,13 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
     monkeypatch.setattr(
         online_main,
         "build_api_runtime",
-        lambda: (pilot_service, stream_controller, reset_hook, detector),
+        lambda: (
+            pilot_service,
+            stream_controller,
+            reset_hook,
+            detector,
+            artifact_storage,
+        ),
     )
     monkeypatch.setattr(
         online_main,
