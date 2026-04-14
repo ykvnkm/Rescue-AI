@@ -80,6 +80,9 @@ markers = [
 [tool.pylint.main]
 py-version = "3.12"
 
+[tool.pylint.format]
+max-module-lines = 1100
+
 [tool.pylint."messages_control"]
 disable = [
     "C0114",  # missing-module-docstring

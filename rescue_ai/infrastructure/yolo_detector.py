@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import logging
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -13,6 +15,7 @@ from rescue_ai.application.inference_config import InferenceConfig
 from rescue_ai.domain.entities import Detection
 
 MODEL_CACHE_DIR = Path("runtime/models")
+logger = logging.getLogger(__name__)
 
 
 def _load_yolo_class():
@@ -29,16 +32,27 @@ class YoloDetector:
 
     def detect(self, image_uri: object) -> list[Detection]:
         """Run detection on a single frame and return normalized detections."""
+        t0 = time.perf_counter()
         results = self._predict_raw(image_uri)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+
         if not results:
+            logger.debug("YOLO inference: no results (%.1f ms)", elapsed_ms)
             return []
 
         result = results[0]
-        return _extract_detections(
+        detections = _extract_detections(
             result=result,
             confidence_threshold=self._config.confidence_threshold,
             model_name=self._model_version,
         )
+        logger.debug(
+            "YOLO inference: detections=%d elapsed=%.1f ms conf_threshold=%.3f",
+            len(detections),
+            elapsed_ms,
+            self._config.confidence_threshold,
+        )
+        return detections
 
     def runtime_name(self) -> str:
         """Return human-readable runtime name."""
@@ -106,12 +120,20 @@ class YoloDetector:
         MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
         if not model_path.exists():
+            logger.info(
+                "Downloading model: %s → %s", self._config.model_url, model_path
+            )
             urlretrieve(self._config.model_url, model_path)
+            logger.info("Model downloaded: %s", model_path)
+        else:
+            logger.info("Model cache hit: %s", model_path)
 
         _verify_model_integrity(
             model_path=model_path,
             expected_sha256=self._config.model_sha256,
         )
+        checksum_status = "verified" if self._config.model_sha256 else "skipped"
+        logger.info("Model loaded: path=%s checksum=%s", model_path, checksum_status)
         self._model = yolo_cls(str(model_path))
         return self._model
 

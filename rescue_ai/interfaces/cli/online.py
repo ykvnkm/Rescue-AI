@@ -1,5 +1,7 @@
 """Online API server entry point."""
 
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import logging
@@ -288,6 +290,14 @@ class DetectionStreamController:
             started_at=datetime.now(timezone.utc).isoformat(),
         )
         self._sessions[mission_id] = state
+        logger.info(
+            "Stream started: mission=%s rpi_mission=%s rtsp=%s http=%s fps=%.1f",
+            mission_id[:8],
+            rpi_mission_id,
+            session.rtsp_url,
+            getattr(session, "stream_url", ""),
+            target_fps,
+        )
 
         if self._pilot_service is None or self._detector is None:
             state.error = "detector or pilot_service not configured"
@@ -339,6 +349,15 @@ class DetectionStreamController:
         state.running = False
         if state.end_reason is None:
             state.end_reason = "stop_requested"
+        logger.info(
+            "Stream stopped: mission=%s frames=%d alerts=%d "
+            "detection_failures=%d reason=%s",
+            mission_id[:8],
+            state.processed_frames,
+            state.alerts_created,
+            state.detection_failures,
+            state.end_reason,
+        )
         return state
 
     def get_state(self, mission_id: str) -> RpiStreamState | None:
@@ -403,6 +422,16 @@ class DetectionStreamController:
         )
         if ctx is None:
             return
+
+        logger.info(
+            "Detection pipeline started: mission=%s rpi_mission=%s "
+            "backend=%s target_fps=%.1f gt_frames=%s",
+            mission_id[:8],
+            state.rpi_mission_id,
+            state.capture_backend,
+            state.target_fps,
+            state.gt_sequence_total,
+        )
 
         try:
             while not stop_event.is_set():
@@ -615,12 +644,16 @@ class DetectionStreamController:
             ctx.frame_id / ctx.target_fps if ctx.target_fps > 0 else ctx.frame_id * 0.5
         )
         gt_present, gt_episode_id = ctx.gt_tracker.evaluate(ctx.frame_id)
+
+        t0 = time.monotonic()
         detections = self._detect_frame_or_empty(
             frame=frame,
             frame_path=frame_path,
             frame_id=ctx.frame_id,
             state=ctx.state,
         )
+        inference_ms = (time.monotonic() - t0) * 1000
+
         frame_event = FrameEvent(
             mission_id=ctx.mission_id,
             frame_id=ctx.frame_id,
@@ -629,7 +662,32 @@ class DetectionStreamController:
             gt_person_present=gt_present,
             gt_episode_id=gt_episode_id,
         )
+        alerts_before = ctx.state.alerts_created
         self._ingest_event(ctx=ctx, frame_event=frame_event, detections=detections)
+        alerts_new = ctx.state.alerts_created - alerts_before
+
+        top_score = max((d.score for d in detections), default=0.0)
+        logger.info(
+            "Frame processed: mission=%s frame=%d/%s ts=%.2fs "
+            "detections=%d top_score=%.3f inference_ms=%.1f alerts_created=%d",
+            ctx.mission_id[:8],
+            ctx.frame_id,
+            ctx.state.source_frames_total or "?",
+            ts_sec,
+            len(detections),
+            top_score,
+            inference_ms,
+            alerts_new,
+        )
+        for d in detections:
+            logger.info(
+                "  Detected: label=%s score=%.3f "
+                "bbox=[%.1f,%.1f,%.1f,%.1f] model=%s",
+                d.label,
+                d.score,
+                *d.bbox,
+                d.model_name,
+            )
         ctx.frame_id += 1
         ctx.state.processed_frames = ctx.frame_id
 
@@ -713,8 +771,27 @@ class DetectionStreamController:
                 detections=detections,
             )
             ctx.state.alerts_created += len(alerts)
+            for alert in alerts:
+                if not hasattr(alert, "alert_id"):
+                    continue
+                logger.info(
+                    "Alert triggered: alert_id=%s mission=%s frame=%d "
+                    "people=%d score=%.3f bbox=[%.0f,%.0f,%.0f,%.0f]",
+                    alert.alert_id[:8],
+                    alert.mission_id[:8],
+                    alert.frame_id,
+                    alert.people_detected,
+                    alert.primary_detection.score,
+                    *alert.primary_detection.bbox,
+                )
         except (RuntimeError, ValueError, TypeError, OSError) as ingest_err:
-            logger.warning("Ingest error frame=%d: %s", ctx.frame_id, ingest_err)
+            logger.warning(
+                "Ingest error: mission=%s frame=%d error=%s: %s",
+                ctx.mission_id[:8],
+                ctx.frame_id,
+                type(ingest_err).__name__,
+                ingest_err,
+            )
             ctx.state.ingest_failures += 1
             ctx.state.error = f"{type(ingest_err).__name__}: {ingest_err}"
 
@@ -915,6 +992,18 @@ def build_api_runtime() -> tuple[
 def main() -> None:
     """Start the API server and initialize runtime dependencies."""
     settings = get_settings()
+    logging.basicConfig(
+        level=settings.app.log_level.upper(),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    logger.info(
+        "Starting Rescue-AI API: env=%s version=%s host=%s port=%d",
+        settings.app.env,
+        settings.app.service_version,
+        settings.api.host,
+        settings.api.port,
+    )
     _prepare_postgres_backend()
     pilot_service, stream_controller, reset_hook, detector = build_api_runtime()
     set_runtime(
@@ -929,6 +1018,7 @@ def main() -> None:
         "rescue_ai.interfaces.api.app:app",
         host=settings.api.host,
         port=settings.api.port,
+        log_level=settings.app.log_level.lower(),
     )
 
 
