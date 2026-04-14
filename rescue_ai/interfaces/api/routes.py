@@ -15,6 +15,7 @@ from rescue_ai.config import get_settings
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent
 from rescue_ai.domain.ports import AlertReviewPayload
 from rescue_ai.interfaces.api.dependencies import (
+    get_artifact_storage,
     get_detector,
     get_pilot_service,
     get_stream_controller,
@@ -651,9 +652,29 @@ def predict(payload: PredictRequest) -> PredictResponse:
             detail="Detector not available (model not loaded)",
         )
 
+    detect_source: object = payload.image_uri
+    if payload.image_uri.startswith("s3://"):
+        storage = get_artifact_storage()
+        if storage is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Artifact storage not configured",
+            )
+        artifact = storage.load_frame(payload.image_uri)
+        if artifact is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Frame not found in S3: {payload.image_uri}",
+            )
+        detect_source = artifact.content
+        logger.info(
+            "Resolved S3 URI: %s (%d bytes)", payload.image_uri, len(artifact.content)
+        )
+
     t0 = time.monotonic()
     try:
-        detections = detector.detect(payload.image_uri)
+        detector_any: Any = detector
+        detections = detector_any.detect(detect_source)
     except Exception as error:
         logger.error(
             "Predict failed: image_uri=%s error=%s: %s",

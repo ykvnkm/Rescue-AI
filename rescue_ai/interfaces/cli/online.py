@@ -23,7 +23,7 @@ import uvicorn
 from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.config import Settings, get_settings
 from rescue_ai.domain.entities import Detection, FrameEvent
-from rescue_ai.domain.ports import AlertRepository
+from rescue_ai.domain.ports import AlertRepository, ArtifactStorage
 from rescue_ai.domain.ports import DetectorPort as DomainDetectorPort
 from rescue_ai.domain.ports import (
     FrameEventRepository,
@@ -944,6 +944,7 @@ def build_api_runtime() -> tuple[
     DetectionStreamController,
     Callable[[], None],
     DomainDetectorPort | None,
+    ArtifactStorage,
 ]:
     """Assemble API runtime dependencies (composition root)."""
     settings = get_settings()
@@ -986,7 +987,7 @@ def build_api_runtime() -> tuple[
         pilot_service=pilot_service,
         detector=detector,
     )
-    return pilot_service, stream_controller, reset_hook, detector
+    return pilot_service, stream_controller, reset_hook, detector, artifact_storage
 
 
 def main() -> None:
@@ -1005,13 +1006,16 @@ def main() -> None:
         settings.api.port,
     )
     _prepare_postgres_backend()
-    pilot_service, stream_controller, reset_hook, detector = build_api_runtime()
+    pilot_service, stream_controller, reset_hook, detector, artifact_storage = (
+        build_api_runtime()
+    )
     set_runtime(
         ApiRuntime(
             pilot_service=pilot_service,
             stream_controller=stream_controller,
             reset_hook=reset_hook,
             detector=detector,
+            artifact_storage=artifact_storage,
         )
     )
     uvicorn.run(

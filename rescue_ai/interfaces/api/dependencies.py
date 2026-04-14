@@ -13,6 +13,7 @@ from typing import Callable, Protocol
 
 from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.domain.entities import Detection
+from rescue_ai.domain.ports import ArtifactStorage
 
 
 class StreamControllerPort(Protocol):
@@ -57,6 +58,7 @@ class ApiRuntime:
     stream_controller: StreamControllerPort
     reset_hook: Callable[[], None]
     detector: DetectorPort | None = field(default=None)
+    artifact_storage: ArtifactStorage | None = field(default=None)
 
 
 @dataclass
@@ -78,12 +80,24 @@ def _ensure_runtime() -> ApiRuntime:
             importlib.import_module("rescue_ai.interfaces.cli.online"),
             "build_api_runtime",
         )
-        pilot_service, stream_controller, reset_hook, detector = build_api_runtime()
+        runtime_parts = build_api_runtime()
+        if len(runtime_parts) == 4:
+            pilot_service, stream_controller, reset_hook, detector = runtime_parts
+            artifact_storage = None
+        else:
+            (
+                pilot_service,
+                stream_controller,
+                reset_hook,
+                detector,
+                artifact_storage,
+            ) = runtime_parts
         _STATE.runtime = ApiRuntime(
             pilot_service=pilot_service,
             stream_controller=stream_controller,
             reset_hook=reset_hook,
             detector=detector,
+            artifact_storage=artifact_storage,
         )
     return _STATE.runtime
 
@@ -105,6 +119,11 @@ def get_detector() -> DetectorPort | None:
     return _ensure_runtime().detector
 
 
+def get_artifact_storage() -> ArtifactStorage | None:
+    """Return artifact storage for resolving S3 image URIs."""
+    return _ensure_runtime().artifact_storage
+
+
 def reset_state() -> None:
     """Reset mutable runtime state used by tests and local sessions."""
     if _STATE.runtime is None:
@@ -118,6 +137,7 @@ __all__ = [
     "ApiRuntime",
     "DetectorPort",
     "StreamControllerPort",
+    "get_artifact_storage",
     "get_container",
     "get_detector",
     "get_pilot_service",
