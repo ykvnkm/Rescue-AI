@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
@@ -19,6 +21,7 @@ from rescue_ai.interfaces.api.dependencies import (
 )
 from rescue_ai.interfaces.api.ui_page import build_ui_html
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 DEFAULT_STREAM_FPS = 2.0
 
@@ -69,6 +72,8 @@ class PredictRequest(BaseModel):
 
 
 class DetectionResponse(BaseModel):
+    """Single detection result returned by /predict endpoint."""
+
     bbox: tuple[float, float, float, float]
     score: float
     label: str
@@ -76,6 +81,8 @@ class DetectionResponse(BaseModel):
 
 
 class PredictResponse(BaseModel):
+    """Aggregated detection results for a single image."""
+
     image_uri: str
     detections: list[DetectionResponse]
     count: int
@@ -244,6 +251,12 @@ def start_mission(payload: MissionStartRequest) -> dict[str, object]:
             detail=f"RPi stream start failed: {type(error).__name__}: {error}",
         ) from error
 
+    logger.info(
+        "Mission started: mission_id=%s source=%s fps=%.1f",
+        mission.mission_id,
+        mission.source_name,
+        mission.fps,
+    )
     return {
         "mission_id": mission.mission_id,
         "status": started.status,
@@ -321,6 +334,11 @@ def complete_mission(mission_id: str) -> dict[str, object]:
             detail=f"Artifact/report storage error: {type(error).__name__}: {error}",
         ) from error
 
+    logger.info(
+        "Mission completed: mission_id=%s completed_frame=%s",
+        mission.mission_id,
+        mission.completed_frame_id,
+    )
     return {
         "mission_id": mission.mission_id,
         "status": mission.status,
@@ -400,6 +418,11 @@ def force_complete_mission(
             detail=f"Artifact/report storage error: {type(error).__name__}: {error}",
         ) from error
 
+    logger.info(
+        "Mission force-completed: mission_id=%s resolved_alerts=%d",
+        completed.mission_id,
+        resolved_count,
+    )
     return {
         "mission_id": completed.mission_id,
         "status": completed.status,
@@ -499,6 +522,13 @@ def ingest_frame(
             detail=f"Artifact storage error: {type(error).__name__}: {error}",
         ) from error
 
+    logger.info(
+        "Frame ingested: mission=%s frame=%d detections=%d alerts_created=%d",
+        mission_id,
+        payload.frame_id,
+        len(payload.detections),
+        len(alerts),
+    )
     return {
         "mission_id": mission_id,
         "frame_id": payload.frame_id,
@@ -572,6 +602,12 @@ def confirm_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
         raise HTTPException(status_code=409, detail=str(error)) from error
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
+    logger.info(
+        "Alert confirmed: alert_id=%s mission=%s reviewed_by=%s",
+        alert_id,
+        alert.mission_id,
+        payload.reviewed_by,
+    )
     return _alert_to_dict(alert, service=service)
 
 
@@ -593,6 +629,12 @@ def reject_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
         raise HTTPException(status_code=409, detail=str(error)) from error
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
+    logger.info(
+        "Alert rejected: alert_id=%s mission=%s reviewed_by=%s",
+        alert_id,
+        alert.mission_id,
+        payload.reviewed_by,
+    )
     return _alert_to_dict(alert, service=service)
 
 
@@ -601,19 +643,45 @@ def reject_alert(alert_id: str, payload: ReviewRequest) -> dict[str, object]:
 
 @router.post("/predict", response_model=PredictResponse, tags=["detection"])
 def predict(payload: PredictRequest) -> PredictResponse:
+    logger.info("Predict request: image_uri=%s", payload.image_uri)
     detector = get_detector()
     if detector is None:
         raise HTTPException(
             status_code=503,
             detail="Detector not available (model not loaded)",
         )
+
+    t0 = time.monotonic()
     try:
         detections = detector.detect(payload.image_uri)
     except Exception as error:
+        logger.error(
+            "Predict failed: image_uri=%s error=%s: %s",
+            payload.image_uri,
+            type(error).__name__,
+            error,
+        )
         raise HTTPException(
             status_code=502,
             detail=f"Detection failed: {type(error).__name__}: {error}",
         ) from error
+    inference_ms = (time.monotonic() - t0) * 1000
+
+    for d in detections:
+        logger.info(
+            "  Detection found: label=%s score=%.3f "
+            "bbox=[%.1f,%.1f,%.1f,%.1f] model=%s",
+            d.label,
+            d.score,
+            *d.bbox,
+            d.model_name,
+        )
+    logger.info(
+        "Predict complete: image_uri=%s detections=%d inference_ms=%.1f",
+        payload.image_uri,
+        len(detections),
+        inference_ms,
+    )
 
     return PredictResponse(
         image_uri=payload.image_uri,

@@ -80,11 +80,12 @@ markers = [
 [tool.pylint.main]
 py-version = "3.12"
 
+[tool.pylint.format]
+max-module-lines = 1100
+
 [tool.pylint."messages_control"]
 disable = [
-    "C0114",  # missing-module-docstring
-    "C0115",  # missing-class-docstring
-    "C0116",  # missing-function-docstring
+    "C0116",  # missing-function-docstring (Protocol/CRUD methods)
     "R0801",  # duplicate-code
     "R0902",  # too-many-instance-attributes
     "R0903",  # too-few-public-methods

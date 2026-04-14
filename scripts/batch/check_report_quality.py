@@ -1,3 +1,5 @@
+"""Quality gate script for batch pipeline report validation."""
+
 from __future__ import annotations
 
 import argparse

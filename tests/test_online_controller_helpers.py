@@ -502,7 +502,9 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
     monkeypatch.setattr(
         online_main.uvicorn,
         "run",
-        lambda app, host, port: calls.setdefault("uvicorn", (app, host, port)),
+        lambda app, host, port, **kwargs: calls.setdefault(
+            "uvicorn", (app, host, port)
+        ),
     )
 
     online_main.main()

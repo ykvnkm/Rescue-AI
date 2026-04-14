@@ -1,3 +1,5 @@
+"""Utility for verifying import boundary rules between layers."""
+
 from __future__ import annotations
 
 import ast

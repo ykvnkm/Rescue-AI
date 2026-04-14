@@ -99,6 +99,8 @@ def _predict_false(_image_uri: str) -> bool:
 
 
 class TestPipelinePaths:
+    """Verify S3 path construction for pipeline artifacts."""
+
     def test_base_with_prefix(self, paths: PipelinePaths) -> None:
         assert paths.base == "test/ml_pipeline/ds=2026-04-09/mission=mission-1"
 
@@ -120,6 +122,8 @@ class TestPipelinePaths:
 
 
 class TestPrepareDatasetStage:
+    """Verify prepare_dataset stage writes correct manifests."""
+
     def test_writes_manifest(self, store, paths) -> None:
         result = run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader)
         assert result["status"] == "completed"
@@ -151,6 +155,8 @@ def _predict_only_f1(image_uri: str) -> bool:
 
 
 class TestEvaluateModelStage:
+    """Verify evaluate_model stage produces evaluation results."""
+
     def test_writes_evaluation(self, store, paths) -> None:
         run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader)
         result = run_evaluate_model_stage(
@@ -208,6 +214,8 @@ def _record_factory(*, paths, dataset, evaluation):
 
 
 class TestPublishMetricsStage:
+    """Verify publish_metrics stage persists computed metrics."""
+
     def test_upserts_record(self, store, paths) -> None:
         run_prepare_dataset_stage(store, paths, mission_loader=_mission_loader)
         run_evaluate_model_stage(store, paths, detector_predict=_predict_only_f1)

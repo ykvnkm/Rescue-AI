@@ -1,3 +1,5 @@
+"""Application service for pilot mission lifecycle and alert management."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

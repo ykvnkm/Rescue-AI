@@ -9,6 +9,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class BaseEnvSettings(BaseSettings):
+    """Base settings class with .env file support."""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -17,12 +19,16 @@ class BaseEnvSettings(BaseSettings):
 
 
 class AppSettings(BaseEnvSettings):
+    """Application-level runtime settings."""
+
     env: str = Field(default="dev", alias="APP_ENV")
     log_level: str = Field(default="INFO", alias="APP_LOG_LEVEL")
     service_version: str = Field(default="dev", alias="SERVICE_VERSION")
 
 
 class ApiSettings(BaseEnvSettings):
+    """HTTP server binding and startup settings."""
+
     host: str = Field(default="0.0.0.0", alias="APP_HOST")
     port: int = Field(default=8000, alias="APP_PORT")
     postgres_ready_timeout_sec: float = Field(
@@ -32,10 +38,14 @@ class ApiSettings(BaseEnvSettings):
 
 
 class DatabaseSettings(BaseEnvSettings):
+    """PostgreSQL connection settings."""
+
     dsn: str = Field(default="", alias="DB_DSN")
 
 
 class StorageSettings(BaseEnvSettings):
+    """S3-compatible artifact storage credentials and paths."""
+
     s3_endpoint: str = Field(default="", alias="ARTIFACTS_S3_ENDPOINT")
     s3_region: str = Field(default="ru-central1", alias="ARTIFACTS_S3_REGION")
     s3_access_key_id: str = Field(default="", alias="ARTIFACTS_S3_ACCESS_KEY_ID")
@@ -47,6 +57,8 @@ class StorageSettings(BaseEnvSettings):
 
 
 class RpiSettings(BaseEnvSettings):
+    """Raspberry Pi video source connection settings."""
+
     base_url: str = Field(default="", alias="RPI_BASE_URL")
     missions_dir: str = Field(default="", alias="RPI_MISSIONS_DIR")
     rtsp_port: int = Field(default=0, alias="RPI_RTSP_PORT")
@@ -55,10 +67,14 @@ class RpiSettings(BaseEnvSettings):
 
 
 class DetectionSettings(BaseEnvSettings):
+    """Detection inference timeout settings."""
+
     http_timeout_sec: float = Field(default=1.0, alias="DETECTION_HTTP_TIMEOUT_SEC")
 
 
 class Settings(BaseSettings):
+    """Aggregated application settings."""
+
     app: AppSettings
     api: ApiSettings
     database: DatabaseSettings

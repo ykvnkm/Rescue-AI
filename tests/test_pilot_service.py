@@ -1,3 +1,5 @@
+"""Tests for PilotService mission and alert lifecycle."""
+
 from __future__ import annotations
 
 from rescue_ai.application.pilot_service import PilotService
