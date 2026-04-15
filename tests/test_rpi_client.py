@@ -55,7 +55,7 @@ def test_rpi_client_health_catalog_and_session_calls(monkeypatch) -> None:
 
     client = RpiClient(
         RpiSettings(
-            RPI_BASE_URL="http://192.168.0.118:9100",
+            RPI_BASE_URL="http://rpi.local:9100",
             RPI_MISSIONS_DIR="/home/ykvnkm/Documents/missions",
             RPI_RTSP_PORT=8554,
             RPI_RTSP_PATH_PREFIX="live",
@@ -71,14 +71,14 @@ def test_rpi_client_health_catalog_and_session_calls(monkeypatch) -> None:
 
     session = client.start_stream("m1", target_fps=6.0, timeout_sec=3.0)
     assert session.session_id == "sess-1"
-    assert session.rtsp_url == "rtsp://192.168.0.118:8554/live/sess-1"
+    assert session.rtsp_url == "rtsp://rpi.local:8554/live/sess-1"
 
     stop_payload = client.stop_stream("sess-1", timeout_sec=4.0)
     assert stop_payload["stopped"] is True
 
     stats = client.session_stats("sess-1", timeout_sec=5.0)
     assert stats["processed"] == 10
-    assert client.base_url == "http://192.168.0.118:9100"
+    assert client.base_url == "http://rpi.local:9100"
 
     start_call = [item for item in calls if item[1].endswith("/source/start")][0]
     assert start_call[2] is not None
@@ -123,7 +123,7 @@ def test_load_gt_sequence_from_raw_file(monkeypatch) -> None:
     monkeypatch.setattr("rescue_ai.infrastructure.rpi_client.httpx.get", _fake_get)
     client = RpiClient(
         RpiSettings(
-            RPI_BASE_URL="http://192.168.0.118:9100",
+            RPI_BASE_URL="http://rpi.local:9100",
             RPI_MISSIONS_DIR="/home/ykvnkm/Documents/missions",
             RPI_RTSP_PORT=8554,
             RPI_RTSP_PATH_PREFIX="live",

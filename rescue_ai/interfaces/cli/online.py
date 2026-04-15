@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import suppress
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from importlib import import_module
@@ -19,6 +20,7 @@ from typing import Any
 
 import httpx
 import uvicorn
+from uvicorn.config import LOGGING_CONFIG as UVICORN_LOGGING_CONFIG
 
 from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.config import Settings, get_settings
@@ -37,6 +39,35 @@ from rescue_ai.infrastructure.rpi_client import RpiClient
 from rescue_ai.interfaces.api.dependencies import ApiRuntime, set_runtime
 
 logger = logging.getLogger(__name__)
+_URL_RE = re.compile(r"\b(?:https?|rtsp)://[^\s\"')]+", re.IGNORECASE)
+_IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_STREAM_STATS_PUBLIC_FIELDS = {
+    "processed",
+    "stop",
+    "target_fps",
+    "realtime",
+    "frames_emitted",
+    "frames_dropped",
+    "avg_emit_fps",
+    "uptime_sec",
+    "total_source_frames",
+    "backend",
+    "publisher_running",
+}
+
+
+def _sanitize_text(text: str) -> str:
+    return _IPV4_RE.sub("<redacted-ip>", _URL_RE.sub("<redacted-url>", text))
+
+
+def _sanitize_public_payload(value: Any) -> Any:
+    if isinstance(value, str):
+        return _sanitize_text(value)
+    if isinstance(value, dict):
+        return {k: _sanitize_public_payload(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_public_payload(item) for item in value]
+    return value
 
 
 @dataclass
@@ -142,7 +173,7 @@ class _HttpFrameCapture(_FrameCapture):
                 self._ok = True
                 self._stream_iter = None
         except (httpx.HTTPError, RuntimeError, ValueError) as err:
-            logger.warning("HTTP stream connect failed: %s", err)
+            logger.warning("HTTP stream connect failed: %s", type(err).__name__)
             self._ok = False
 
     def is_open(self) -> bool:
@@ -155,7 +186,7 @@ class _HttpFrameCapture(_FrameCapture):
                 return self._read_mjpeg_frame()
             return self._read_single_frame()
         except (httpx.HTTPError, RuntimeError, ValueError) as err:
-            logger.warning("HTTP frame read error: %s", err)
+            logger.warning("HTTP frame read error: %s", type(err).__name__)
             return None
 
     def _read_mjpeg_frame(self) -> bytes | None:
@@ -292,11 +323,9 @@ class DetectionStreamController:
         )
         self._sessions[mission_id] = state
         logger.info(
-            "Stream started: mission=%s rpi_mission=%s rtsp=%s http=%s fps=%.1f",
+            "Stream started: mission=%s rpi_mission=%s fps=%.1f",
             mission_id[:8],
             rpi_mission_id,
-            session.rtsp_url,
-            getattr(session, "stream_url", ""),
             target_fps,
         )
 
@@ -385,9 +414,17 @@ class DetectionStreamController:
         if state is None:
             return None
         payload = asdict(state)
+        payload.pop("session_id", None)
         payload.pop("rtsp_url", None)
         payload.pop("stream_url", None)
-        return payload
+        last_stats = payload.get("last_stats")
+        if isinstance(last_stats, dict):
+            payload["last_stats"] = {
+                key: value
+                for key, value in last_stats.items()
+                if key in _STREAM_STATS_PUBLIC_FIELDS
+            }
+        return _sanitize_public_payload(payload)
 
     def check_rpi_health(self) -> dict[str, object]:
         return self._client().health(timeout_sec=self._rpi_settings.timeout_sec)
@@ -790,11 +827,10 @@ class DetectionStreamController:
                 )
         except (RuntimeError, ValueError, TypeError, OSError) as ingest_err:
             logger.warning(
-                "Ingest error: mission=%s frame=%d error=%s: %s",
+                "Ingest error: mission=%s frame=%d error=%s",
                 ctx.mission_id[:8],
                 ctx.frame_id,
                 type(ingest_err).__name__,
-                ingest_err,
             )
             ctx.state.ingest_failures += 1
             ctx.state.error = f"{type(ingest_err).__name__}: {ingest_err}"
@@ -903,7 +939,7 @@ class DetectionStreamController:
         """Try RTSP first (low-latency), then HTTP as fallback."""
         # 1. RTSP primary path
         if state.rtsp_url:
-            logger.info("Trying RTSP: %s", state.rtsp_url)
+            logger.info("Trying RTSP stream")
             rtsp_capture: _FrameCapture = _RtspFrameCapture(state.rtsp_url)
             if rtsp_capture.is_open():
                 logger.info("RTSP stream opened successfully")
@@ -912,7 +948,7 @@ class DetectionStreamController:
 
         # 2. HTTP fallback (MJPEG or polling endpoint)
         if state.stream_url:
-            logger.info("Trying HTTP stream: %s", state.stream_url)
+            logger.info("Trying HTTP stream")
             http_capture: _FrameCapture = _HttpFrameCapture(state.stream_url)
             if http_capture.is_open():
                 logger.info("HTTP stream opened successfully")
@@ -1002,6 +1038,8 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     logger.info(
         "Starting Rescue-AI API: env=%s version=%s host=%s port=%d",
         settings.app.env,
@@ -1027,6 +1065,8 @@ def main() -> None:
         host=settings.api.host,
         port=settings.api.port,
         log_level=settings.app.log_level.lower(),
+        access_log=True,
+        log_config=_build_uvicorn_log_config(),
     )
 
 
@@ -1036,6 +1076,17 @@ def _prepare_postgres_backend() -> None:
     if not dsn:
         raise RuntimeError("DB_DSN is required")
     wait_for_postgres(dsn, timeout_sec=settings.api.postgres_ready_timeout_sec)
+
+
+def _build_uvicorn_log_config() -> dict[str, Any]:
+    """Use standard uvicorn logging config, but hide client IP in access logs."""
+    config: dict[str, Any] = deepcopy(UVICORN_LOGGING_CONFIG)
+    access_formatter = config.get("formatters", {}).get("access")
+    if isinstance(access_formatter, dict):
+        access_formatter["fmt"] = (
+            "%(asctime)s [%(levelprefix)s] %(name)s: %(request_line)s %(status_code)s"
+        )
+    return config
 
 
 def _build_repositories(
