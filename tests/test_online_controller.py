@@ -24,7 +24,12 @@ class _FakeRpiClient:
 
     def session_stats(self, session_id: str, timeout_sec: float):
         _ = (session_id, timeout_sec)
-        return {"processed": 7}
+        return {
+            "processed": 7,
+            "source": "/home/user/missions/4",
+            "session_id": "internal-session",
+            "rtsp_url": "rtsp://rpi.local:8554/live",
+        }
 
     def health(self, timeout_sec: float):
         _ = timeout_sec
@@ -52,7 +57,7 @@ def _settings() -> Settings:
         database=DatabaseSettings(),
         storage=StorageSettings(),
         rpi=RpiSettings(
-            RPI_BASE_URL="http://192.168.0.118:9100",
+            RPI_BASE_URL="http://rpi.local:9100",
             RPI_RTSP_PORT=8554,
             RPI_RTSP_PATH_PREFIX="live",
             RPI_TIMEOUT_SEC=1.0,

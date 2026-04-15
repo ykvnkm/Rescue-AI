@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
@@ -25,6 +26,14 @@ from rescue_ai.interfaces.api.ui_page import build_ui_html
 logger = logging.getLogger(__name__)
 router = APIRouter()
 DEFAULT_STREAM_FPS = 2.0
+_URI_RE = re.compile(r"\b[a-z][a-z0-9+.\-]*://[^\s\"')]+", re.IGNORECASE)
+_IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+
+
+def _sanitize_log_text(value: object) -> str:
+    text = str(value)
+    text = _URI_RE.sub("<redacted-url>", text)
+    return _IPV4_RE.sub("<redacted-ip>", text)
 
 
 # ── Request / Response models ──────────────────────────────────────
@@ -255,6 +264,7 @@ def _resolve_queued_alerts_for_force_complete(
 )
 def health() -> dict[str, str]:
     """Returns 200 if the service process is running."""
+    logger.info("Endpoint health: status=ok")
     return {"status": "ok"}
 
 
@@ -279,10 +289,12 @@ def ready() -> dict[str, object]:
         "rpi": bool(settings.rpi.base_url.strip() and settings.rpi.rtsp_port > 0),
     }
     if not all(checks.values()):
+        logger.warning("Endpoint ready: status=not_ready checks=%s", checks)
         raise HTTPException(
             status_code=503,
             detail={"status": "not_ready", "checks": checks},
         )
+    logger.info("Endpoint ready: status=ready checks=%s", checks)
     return {"status": "ready", "checks": checks}
 
 
@@ -297,14 +309,17 @@ def rpi_status() -> dict[str, object]:
     settings = get_settings()
     base_url = settings.rpi.base_url
     if not base_url:
+        logger.info("Endpoint rpi_status: connected=false reason=base_url_missing")
         return {"connected": False}
 
     stream_controller = get_stream_controller()
     try:
         stream_controller.check_rpi_health()
+        logger.info("Endpoint rpi_status: connected=true")
         return {"connected": True}
     except (ValueError, RuntimeError, OSError) as error:
-        logger.warning("RPi health check failed: %s: %s", type(error).__name__, error)
+        logger.warning("RPi health check failed: %s", type(error).__name__)
+        logger.info("Endpoint rpi_status: connected=false reason=health_check_failed")
         return {"connected": False}
 
 
@@ -320,15 +335,18 @@ def rpi_missions() -> dict[str, object]:
     try:
         missions = stream_controller.list_rpi_missions()
     except (ValueError, RuntimeError, OSError) as error:
-        logger.warning("RPi catalog fetch failed: %s: %s", type(error).__name__, error)
+        logger.warning("RPi catalog fetch failed: %s", type(error).__name__)
         raise HTTPException(
             status_code=503, detail="RPi catalog unavailable"
         ) from error
-    return {"missions": [item for item in missions if item.get("mission_id", "")]}
+    valid_missions = [item for item in missions if item.get("mission_id", "")]
+    logger.info("Endpoint rpi_missions: missions=%d", len(valid_missions))
+    return {"missions": valid_missions}
 
 
 @router.get("/favicon.ico", include_in_schema=False)
 def favicon() -> Response:
+    logger.info("Endpoint favicon: status=204")
     return Response(status_code=204)
 
 
@@ -337,11 +355,13 @@ def favicon() -> Response:
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
 def ui_index() -> str:
+    logger.info("Endpoint ui_index: status=200")
     return build_ui_html()
 
 
 @router.get("/pilot", response_class=HTMLResponse, include_in_schema=False)
 def pilot_ui() -> str:
+    logger.info("Endpoint pilot_ui: status=200")
     return build_ui_html()
 
 
@@ -362,6 +382,11 @@ def pilot_ui() -> str:
 def start_mission(payload: MissionStartRequest) -> dict[str, object]:
     """Create a mission, connect to the RPi video stream, and begin
     real-time person detection with YOLOv8."""
+    logger.info(
+        "Endpoint start_mission: rpi_mission_id=%s fps=%.1f",
+        _sanitize_log_text(payload.rpi_mission_id),
+        payload.fps,
+    )
     service = get_pilot_service()
     stream_controller = get_stream_controller()
     detector = get_detector()
@@ -402,13 +427,13 @@ def start_mission(payload: MissionStartRequest) -> dict[str, object]:
             raise HTTPException(status_code=404, detail=error_text) from error
         raise HTTPException(status_code=409, detail=error_text) from error
     except (RuntimeError, OSError) as error:
-        logger.error("RPi stream start failed: %s: %s", type(error).__name__, error)
+        logger.error("RPi stream start failed: %s", type(error).__name__)
         raise HTTPException(status_code=503, detail="RPi stream unavailable") from error
 
     logger.info(
-        "Mission started: mission_id=%s source=%s fps=%.1f",
+        "Endpoint start_mission success: mission_id=%s source=%s fps=%.1f",
         mission.mission_id,
-        mission.source_name,
+        _sanitize_log_text(mission.source_name),
         mission.fps,
     )
     return {
@@ -433,6 +458,7 @@ def start_mission(payload: MissionStartRequest) -> dict[str, object]:
 def stop_mission_stream(mission_id: str) -> dict[str, object]:
     """Stop the RPi video stream but keep the mission open so the
     operator can continue reviewing pending alerts."""
+    logger.info("Endpoint stop_mission_stream: mission_id=%s", mission_id)
     service = get_pilot_service()
     stream_controller = get_stream_controller()
 
@@ -444,15 +470,23 @@ def stop_mission_stream(mission_id: str) -> dict[str, object]:
 
     stopped_state = stream_controller.stop(mission_id)
     queued = service.list_alerts(mission_id=mission_id, status="queued")
+    processed_frames = (
+        stopped_state.processed_frames if stopped_state is not None else None
+    )
+    logger.info(
+        "Endpoint stop_mission_stream success: mission_id=%s "
+        "queued_alerts=%d processed_frames=%s",
+        mission_id,
+        len(queued),
+        processed_frames,
+    )
 
     return {
         "mission_id": mission_id,
         "status": mission.status,
         "stream_stopped": True,
         "queued_alerts": len(queued),
-        "processed_frames": (
-            stopped_state.processed_frames if stopped_state is not None else None
-        ),
+        "processed_frames": processed_frames,
     }
 
 
@@ -472,6 +506,7 @@ def complete_mission(mission_id: str) -> dict[str, object]:
     the quality report, and upload it to S3.
 
     Fails with 409 if there are unreviewed (queued) alerts."""
+    logger.info("Endpoint complete_mission: mission_id=%s", mission_id)
     service = get_pilot_service()
     stream_controller = get_stream_controller()
 
@@ -479,6 +514,11 @@ def complete_mission(mission_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Mission not found")
     queued_alerts = service.list_alerts(mission_id=mission_id, status="queued")
     if queued_alerts:
+        logger.info(
+            "Endpoint complete_mission rejected: mission_id=%s queued_alerts=%d",
+            mission_id,
+            len(queued_alerts),
+        )
         raise HTTPException(
             status_code=409,
             detail=f"Cannot complete mission with queued alerts: {len(queued_alerts)}",
@@ -497,7 +537,7 @@ def complete_mission(mission_id: str) -> dict[str, object]:
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except Exception as error:
-        logger.error("Storage error: %s: %s", type(error).__name__, error)
+        logger.error("Storage error: %s", type(error).__name__)
         raise HTTPException(
             status_code=502,
             detail="Storage operation failed",
@@ -508,14 +548,14 @@ def complete_mission(mission_id: str) -> dict[str, object]:
     try:
         report = service.get_mission_report(mission_id)
     except Exception as error:
-        logger.error("Storage error: %s: %s", type(error).__name__, error)
+        logger.error("Storage error: %s", type(error).__name__)
         raise HTTPException(
             status_code=502,
             detail="Storage operation failed",
         ) from error
 
     logger.info(
-        "Mission completed: mission_id=%s completed_frame=%s",
+        "Endpoint complete_mission success: mission_id=%s completed_frame=%s",
         mission.mission_id,
         mission.completed_frame_id,
     )
@@ -551,6 +591,11 @@ def force_complete_mission(
     and finalizes the mission.
 
     Use when the operator cannot review every alert individually."""
+    logger.info(
+        "Endpoint force_complete_mission: mission_id=%s reviewed_by=%s",
+        mission_id,
+        _sanitize_log_text(payload.reviewed_by),
+    )
     service = get_pilot_service()
     stream_controller = get_stream_controller()
 
@@ -558,6 +603,11 @@ def force_complete_mission(
     if mission is None:
         raise HTTPException(status_code=404, detail="Mission not found")
     if mission.status == "completed":
+        logger.info(
+            "Endpoint force_complete_mission noop: "
+            "mission_id=%s status=already_completed",
+            mission_id,
+        )
         return {
             "mission_id": mission.mission_id,
             "status": mission.status,
@@ -580,6 +630,11 @@ def force_complete_mission(
     )
 
     if failed_alert_ids:
+        logger.warning(
+            "Endpoint force_complete_mission rejected: mission_id=%s failed_alerts=%d",
+            mission_id,
+            len(failed_alert_ids),
+        )
         raise HTTPException(
             status_code=409,
             detail=(
@@ -596,7 +651,7 @@ def force_complete_mission(
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except Exception as error:
-        logger.error("Storage error: %s: %s", type(error).__name__, error)
+        logger.error("Storage error: %s", type(error).__name__)
         raise HTTPException(
             status_code=502,
             detail="Storage operation failed",
@@ -607,14 +662,14 @@ def force_complete_mission(
     try:
         report = service.get_mission_report(mission_id)
     except Exception as error:
-        logger.error("Storage error: %s: %s", type(error).__name__, error)
+        logger.error("Storage error: %s", type(error).__name__)
         raise HTTPException(
             status_code=502,
             detail="Storage operation failed",
         ) from error
 
     logger.info(
-        "Mission force-completed: mission_id=%s resolved_alerts=%d",
+        "Endpoint force_complete_mission success: mission_id=%s resolved_alerts=%d",
         completed.mission_id,
         resolved_count,
     )
@@ -642,6 +697,7 @@ def force_complete_mission(
 def get_mission_stream_status(mission_id: str) -> dict[str, object]:
     """Return the current state of the video processing stream:
     running/stopped, processed frames, detection counters."""
+    logger.info("Endpoint get_mission_stream_status: mission_id=%s", mission_id)
     service = get_pilot_service()
     stream_controller = get_stream_controller()
 
@@ -650,6 +706,10 @@ def get_mission_stream_status(mission_id: str) -> dict[str, object]:
 
     payload = stream_controller.as_payload(mission_id)
     if payload is None:
+        logger.info(
+            "Endpoint get_mission_stream_status success: mission_id=%s running=false",
+            mission_id,
+        )
         return {
             "mission_id": mission_id,
             "running": False,
@@ -661,6 +721,13 @@ def get_mission_stream_status(mission_id: str) -> dict[str, object]:
     last_accounted_frame_id = None
     if isinstance(processed, int) and processed > 0:
         last_accounted_frame_id = processed - 1
+    logger.info(
+        "Endpoint get_mission_stream_status success: "
+        "mission_id=%s running=%s processed_frames=%s",
+        mission_id,
+        payload.get("running"),
+        payload.get("processed_frames"),
+    )
     return {
         "mission_id": mission_id,
         "last_accounted_frame_id": last_accounted_frame_id,
@@ -680,13 +747,16 @@ def get_mission_stream_status(mission_id: str) -> dict[str, object]:
 def get_mission_report(mission_id: str) -> dict[str, object]:
     """Return the quality report for a mission: detection statistics,
     alert counts, and KPI metrics (recall, false-positive rate, etc.)."""
+    logger.info("Endpoint get_mission_report: mission_id=%s", mission_id)
     service = get_pilot_service()
     try:
-        return service.get_mission_report(mission_id)
+        report = service.get_mission_report(mission_id)
+        logger.info("Endpoint get_mission_report success: mission_id=%s", mission_id)
+        return report
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except Exception as error:
-        logger.error("Storage error: %s: %s", type(error).__name__, error)
+        logger.error("Storage error: %s", type(error).__name__)
         raise HTTPException(
             status_code=502,
             detail="Storage operation failed",
@@ -709,10 +779,12 @@ def get_alerts(
 ) -> list[dict[str, object]]:
     """List alerts with optional filters by mission and review status
     (queued, reviewed_confirmed, reviewed_rejected)."""
+    logger.info("Endpoint get_alerts: mission_id=%s status=%s", mission_id, status)
     service = get_pilot_service()
     if mission_id is not None and service.get_mission(mission_id) is None:
         raise HTTPException(status_code=404, detail="Mission not found")
     alerts = service.list_alerts(mission_id=mission_id, status=status)
+    logger.info("Endpoint get_alerts success: count=%d", len(alerts))
     return [_alert_to_dict(alert, service=service) for alert in alerts]
 
 
@@ -726,10 +798,12 @@ def get_alerts(
 def get_alert_details(alert_id: str) -> dict[str, object]:
     """Return full details of a single alert: detection bounding boxes,
     confidence scores, review status, and timing information."""
+    logger.info("Endpoint get_alert_details: alert_id=%s", alert_id)
     service = get_pilot_service()
     alert = service.get_alert(alert_id)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
+    logger.info("Endpoint get_alert_details success: alert_id=%s", alert_id)
     return _alert_to_dict(alert, service=service)
 
 
@@ -745,6 +819,7 @@ def get_alert_details(alert_id: str) -> dict[str, object]:
 )
 def get_alert_frame(alert_id: str) -> Response:
     """Download the original video frame (JPEG) that triggered the alert."""
+    logger.info("Endpoint get_alert_frame: alert_id=%s", alert_id)
     service = get_pilot_service()
     try:
         artifact = service.get_alert_frame_artifact(alert_id)
@@ -753,12 +828,17 @@ def get_alert_frame(alert_id: str) -> Response:
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except Exception as error:
-        logger.error("Storage error: %s: %s", type(error).__name__, error)
+        logger.error("Storage error: %s", type(error).__name__)
         raise HTTPException(
             status_code=502,
             detail="Storage operation failed",
         ) from error
 
+    logger.info(
+        "Endpoint get_alert_frame success: alert_id=%s filename=%s",
+        alert_id,
+        artifact.filename,
+    )
     return Response(
         content=artifact.content,
         media_type=artifact.media_type,
@@ -780,6 +860,7 @@ def confirm_alert(
     alert_id: str, payload: ReviewRequest = ReviewRequest()
 ) -> dict[str, object]:
     """Mark the alert as a true positive — a person was indeed detected."""
+    logger.info("Endpoint confirm_alert: alert_id=%s", alert_id)
     service = get_pilot_service()
     review_payload = cast(
         AlertReviewPayload,
@@ -797,10 +878,10 @@ def confirm_alert(
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
     logger.info(
-        "Alert confirmed: alert_id=%s mission=%s reviewed_by=%s",
+        "Endpoint confirm_alert success: alert_id=%s mission=%s reviewed_by=%s",
         alert_id,
         alert.mission_id,
-        payload.reviewed_by,
+        _sanitize_log_text(payload.reviewed_by),
     )
     return _alert_to_dict(alert, service=service)
 
@@ -819,6 +900,7 @@ def reject_alert(
     alert_id: str, payload: ReviewRequest = ReviewRequest()
 ) -> dict[str, object]:
     """Mark the alert as a false positive — no real person in the frame."""
+    logger.info("Endpoint reject_alert: alert_id=%s", alert_id)
     service = get_pilot_service()
     review_payload = cast(
         AlertReviewPayload,
@@ -836,10 +918,10 @@ def reject_alert(
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
     logger.info(
-        "Alert rejected: alert_id=%s mission=%s reviewed_by=%s",
+        "Endpoint reject_alert success: alert_id=%s mission=%s reviewed_by=%s",
         alert_id,
         alert.mission_id,
-        payload.reviewed_by,
+        _sanitize_log_text(payload.reviewed_by),
     )
     return _alert_to_dict(alert, service=service)
 
@@ -863,7 +945,7 @@ def predict(payload: PredictRequest) -> PredictResponse:
 
     Accepts a local file path or an S3 URI. Returns a list of
     detected objects with bounding boxes and confidence scores."""
-    logger.info("Predict request: image_uri=%s", payload.image_uri)
+    logger.info("Endpoint predict: image_uri=%s", _sanitize_log_text(payload.image_uri))
     detector = get_detector()
     if detector is None:
         raise HTTPException(
@@ -881,14 +963,17 @@ def predict(payload: PredictRequest) -> PredictResponse:
             )
         artifact = storage.load_frame(payload.image_uri)
         if artifact is None:
-            logger.warning("Frame not found in S3: %s", payload.image_uri)
+            logger.warning(
+                "Endpoint predict: frame_not_found image_uri=%s",
+                _sanitize_log_text(payload.image_uri),
+            )
             raise HTTPException(
                 status_code=404,
                 detail="Frame not found",
             )
         detect_source = artifact.content
         logger.info(
-            "Resolved S3 URI: %s (%d bytes)", payload.image_uri, len(artifact.content)
+            "Endpoint predict: resolved_s3_image bytes=%d", len(artifact.content)
         )
 
     t0 = time.monotonic()
@@ -897,26 +982,16 @@ def predict(payload: PredictRequest) -> PredictResponse:
         detections: list[Detection] = detector_any.detect(detect_source)
     except Exception as error:
         logger.error(
-            "Predict failed: image_uri=%s error=%s: %s",
-            payload.image_uri,
+            "Endpoint predict failed: image_uri=%s error=%s",
+            _sanitize_log_text(payload.image_uri),
             type(error).__name__,
-            error,
         )
         raise HTTPException(status_code=502, detail="Detection failed") from error
     inference_ms = (time.monotonic() - t0) * 1000
 
-    for d in detections:
-        logger.info(
-            "  Detection found: label=%s score=%.3f "
-            "bbox=[%.1f,%.1f,%.1f,%.1f] model=%s",
-            d.label,
-            d.score,
-            *d.bbox,
-            d.model_name,
-        )
     logger.info(
-        "Predict complete: image_uri=%s detections=%d inference_ms=%.1f",
-        payload.image_uri,
+        "Endpoint predict success: image_uri=%s detections=%d inference_ms=%.1f",
+        _sanitize_log_text(payload.image_uri),
         len(detections),
         inference_ms,
     )
