@@ -6,7 +6,10 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+from pathlib import PurePosixPath
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse, Response
@@ -36,7 +39,28 @@ def _sanitize_log_text(value: object) -> str:
     return _IPV4_RE.sub("<redacted-ip>", text)
 
 
-# ── Request / Response models ──────────────────────────────────────
+def _build_source_log_fields(image_uri: str) -> tuple[str, str, str]:
+    """Build safe, diagnostic source fields for logs without full URI leakage."""
+    uri = image_uri.strip()
+    source_id_hash = sha256(uri.encode("utf-8")).hexdigest()[:12] if uri else "empty"
+    parsed = urlsplit(uri)
+    source_scheme = parsed.scheme.lower() if parsed.scheme else "file"
+
+    path_raw = parsed.path if parsed.scheme else uri
+    source_path_tail = _path_tail(path_raw)
+    return source_scheme, source_path_tail, source_id_hash
+
+
+def _path_tail(path: str, keep_parts: int = 3) -> str:
+    normalized = path.strip().strip("/")
+    if not normalized:
+        return "-"
+    parts = [part for part in PurePosixPath(normalized).parts if part not in {"/", "."}]
+    if not parts:
+        return "-"
+    if len(parts) <= keep_parts:
+        return "/".join(parts)
+    return "/".join(parts[-keep_parts:])
 
 
 class ReviewRequest(BaseModel):
@@ -106,9 +130,6 @@ class ForceCompleteRequest(BaseModel):
         default="аварийное снятие зависшей очереди",
         description="Reason recorded for each auto-rejected alert",
     )
-
-
-# ── Response models ──────────────────────────────────────────────
 
 
 class HealthResponse(BaseModel):
@@ -348,9 +369,6 @@ def rpi_missions() -> dict[str, object]:
 def favicon() -> Response:
     logger.info("Endpoint favicon: status=204")
     return Response(status_code=204)
-
-
-# ── Operator UI ────────────────────────────────────────────────────
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -945,7 +963,16 @@ def predict(payload: PredictRequest) -> PredictResponse:
 
     Accepts a local file path or an S3 URI. Returns a list of
     detected objects with bounding boxes and confidence scores."""
-    logger.info("Endpoint predict: image_uri=%s", _sanitize_log_text(payload.image_uri))
+    source_scheme, source_path_tail, source_id_hash = _build_source_log_fields(
+        payload.image_uri
+    )
+    logger.info(
+        "Endpoint predict start: source_scheme=%s source_path_tail=%s "
+        "source_id_hash=%s",
+        source_scheme,
+        source_path_tail,
+        source_id_hash,
+    )
     detector = get_detector()
     if detector is None:
         raise HTTPException(
@@ -964,8 +991,11 @@ def predict(payload: PredictRequest) -> PredictResponse:
         artifact = storage.load_frame(payload.image_uri)
         if artifact is None:
             logger.warning(
-                "Endpoint predict: frame_not_found image_uri=%s",
-                _sanitize_log_text(payload.image_uri),
+                "Endpoint predict not_found: source_scheme=%s source_path_tail=%s "
+                "source_id_hash=%s",
+                source_scheme,
+                source_path_tail,
+                source_id_hash,
             )
             raise HTTPException(
                 status_code=404,
@@ -973,7 +1003,12 @@ def predict(payload: PredictRequest) -> PredictResponse:
             )
         detect_source = artifact.content
         logger.info(
-            "Endpoint predict: resolved_s3_image bytes=%d", len(artifact.content)
+            "Endpoint predict source_resolved: source_scheme=%s "
+            "source_path_tail=%s source_id_hash=%s bytes=%d",
+            source_scheme,
+            source_path_tail,
+            source_id_hash,
+            len(artifact.content),
         )
 
     t0 = time.monotonic()
@@ -982,16 +1017,22 @@ def predict(payload: PredictRequest) -> PredictResponse:
         detections: list[Detection] = detector_any.detect(detect_source)
     except Exception as error:
         logger.error(
-            "Endpoint predict failed: image_uri=%s error=%s",
-            _sanitize_log_text(payload.image_uri),
+            "Endpoint predict failed: source_scheme=%s source_path_tail=%s "
+            "source_id_hash=%s error=%s",
+            source_scheme,
+            source_path_tail,
+            source_id_hash,
             type(error).__name__,
         )
         raise HTTPException(status_code=502, detail="Detection failed") from error
     inference_ms = (time.monotonic() - t0) * 1000
 
     logger.info(
-        "Endpoint predict success: image_uri=%s detections=%d inference_ms=%.1f",
-        _sanitize_log_text(payload.image_uri),
+        "Endpoint predict success: source_scheme=%s source_path_tail=%s "
+        "source_id_hash=%s detections=%d inference_ms=%.1f",
+        source_scheme,
+        source_path_tail,
+        source_id_hash,
         len(detections),
         inference_ms,
     )
