@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 import logging
-import re
 import time
 from datetime import datetime, timedelta, timezone
-from hashlib import sha256
-from pathlib import PurePosixPath
 from typing import Any, cast
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse, Response
@@ -24,43 +20,15 @@ from rescue_ai.interfaces.api.dependencies import (
     get_pilot_service,
     get_stream_controller,
 )
+from rescue_ai.interfaces.api.logging_utils import (
+    build_source_log_fields,
+    sanitize_log_text,
+)
 from rescue_ai.interfaces.api.ui_page import build_ui_html
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 DEFAULT_STREAM_FPS = 2.0
-_URI_RE = re.compile(r"\b[a-z][a-z0-9+.\-]*://[^\s\"')]+", re.IGNORECASE)
-_IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-
-
-def _sanitize_log_text(value: object) -> str:
-    text = str(value)
-    text = _URI_RE.sub("<redacted-url>", text)
-    return _IPV4_RE.sub("<redacted-ip>", text)
-
-
-def _build_source_log_fields(image_uri: str) -> tuple[str, str, str]:
-    """Build safe, diagnostic source fields for logs without full URI leakage."""
-    uri = image_uri.strip()
-    source_id_hash = sha256(uri.encode("utf-8")).hexdigest()[:12] if uri else "empty"
-    parsed = urlsplit(uri)
-    source_scheme = parsed.scheme.lower() if parsed.scheme else "file"
-
-    path_raw = parsed.path if parsed.scheme else uri
-    source_path_tail = _path_tail(path_raw)
-    return source_scheme, source_path_tail, source_id_hash
-
-
-def _path_tail(path: str, keep_parts: int = 3) -> str:
-    normalized = path.strip().strip("/")
-    if not normalized:
-        return "-"
-    parts = [part for part in PurePosixPath(normalized).parts if part not in {"/", "."}]
-    if not parts:
-        return "-"
-    if len(parts) <= keep_parts:
-        return "/".join(parts)
-    return "/".join(parts[-keep_parts:])
 
 
 class ReviewRequest(BaseModel):
@@ -402,7 +370,7 @@ def start_mission(payload: MissionStartRequest) -> dict[str, object]:
     real-time person detection with YOLOv8."""
     logger.info(
         "Endpoint start_mission: rpi_mission_id=%s fps=%.1f",
-        _sanitize_log_text(payload.rpi_mission_id),
+        sanitize_log_text(payload.rpi_mission_id),
         payload.fps,
     )
     service = get_pilot_service()
@@ -451,7 +419,7 @@ def start_mission(payload: MissionStartRequest) -> dict[str, object]:
     logger.info(
         "Endpoint start_mission success: mission_id=%s source=%s fps=%.1f",
         mission.mission_id,
-        _sanitize_log_text(mission.source_name),
+        sanitize_log_text(mission.source_name),
         mission.fps,
     )
     return {
@@ -491,12 +459,18 @@ def stop_mission_stream(mission_id: str) -> dict[str, object]:
     processed_frames = (
         stopped_state.processed_frames if stopped_state is not None else None
     )
+    end_reason = (
+        None
+        if stopped_state is None
+        else stopped_state.error or stopped_state.end_reason
+    )
     logger.info(
         "Endpoint stop_mission_stream success: mission_id=%s "
-        "queued_alerts=%d processed_frames=%s",
+        "queued_alerts=%d processed_frames=%s end_reason=%s",
         mission_id,
         len(queued),
         processed_frames,
+        end_reason,
     )
 
     return {
@@ -529,10 +503,11 @@ def complete_mission(mission_id: str) -> dict[str, object]:
     stream_controller = get_stream_controller()
 
     if service.get_mission(mission_id) is None:
+        logger.warning("Endpoint complete_mission not_found: mission_id=%s", mission_id)
         raise HTTPException(status_code=404, detail="Mission not found")
     queued_alerts = service.list_alerts(mission_id=mission_id, status="queued")
     if queued_alerts:
-        logger.info(
+        logger.warning(
             "Endpoint complete_mission rejected: mission_id=%s queued_alerts=%d",
             mission_id,
             len(queued_alerts),
@@ -553,6 +528,11 @@ def complete_mission(mission_id: str) -> dict[str, object]:
             completed_frame_id=completed_frame_id,
         )
     except ValueError as error:
+        logger.warning(
+            "Endpoint complete_mission conflict: mission_id=%s reason=%s",
+            mission_id,
+            sanitize_log_text(error),
+        )
         raise HTTPException(status_code=409, detail=str(error)) from error
     except Exception as error:
         logger.error("Storage error: %s", type(error).__name__)
@@ -561,6 +541,7 @@ def complete_mission(mission_id: str) -> dict[str, object]:
             detail="Storage operation failed",
         ) from error
     if mission is None:
+        logger.warning("Endpoint complete_mission not_found: mission_id=%s", mission_id)
         raise HTTPException(status_code=404, detail="Mission not found")
 
     try:
@@ -572,20 +553,23 @@ def complete_mission(mission_id: str) -> dict[str, object]:
             detail="Storage operation failed",
         ) from error
 
+    end_reason = (
+        None
+        if stopped_state is None
+        else stopped_state.error or stopped_state.end_reason
+    )
     logger.info(
-        "Endpoint complete_mission success: mission_id=%s completed_frame=%s",
+        "Endpoint complete_mission success: mission_id=%s completed_frame=%s "
+        "end_reason=%s",
         mission.mission_id,
         mission.completed_frame_id,
+        sanitize_log_text(end_reason),
     )
     return {
         "mission_id": mission.mission_id,
         "status": mission.status,
         "completed_frame_id": mission.completed_frame_id,
-        "end_reason": (
-            None
-            if stopped_state is None
-            else stopped_state.error or stopped_state.end_reason
-        ),
+        "end_reason": end_reason,
         "report": report,
     }
 
@@ -612,7 +596,7 @@ def force_complete_mission(
     logger.info(
         "Endpoint force_complete_mission: mission_id=%s reviewed_by=%s",
         mission_id,
-        _sanitize_log_text(payload.reviewed_by),
+        sanitize_log_text(payload.reviewed_by),
     )
     service = get_pilot_service()
     stream_controller = get_stream_controller()
@@ -821,7 +805,14 @@ def get_alert_details(alert_id: str) -> dict[str, object]:
     alert = service.get_alert(alert_id)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
-    logger.info("Endpoint get_alert_details success: alert_id=%s", alert_id)
+    logger.info(
+        "Endpoint get_alert_details success: alert_id=%s status=%s frame_id=%d "
+        "people_detected=%d",
+        alert_id,
+        alert.status,
+        alert.frame_id,
+        alert.people_detected,
+    )
     return _alert_to_dict(alert, service=service)
 
 
@@ -892,14 +883,20 @@ def confirm_alert(
     try:
         alert = service.review_alert(alert_id, review_payload)
     except ValueError as error:
+        logger.warning(
+            "Endpoint confirm_alert conflict: alert_id=%s reason=%s",
+            alert_id,
+            sanitize_log_text(error),
+        )
         raise HTTPException(status_code=409, detail=str(error)) from error
     if alert is None:
+        logger.warning("Endpoint confirm_alert not_found: alert_id=%s", alert_id)
         raise HTTPException(status_code=404, detail="Alert not found")
     logger.info(
         "Endpoint confirm_alert success: alert_id=%s mission=%s reviewed_by=%s",
         alert_id,
         alert.mission_id,
-        _sanitize_log_text(payload.reviewed_by),
+        sanitize_log_text(payload.reviewed_by),
     )
     return _alert_to_dict(alert, service=service)
 
@@ -932,19 +929,22 @@ def reject_alert(
     try:
         alert = service.review_alert(alert_id, review_payload)
     except ValueError as error:
+        logger.warning(
+            "Endpoint reject_alert conflict: alert_id=%s reason=%s",
+            alert_id,
+            sanitize_log_text(error),
+        )
         raise HTTPException(status_code=409, detail=str(error)) from error
     if alert is None:
+        logger.warning("Endpoint reject_alert not_found: alert_id=%s", alert_id)
         raise HTTPException(status_code=404, detail="Alert not found")
     logger.info(
         "Endpoint reject_alert success: alert_id=%s mission=%s reviewed_by=%s",
         alert_id,
         alert.mission_id,
-        _sanitize_log_text(payload.reviewed_by),
+        sanitize_log_text(payload.reviewed_by),
     )
     return _alert_to_dict(alert, service=service)
-
-
-# ── Single-frame detection (server-side YOLO) ─────────────────────
 
 
 @router.post(
@@ -963,7 +963,7 @@ def predict(payload: PredictRequest) -> PredictResponse:
 
     Accepts a local file path or an S3 URI. Returns a list of
     detected objects with bounding boxes and confidence scores."""
-    source_scheme, source_path_tail, source_id_hash = _build_source_log_fields(
+    source_scheme, source_path_tail, source_id_hash = build_source_log_fields(
         payload.image_uri
     )
     logger.info(
@@ -1027,6 +1027,15 @@ def predict(payload: PredictRequest) -> PredictResponse:
         raise HTTPException(status_code=502, detail="Detection failed") from error
     inference_ms = (time.monotonic() - t0) * 1000
 
+    for idx, item in enumerate(detections, start=1):
+        logger.info(
+            "Endpoint predict detection: idx=%d label=%s score=%.3f bbox=%s model=%s",
+            idx,
+            item.label,
+            item.score,
+            item.bbox,
+            item.model_name,
+        )
     logger.info(
         "Endpoint predict success: source_scheme=%s source_path_tail=%s "
         "source_id_hash=%s detections=%d inference_ms=%.1f",
@@ -1050,9 +1059,6 @@ def predict(payload: PredictRequest) -> PredictResponse:
         ],
         count=len(detections),
     )
-
-
-# ── Helpers ────────────────────────────────────────────────────────
 
 
 def _alert_to_dict(alert: Alert, service: Any) -> dict[str, object]:
