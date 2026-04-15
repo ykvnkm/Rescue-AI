@@ -13,7 +13,7 @@ from airflow.providers.docker.operators.docker import DockerOperator
 from pendulum import datetime
 
 DAG_ID = "rescue_batch_pipeline"
-BATCH_IMAGE = os.environ["BATCH_IMAGE"]
+BATCH_IMAGE = os.environ.get("BATCH_IMAGE", "")
 NO_DATA_EXIT_CODE = 42
 
 APP_DB_CONN_ID = "rescue_app_db"

@@ -79,6 +79,8 @@ markers = [
 
 [tool.pylint.main]
 py-version = "3.12"
+extension-pkg-allow-list = ["cv2"]
+generated-members = ["cv2.*"]
 
 [tool.pylint.format]
 max-module-lines = 1100

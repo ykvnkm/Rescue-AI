@@ -206,7 +206,7 @@ jobs:
             COMPOSE
             sed -i 's/^            //' "${APP_DIR}/infra/docker-compose.platform.yml"
 
-            # ── Login to GHCR and pull app images ──
+            echo "── Login to GHCR and pull app images ──"
             echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
             docker pull "${ONLINE_IMAGE}" &
             pid1=$!
@@ -214,7 +214,7 @@ jobs:
             pid2=$!
             wait "$pid1" "$pid2"
 
-            # ── Write .env for online service ──
+            echo "── Write .env for online service ──"
             cat > "${APP_DIR}/.env" <<ENVEOF
             APP_HOST=0.0.0.0
             APP_PORT=8000
@@ -232,8 +232,9 @@ jobs:
             RPI_TIMEOUT_SEC=10
             ENVEOF
             sed -i 's/^[[:space:]]*//' "${APP_DIR}/.env"
+            chmod 600 "${APP_DIR}/.env"
 
-            # ── Compose Airflow Connection URIs from existing secrets ──
+            echo "── Compose Airflow Connection URIs ──"
             # rescue_app_db: Airflow accepts a postgresql:// DSN directly as a
             # Connection URI, so we reuse DB_DSN verbatim.
             # rescue_s3: Airflow's aws:// URI format with userinfo credentials
@@ -262,13 +263,7 @@ jobs:
             )"
             export AIRFLOW_CONN_RESCUE_APP_DB AIRFLOW_CONN_RESCUE_S3
 
-            # ── Write platform.env for Airflow stack ──
-            # Contains only secrets Airflow itself consumes: the local
-            # metadata DB credentials, admin UI credentials, and the two
-            # AIRFLOW_CONN_* variables that Airflow auto-registers as
-            # Connections at process start.
-            # BATCH_IMAGE / DOCKER_GID are NOT here — compose substitutes
-            # them from the exported shell variables above.
+            echo "── Write platform.env for Airflow stack ──"
             cat > "${APP_DIR}/infra/platform.env" <<ENVEOF
             AIRFLOW_DB_USER=${AIRFLOW_DB_USER}
             AIRFLOW_DB_PASSWORD=${AIRFLOW_DB_PASSWORD}
@@ -279,14 +274,15 @@ jobs:
             AIRFLOW_CONN_RESCUE_S3=${AIRFLOW_CONN_RESCUE_S3}
             ENVEOF
             sed -i 's/^[[:space:]]*//' "${APP_DIR}/infra/platform.env"
+            chmod 600 "${APP_DIR}/infra/platform.env"
 
-            # ── Initialize app schema in Supabase (idempotent) ──
+            echo "── Initialize app schema (idempotent) ──"
             docker run --rm \
               --env-file "${APP_DIR}/.env" \
               "${ONLINE_IMAGE}" \
               python -m rescue_ai.interfaces.cli.init_remote_db
 
-            # ── Deploy online service ──
+            echo "── Deploy online service ──"
             docker rm -f rescue-ai-online 2>/dev/null || true
             docker run -d \
               --name rescue-ai-online \
@@ -295,7 +291,7 @@ jobs:
               --env-file "${APP_DIR}/.env" \
               "${ONLINE_IMAGE}"
 
-            # ── Deploy Airflow stack ──
+            echo "── Deploy Airflow stack ──"
             cd "${APP_DIR}/infra"
 
             docker compose --env-file platform.env \
@@ -315,7 +311,7 @@ jobs:
               -f docker-compose.platform.yml \
               up -d airflow-webserver airflow-scheduler
 
-            # ── Health check ──
+            echo "── Health check ──"
             sleep 5
             curl -sf http://127.0.0.1:8000/health || echo "WARNING: online health check failed"
 

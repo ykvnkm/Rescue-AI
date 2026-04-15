@@ -210,6 +210,8 @@ class _RtspFrameCapture(_FrameCapture):
     def __init__(self, rtsp_url: str) -> None:
         import os
 
+        self._cap = None
+        self._cv2 = None
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
         try:
             import cv2
@@ -220,8 +222,7 @@ class _RtspFrameCapture(_FrameCapture):
                 time.sleep(2.0)
                 self._cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
         except ImportError:
-            self._cap = None
-            self._cv2 = None
+            pass
 
     def is_open(self) -> bool:
         return self._cap is not None and self._cap.isOpened()
@@ -383,7 +384,10 @@ class DetectionStreamController:
         state = self.get_state(mission_id)
         if state is None:
             return None
-        return asdict(state)
+        payload = asdict(state)
+        payload.pop("rtsp_url", None)
+        payload.pop("stream_url", None)
+        return payload
 
     def check_rpi_health(self) -> dict[str, object]:
         return self._client().health(timeout_sec=self._rpi_settings.timeout_sec)

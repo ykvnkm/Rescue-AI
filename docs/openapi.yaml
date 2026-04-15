@@ -9,7 +9,8 @@ paths:
     get:
       tags:
       - system
-      summary: Health
+      summary: Liveness check
+      description: Returns 200 if the service process is running.
       operationId: health_health_get
       responses:
         '200':
@@ -22,7 +23,12 @@ paths:
     get:
       tags:
       - system
-      summary: Ready
+      summary: Readiness check
+      description: 'Checks that all required integrations (database, S3, RPi) are
+        configured.
+
+
+        Returns 503 with a per-subsystem breakdown if any check fails.'
       operationId: ready_ready_get
       responses:
         '200':
@@ -31,11 +37,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ReadyResponse'
+        '503':
+          description: One or more subsystems not configured
   /rpi/status:
     get:
       tags:
       - system
-      summary: Rpi Status
+      summary: RPi connectivity
+      description: Ping the Raspberry Pi device and report whether it is reachable.
       operationId: rpi_status_rpi_status_get
       responses:
         '200':
@@ -48,7 +57,8 @@ paths:
     get:
       tags:
       - system
-      summary: Rpi Missions
+      summary: List RPi missions
+      description: Fetch the catalog of recorded missions available on the RPi device.
       operationId: rpi_missions_rpi_missions_get
       responses:
         '200':
@@ -56,18 +66,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RpiMissionsResponse'
-  /predict/start:
+                additionalProperties: true
+                type: object
+                title: Response Rpi Missions Rpi Missions Get
+        '503':
+          description: RPi device unavailable
+  /missions/start:
     post:
       tags:
-      - predict
-      summary: Start Predict
-      operationId: start_predict_predict_start_post
+      - missions
+      summary: Start a new mission
+      description: 'Create a mission, connect to the RPi video stream, and begin
+
+        real-time person detection with YOLOv8.'
+      operationId: start_mission_missions_start_post
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PredictStartRequest'
+              $ref: '#/components/schemas/MissionStartRequest'
         required: true
       responses:
         '200':
@@ -75,45 +92,28 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PredictStartResponse'
+                $ref: '#/components/schemas/MissionStartResponse'
+        '404':
+          description: RPi mission not found
+        '409':
+          description: Another mission is already running
+        '503':
+          description: Detector or RPi stream unavailable
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /predict/{mission_id}:
-    get:
-      tags:
-      - predict
-      summary: Get Predict Status
-      operationId: get_predict_status_predict__mission_id__get
-      parameters:
-      - name: mission_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Mission Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PredictStatusResponse'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /predict/{mission_id}/stop:
+  /missions/{mission_id}/stop-stream:
     post:
       tags:
-      - predict
-      summary: Stop Predict
-      operationId: stop_predict_predict__mission_id__stop_post
+      - missions
+      summary: Stop video stream
+      description: 'Stop the RPi video stream but keep the mission open so the
+
+        operator can continue reviewing pending alerts.'
+      operationId: stop_mission_stream_missions__mission_id__stop_stream_post
       parameters:
       - name: mission_id
         in: path
@@ -127,7 +127,383 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PredictStopResponse'
+                $ref: '#/components/schemas/StopStreamResponse'
+        '404':
+          description: Mission not found
+        '409':
+          description: Mission is not running
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /missions/{mission_id}/complete:
+    post:
+      tags:
+      - missions
+      summary: Complete mission
+      description: 'Finalize the mission, stop the stream if still running, generate
+
+        the quality report, and upload it to S3.
+
+
+        Fails with 409 if there are unreviewed (queued) alerts.'
+      operationId: complete_mission_missions__mission_id__complete_post
+      parameters:
+      - name: mission_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Mission Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MissionCompleteResponse'
+        '404':
+          description: Mission not found
+        '409':
+          description: Unreviewed alerts remain or already completed
+        '502':
+          description: Storage operation failed
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /missions/{mission_id}/force-complete:
+    post:
+      tags:
+      - missions
+      summary: Force-complete mission
+      description: 'Emergency completion: automatically rejects all pending alerts
+
+        and finalizes the mission.
+
+
+        Use when the operator cannot review every alert individually.'
+      operationId: force_complete_mission_missions__mission_id__force_complete_post
+      parameters:
+      - name: mission_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Mission Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForceCompleteRequest'
+              default:
+                reviewed_by: авто-обход
+                decision_reason: аварийное снятие зависшей очереди
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForceCompleteResponse'
+        '404':
+          description: Mission not found
+        '409':
+          description: Could not resolve alerts or already completed
+        '502':
+          description: Storage operation failed
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /missions/{mission_id}/stream/status:
+    get:
+      tags:
+      - missions
+      summary: Stream status
+      description: 'Return the current state of the video processing stream:
+
+        running/stopped, processed frames, detection counters.'
+      operationId: get_mission_stream_status_missions__mission_id__stream_status_get
+      parameters:
+      - name: mission_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Mission Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Get Mission Stream Status Missions  Mission Id  Stream
+                  Status Get
+        '404':
+          description: Mission not found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /missions/{mission_id}/report:
+    get:
+      tags:
+      - missions
+      summary: Get mission report
+      description: 'Return the quality report for a mission: detection statistics,
+
+        alert counts, and KPI metrics (recall, false-positive rate, etc.).'
+      operationId: get_mission_report_missions__mission_id__report_get
+      parameters:
+      - name: mission_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Mission Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Get Mission Report Missions  Mission Id  Report Get
+        '404':
+          description: Mission not found
+        '502':
+          description: Storage operation failed
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /alerts:
+    get:
+      tags:
+      - alerts
+      summary: List alerts
+      description: 'List alerts with optional filters by mission and review status
+
+        (queued, reviewed_confirmed, reviewed_rejected).'
+      operationId: get_alerts_alerts_get
+      parameters:
+      - name: mission_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Mission Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AlertResponse'
+                title: Response Get Alerts Alerts Get
+        '404':
+          description: Mission not found (if filtered)
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /alerts/{alert_id}:
+    get:
+      tags:
+      - alerts
+      summary: Get alert details
+      description: 'Return full details of a single alert: detection bounding boxes,
+
+        confidence scores, review status, and timing information.'
+      operationId: get_alert_details_alerts__alert_id__get
+      parameters:
+      - name: alert_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Alert Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertResponse'
+        '404':
+          description: Alert not found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /alerts/{alert_id}/frame:
+    get:
+      tags:
+      - alerts
+      summary: Download alert frame
+      description: Download the original video frame (JPEG) that triggered the alert.
+      operationId: get_alert_frame_alerts__alert_id__frame_get
+      parameters:
+      - name: alert_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Alert Id
+      responses:
+        '200':
+          description: Frame image
+          content:
+            application/json:
+              schema: {}
+            image/jpeg: {}
+        '404':
+          description: Alert or frame not found
+        '502':
+          description: Storage operation failed
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /alerts/{alert_id}/confirm:
+    post:
+      tags:
+      - alerts
+      summary: Confirm alert
+      description: Mark the alert as a true positive — a person was indeed detected.
+      operationId: confirm_alert_alerts__alert_id__confirm_post
+      parameters:
+      - name: alert_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Alert Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+              default:
+                reviewed_by: оператор
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertResponse'
+        '404':
+          description: Alert not found
+        '409':
+          description: Alert already reviewed
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /alerts/{alert_id}/reject:
+    post:
+      tags:
+      - alerts
+      summary: Reject alert
+      description: Mark the alert as a false positive — no real person in the frame.
+      operationId: reject_alert_alerts__alert_id__reject_post
+      parameters:
+      - name: alert_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Alert Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+              default:
+                reviewed_by: оператор
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertResponse'
+        '404':
+          description: Alert not found
+        '409':
+          description: Alert already reviewed
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /predict:
+    post:
+      tags:
+      - detection
+      summary: Single-frame detection
+      description: 'Run YOLOv8 person detection on a single image.
+
+
+        Accepts a local file path or an S3 URI. Returns a list of
+
+        detected objects with bounding boxes and confidence scores.'
+      operationId: predict_predict_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PredictRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictResponse'
+        '404':
+          description: Frame not found in S3
+        '502':
+          description: Detection failed
+        '503':
+          description: Detector or storage not available
         '422':
           description: Validation Error
           content:
@@ -136,6 +512,212 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
+    AlertResponse:
+      properties:
+        alert_id:
+          type: string
+          title: Alert Id
+          description: Unique alert identifier
+        mission_id:
+          type: string
+          title: Mission Id
+          description: Parent mission identifier
+        frame_id:
+          type: integer
+          title: Frame Id
+          description: Frame index that triggered alert
+        ts_sec:
+          type: number
+          title: Ts Sec
+          description: Timestamp offset in seconds
+        alert_time_iso:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Alert Time Iso
+          description: Absolute alert time in ISO 8601
+        has_frame:
+          type: boolean
+          title: Has Frame
+          description: Whether the original frame is available for download
+        people_detected:
+          type: integer
+          title: People Detected
+          description: Number of people detected
+        bbox:
+          items:
+            type: number
+          type: array
+          title: Bbox
+          description: Primary detection bounding box [x1, y1, x2, y2]
+        bboxes:
+          items:
+            items:
+              type: number
+            type: array
+          type: array
+          title: Bboxes
+          description: All detection bounding boxes
+        scores:
+          items:
+            type: number
+          type: array
+          title: Scores
+          description: Confidence scores for all detections
+        score:
+          type: number
+          title: Score
+          description: Primary detection confidence
+        label:
+          type: string
+          title: Label
+          description: Detected class
+          examples:
+          - person
+        model_name:
+          type: string
+          title: Model Name
+          description: Model name
+          examples:
+          - yolo8n
+        explanation:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Explanation
+          description: Optional model explanation
+        status:
+          type: string
+          title: Status
+          description: Review status
+          examples:
+          - queued
+          - reviewed_confirmed
+          - reviewed_rejected
+        reviewed_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reviewed By
+          description: Reviewer identifier
+      type: object
+      required:
+      - alert_id
+      - mission_id
+      - frame_id
+      - ts_sec
+      - alert_time_iso
+      - has_frame
+      - people_detected
+      - bbox
+      - bboxes
+      - scores
+      - score
+      - label
+      - model_name
+      - explanation
+      - status
+      - reviewed_by
+      title: AlertResponse
+      description: Alert details returned by list and detail endpoints.
+    DetectionResponse:
+      properties:
+        bbox:
+          prefixItems:
+          - type: number
+          - type: number
+          - type: number
+          - type: number
+          type: array
+          maxItems: 4
+          minItems: 4
+          title: Bbox
+          description: Bounding box coordinates [x1, y1, x2, y2]
+        score:
+          type: number
+          title: Score
+          description: Detection confidence score (0.0 to 1.0)
+        label:
+          type: string
+          title: Label
+          description: Detected object class
+        model_name:
+          type: string
+          title: Model Name
+          description: Model that produced this detection
+      type: object
+      required:
+      - bbox
+      - score
+      - label
+      - model_name
+      title: DetectionResponse
+      description: Single detected object in the image.
+    ForceCompleteRequest:
+      properties:
+        reviewed_by:
+          type: string
+          title: Reviewed By
+          description: Reviewer identifier for auto-rejected alerts
+          default: авто-обход
+        decision_reason:
+          type: string
+          title: Decision Reason
+          description: Reason recorded for each auto-rejected alert
+          default: аварийное снятие зависшей очереди
+      type: object
+      title: ForceCompleteRequest
+      description: 'Emergency mission completion: auto-rejects all pending alerts.'
+    ForceCompleteResponse:
+      properties:
+        mission_id:
+          type: string
+          title: Mission Id
+          description: Mission identifier
+        status:
+          type: string
+          title: Status
+          description: Mission status
+          examples:
+          - completed
+        completed_frame_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Completed Frame Id
+          description: Last processed frame index
+        end_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: End Reason
+          description: Stream termination reason if applicable
+        report:
+          additionalProperties: true
+          type: object
+          title: Report
+          description: Quality report with KPI metrics
+        resolved_queued_alerts:
+          type: integer
+          title: Resolved Queued Alerts
+          description: Number of auto-rejected alerts
+        failed_queued_alerts:
+          items:
+            type: string
+          type: array
+          title: Failed Queued Alerts
+          description: Alert IDs that could not be resolved
+      type: object
+      required:
+      - mission_id
+      - status
+      - completed_frame_id
+      - end_reason
+      - report
+      - resolved_queued_alerts
+      - failed_queued_alerts
+      title: ForceCompleteResponse
+      description: Response after force-completing a mission.
     HTTPValidationError:
       properties:
         detail:
@@ -150,41 +732,96 @@ components:
         status:
           type: string
           title: Status
-          description: Service health status
+          description: Service status
           examples:
           - ok
       type: object
       required:
       - status
       title: HealthResponse
-    PredictStartRequest:
-      properties:
-        rpi_mission_id:
-          type: string
-          title: Rpi Mission Id
-          description: Mission ID on Raspberry Pi
-      type: object
-      required:
-      - rpi_mission_id
-      title: PredictStartRequest
-    PredictStartResponse:
+      description: Liveness probe response.
+    MissionCompleteResponse:
       properties:
         mission_id:
           type: string
           title: Mission Id
+          description: Mission identifier
         status:
           type: string
           title: Status
+          description: Mission status
+          examples:
+          - completed
+        completed_frame_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Completed Frame Id
+          description: Last processed frame index
+        end_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: End Reason
+          description: Stream termination reason if applicable
+        report:
+          additionalProperties: true
+          type: object
+          title: Report
+          description: Quality report with KPI metrics
+      type: object
+      required:
+      - mission_id
+      - status
+      - completed_frame_id
+      - end_reason
+      - report
+      title: MissionCompleteResponse
+      description: Response after completing a mission.
+    MissionStartRequest:
+      properties:
+        rpi_mission_id:
+          type: string
+          title: Rpi Mission Id
+          description: Mission identifier on Raspberry Pi device
+        fps:
+          type: number
+          exclusiveMinimum: 0.0
+          title: Fps
+          description: Target frame processing rate (frames per second)
+          default: 2.0
+      type: object
+      required:
+      - rpi_mission_id
+      title: MissionStartRequest
+      description: Request to start a new mission with RPi video stream.
+    MissionStartResponse:
+      properties:
+        mission_id:
+          type: string
+          title: Mission Id
+          description: Unique mission identifier
+        status:
+          type: string
+          title: Status
+          description: Mission status
+          examples:
+          - running
         source_name:
           type: string
           title: Source Name
+          description: Data source descriptor
         fps:
           type: number
           title: Fps
+          description: Configured frame rate
         stream:
-          additionalProperties: true
-          type: object
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
           title: Stream
+          description: Stream state snapshot
       type: object
       required:
       - mission_id
@@ -192,64 +829,48 @@ components:
       - source_name
       - fps
       - stream
-      title: PredictStartResponse
-    PredictStatusResponse:
+      title: MissionStartResponse
+      description: Response after successfully starting a mission.
+    PredictRequest:
       properties:
-        mission_id:
+        image_uri:
           type: string
-          title: Mission Id
-        status:
-          type: string
-          title: Status
-        completed_frame_id:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          title: Completed Frame Id
-        stream:
-          anyOf:
-          - additionalProperties: true
-            type: object
-          - type: 'null'
-          title: Stream
+          title: Image Uri
+          description: 'Image source: local file path or S3 URI (e.g. s3://bucket/path/frame.jpg)'
       type: object
       required:
-      - mission_id
-      - status
-      - completed_frame_id
-      - stream
-      title: PredictStatusResponse
-    PredictStopResponse:
+      - image_uri
+      title: PredictRequest
+      description: Single-frame detection request using server-side YOLO model.
+    PredictResponse:
       properties:
-        mission_id:
+        image_uri:
           type: string
-          title: Mission Id
-        status:
-          type: string
-          title: Status
-        stream:
-          anyOf:
-          - additionalProperties: true
-            type: object
-          - type: 'null'
-          title: Stream
-        report:
-          additionalProperties: true
-          type: object
-          title: Report
+          title: Image Uri
+          description: Source image that was analyzed
+        detections:
+          items:
+            $ref: '#/components/schemas/DetectionResponse'
+          type: array
+          title: Detections
+          description: List of detected objects
+        count:
+          type: integer
+          title: Count
+          description: Total number of detections
       type: object
       required:
-      - mission_id
-      - status
-      - stream
-      - report
-      title: PredictStopResponse
+      - image_uri
+      - detections
+      - count
+      title: PredictResponse
+      description: Detection results for a single image.
     ReadyResponse:
       properties:
         status:
           type: string
           title: Status
-          description: Readiness status
+          description: Overall readiness
           examples:
           - ready
         checks:
@@ -257,59 +878,67 @@ components:
             type: boolean
           type: object
           title: Checks
-          description: Configuration checks for required external integrations
+          description: Per-subsystem configuration checks (database, storage, rpi)
       type: object
       required:
       - status
       - checks
       title: ReadyResponse
-    RpiMissionItemResponse:
+      description: Readiness probe response with per-subsystem checks.
+    ReviewRequest:
       properties:
-        mission_id:
+        reviewed_by:
           type: string
-          title: Mission Id
-          description: Mission ID on Raspberry Pi
-        name:
-          type: string
-          title: Name
-          description: Human-readable mission name
+          title: Reviewed By
+          description: Identifier of the reviewer
+          default: оператор
       type: object
-      required:
-      - mission_id
-      - name
-      title: RpiMissionItemResponse
-    RpiMissionsResponse:
-      properties:
-        missions:
-          items:
-            $ref: '#/components/schemas/RpiMissionItemResponse'
-          type: array
-          title: Missions
-      type: object
-      required:
-      - missions
-      title: RpiMissionsResponse
+      title: ReviewRequest
+      description: Operator review decision for an alert.
     RpiStatusResponse:
       properties:
         connected:
           type: boolean
           title: Connected
-          description: Whether RPi service is reachable
-        base_url:
-          type: string
-          title: Base Url
-          description: RPi service base URL
-        detail:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Detail
-          description: Failure details
+          description: Whether RPi is reachable
       type: object
       required:
       - connected
-      - base_url
       title: RpiStatusResponse
+      description: RPi device connectivity status.
+    StopStreamResponse:
+      properties:
+        mission_id:
+          type: string
+          title: Mission Id
+          description: Mission identifier
+        status:
+          type: string
+          title: Status
+          description: Mission status
+        stream_stopped:
+          type: boolean
+          title: Stream Stopped
+          description: Always true on success
+        queued_alerts:
+          type: integer
+          title: Queued Alerts
+          description: Number of alerts awaiting operator review
+        processed_frames:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Processed Frames
+          description: Total frames processed before stop
+      type: object
+      required:
+      - mission_id
+      - status
+      - stream_stopped
+      - queued_alerts
+      - processed_frames
+      title: StopStreamResponse
+      description: Response after stopping the video stream.
     ValidationError:
       properties:
         loc:
