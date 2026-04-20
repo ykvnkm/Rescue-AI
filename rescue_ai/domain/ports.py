@@ -5,7 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Protocol, TypedDict
 
-from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
+from rescue_ai.domain.entities import (
+    Alert,
+    AutoDecision,
+    Detection,
+    FrameEvent,
+    Mission,
+    TrajectoryPoint,
+)
 from rescue_ai.domain.value_objects import AlertStatus, ArtifactBlob
 
 
@@ -154,3 +161,65 @@ class FramePublisherPort(Protocol):
         self, mission_id: str, api_base: str, payload: FramePublishPayload
     ) -> None: ...
     def endpoint(self, mission_id: str, api_base: str) -> str: ...
+
+
+# ── Automatic-mode ports (consumed in P1.2+) ─────────────────────
+
+
+class TrajectoryRepository(Protocol):
+    """Persistence contract for automatic-mission trajectory points."""
+
+    def add(self, point: TrajectoryPoint) -> None: ...
+
+    def list_by_mission(self, mission_id: str) -> list[TrajectoryPoint]:
+        """Return all points for a mission ordered by ``seq``."""
+
+
+class AutoDecisionRepository(Protocol):
+    """Append-only audit log for automatic-mode decisions."""
+
+    def add(self, decision: AutoDecision) -> None: ...
+
+    def list_by_mission(self, mission_id: str) -> list[AutoDecision]:
+        """Return all decisions for a mission ordered by ``ts_sec``."""
+
+
+class NavigationEnginePort(Protocol):
+    """Port for the navigation engine used by automatic missions.
+
+    A navigation engine is a stateful object consuming frames in order and
+    producing estimated poses. Implementations live under
+    ``rescue_ai/navigation/`` (see P1.2) and must be free of I/O — frames
+    are supplied by the caller and poses are returned synchronously.
+    """
+
+    def reset(self) -> None:
+        """Clear internal state and start a new trajectory."""
+
+    def step(
+        self,
+        frame_bgr: object,
+        ts_sec: float,
+        frame_id: int | None = None,
+    ) -> TrajectoryPoint | None:
+        """Advance the engine with one frame; return the new point or ``None``.
+
+        Returning ``None`` means the engine could not update the pose for
+        this frame (e.g. marker lost, tracking quality below threshold).
+        """
+
+
+class VideoFramePort(Protocol):
+    """Port for a video frame source (RTSP, file, folder of images).
+
+    Implementations live under ``rescue_ai/infrastructure/video/`` (see
+    P1.3). Consumers iterate over ``frames()`` and call ``close()`` when
+    done. Each tuple is ``(frame_bgr, ts_sec, frame_id)`` where
+    ``frame_bgr`` is a numpy ``ndarray`` (typed as ``object`` here to
+    avoid pulling numpy into the domain layer).
+    """
+
+    def frames(self) -> object:
+        """Yield ``(frame_bgr, ts_sec, frame_id)`` tuples in capture order."""
+
+    def close(self) -> None: ...

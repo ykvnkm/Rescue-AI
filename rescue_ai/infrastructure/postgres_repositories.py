@@ -10,7 +10,7 @@ from typing import Any, Sequence
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
 from rescue_ai.domain.mission_metrics import build_gt_episodes
 from rescue_ai.domain.ports import AlertReviewPayload
-from rescue_ai.domain.value_objects import AlertStatus
+from rescue_ai.domain.value_objects import AlertStatus, MissionMode
 from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
 
 MISSION_COLUMNS = """
@@ -21,7 +21,8 @@ created_at,
 total_frames,
 fps,
 completed_frame_id,
-slug
+slug,
+mode
 """
 
 ALERT_COLUMNS = """
@@ -180,9 +181,10 @@ class PostgresMissionRepository:
                         total_frames,
                         fps,
                         completed_frame_id,
-                        slug
+                        slug,
+                        mode
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         mission.mission_id,
@@ -193,6 +195,7 @@ class PostgresMissionRepository:
                         mission.fps,
                         mission.completed_frame_id,
                         slug,
+                        str(mission.mode),
                     ),
                 )
             conn.commit()
@@ -577,6 +580,7 @@ def _mission_from_row(row: Sequence[Any]) -> Mission:
         fps=float(row[5]),
         completed_frame_id=None if row[6] is None else int(row[6]),
         slug=None if len(row) < 8 or row[7] is None else str(row[7]),
+        mode=_coerce_mission_mode(row[8]) if len(row) >= 9 else MissionMode.OPERATOR,
     )
 
 
@@ -653,6 +657,13 @@ def _coerce_alert_status(value: Any) -> AlertStatus:
         return AlertStatus(str(value))
     except ValueError as error:
         raise ValueError(f"Invalid alert status in storage: {value}") from error
+
+
+def _coerce_mission_mode(value: Any) -> MissionMode:
+    try:
+        return MissionMode(str(value))
+    except ValueError as error:
+        raise ValueError(f"Invalid mission mode in storage: {value}") from error
 
 
 def _coerce_bbox(value: Any) -> tuple[float, float, float, float]:

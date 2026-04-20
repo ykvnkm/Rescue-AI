@@ -16,8 +16,12 @@ if TYPE_CHECKING:
 
 def _load_app_schema_sql() -> str:
     root = Path(__file__).resolve().parents[1]
-    schema_path = root / "infra" / "postgres" / "init" / "010-app-schema.sql"
-    return schema_path.read_text(encoding="utf-8")
+    init_dir = root / "infra" / "postgres" / "init"
+    parts = [
+        (init_dir / "010-app-schema.sql").read_text(encoding="utf-8"),
+        (init_dir / "011-auto-mode-schema.sql").read_text(encoding="utf-8"),
+    ]
+    return "\n".join(parts)
 
 
 @pytest.fixture(scope="session")
