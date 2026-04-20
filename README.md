@@ -165,3 +165,27 @@ uv run python -m rescue_ai.interfaces.cli.online
 - [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — GitHub Actions: линтеры, типизация, unit/smoke-тесты с coverage >= 70%, архитектурные границы.
 - [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) — push-based deploy online + Airflow (DAG) на удаленный сервер через GHCR/SSH.
 - Quality gate требует прохождения двух джобов: `lint`, `test`.
+
+## Roadmap: слияние с diplom-prod и автономный деплой
+
+Текущая версия поддерживает только **операторский режим** (ручное подтверждение алертов). В работе — слияние с [diplom-prod](https://github.com/ykvnkm/diplom-prod), где реализован **автоматический режим** с навигацией, RTSP-потоком и дополнительным детектором NanoDet. Целевая архитектура — единый codebase, поддерживающий оба режима, с возможностью полностью автономной работы на полевой станции.
+
+### Фазы
+
+| Фаза | Scope | Статус |
+|---|---|---|
+| **P0** | Архитектурные решения (3 ADR), план слияния, подготовка веток | в работе |
+| **P1** | Слияние автоматического режима: domain-слой, навигация, video-ingest, NanoDet, use-case, API/CLI/UI | запланировано |
+| **P2** | Автономный деплой: профили cloud/offline/hybrid, outbox sync, mTLS до RPi | запланировано (параллельно с P1.4+) |
+| **P3** | Kubernetes-деплой (Helm + k3s + managed K8s) и Vault для секретов | запланировано (делегируется) |
+| **P4** | Prometheus + Grafana + Alertmanager, ML drift (PSI/CSI) | запланировано (делегируется) |
+
+### Архитектурные решения
+
+- [ADR-0006: Operator vs Automatic mode](docs/adr/ADR-0006-operator-vs-automatic-mode.md) — гибридная модель с `Mission.mode` и таблицами-спутниками.
+- [ADR-0007: Автономный деплой и offline-синхронизация](docs/adr/ADR-0007-autonomous-deployment-and-offline-sync.md) — три профиля деплоя, transactional outbox, mTLS до Raspberry Pi.
+- [ADR-0008: Kubernetes и управление секретами](docs/adr/ADR-0008-kubernetes-and-secrets.md) — Helm + k3s (station) + managed K8s (cloud) + Vault.
+
+### Работа ведётся в ветке
+
+`feat/auto-mode-merge` — долгоживущая feature-ветка, от которой ответвляются маленькие PR по каждой подфазе.
