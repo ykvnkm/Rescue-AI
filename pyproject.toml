@@ -85,6 +85,14 @@ generated-members = ["cv2.*"]
 [tool.pylint.format]
 max-module-lines = 1100
 
+[tool.pylint.basic]
+good-names = [
+    "i", "j", "k", "x", "y", "z", "n", "m", "h", "w", "c", "p", "t", "s", "f", "_",
+    "H", "K", "A", "D", "L", "X", "Hf", "invH",
+    "p0", "p1", "cs", "dt", "ef", "eb", "fb",
+]
+good-names-rgxs = "^[HK]_[a-zA-Z_0-9]+$"
+
 [tool.pylint."messages_control"]
 disable = [
     "C0116",  # missing-function-docstring (Protocol/CRUD methods)
