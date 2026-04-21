@@ -1,11 +1,31 @@
-"""Marker detection and PnP-based camera pose estimation."""
+"""Red-marker detection and PnP-based pose estimation."""
 
 from __future__ import annotations
 
 import cv2
 import numpy as np
 
-from rescue_ai.navigation.constants import MARKER_3D
+from rescue_ai.navigation.tuning import NavigationTuning
+
+# Unit square centred at origin — scaled by marker_size_m at call site.
+MARKER_3D = np.array(
+    [[-0.5, -0.5, 0], [0.5, -0.5, 0], [0.5, 0.5, 0], [-0.5, 0.5, 0]],
+    dtype=np.float32,
+)
+
+
+def build_marker_intrinsics(config: NavigationTuning) -> np.ndarray:
+    """3×3 intrinsics scaled from reference resolution to marker working size."""
+    fx = config.fx_nav * (float(config.marker_resize_w) / float(config.nav_width))
+    fy = config.fy_nav * (float(config.marker_resize_h) / float(config.nav_height))
+    return np.array(
+        [
+            [fx, 0.0, float(config.marker_resize_w) / 2.0],
+            [0.0, fy, float(config.marker_resize_h) / 2.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
 
 
 def detect_red_square_corners(frame_bgr: np.ndarray) -> np.ndarray | None:
@@ -15,11 +35,13 @@ def detect_red_square_corners(frame_bgr: np.ndarray) -> np.ndarray | None:
     if no suitable contour is found.
     """
     hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(  # type: ignore[call-overload]
-        hsv, (0, 80, 80), (10, 255, 255)
-    ) | cv2.inRange(  # type: ignore[call-overload]
-        hsv, (170, 80, 80), (180, 255, 255)
-    )
+    lower1 = np.array((0, 80, 80), dtype=np.uint8)
+    upper1 = np.array((10, 255, 255), dtype=np.uint8)
+    lower2 = np.array((170, 80, 80), dtype=np.uint8)
+    upper2 = np.array((180, 255, 255), dtype=np.uint8)
+    mask1 = cv2.inRange(hsv, lower1, upper1)
+    mask2 = cv2.inRange(hsv, lower2, upper2)
+    mask = cv2.bitwise_or(mask1, mask2)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((7, 7), np.uint8))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -38,13 +60,20 @@ def detect_red_square_corners(frame_bgr: np.ndarray) -> np.ndarray | None:
 
 
 def detect_red_square_corners_alt(frame_bgr: np.ndarray) -> np.ndarray | None:
-    """Alternative red-square detector used by the altitude branch."""
+    """Alternative red-square detector — used by the altitude branch.
+
+    Kept as a separate function to match upstream behaviour byte-exactly
+    (the altitude branch and the tracker each have their own detector
+    with slightly different morphology kernels).
+    """
     hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(  # type: ignore[call-overload]
-        hsv, (0, 80, 80), (10, 255, 255)
-    ) | cv2.inRange(  # type: ignore[call-overload]
-        hsv, (170, 80, 80), (180, 255, 255)
-    )
+    lower1 = np.array((0, 80, 80), dtype=np.uint8)
+    upper1 = np.array((10, 255, 255), dtype=np.uint8)
+    lower2 = np.array((170, 80, 80), dtype=np.uint8)
+    upper2 = np.array((180, 255, 255), dtype=np.uint8)
+    mask1 = cv2.inRange(hsv, lower1, upper1)
+    mask2 = cv2.inRange(hsv, lower2, upper2)
+    mask = cv2.bitwise_or(mask1, mask2)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((7, 7), dtype=np.uint8))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 7), dtype=np.uint8))
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -62,15 +91,15 @@ def detect_red_square_corners_alt(frame_bgr: np.ndarray) -> np.ndarray | None:
     return pts[np.argsort(ang)]
 
 
-def detect_red_marker_corners(  # pylint: disable=too-many-locals
+def detect_red_marker_corners(
     frame_bgr: np.ndarray,
 ) -> tuple[np.ndarray | None, np.ndarray]:
     """Robust red-marker detector returning (corners4, mask).
 
-    Uses connected-components + goodFeaturesToTrack on Canny edges to find
-    the four marker corners. Falls back to mask centroids if not enough
-    corners are found. Returns (None, mask) when the area is too small or
-    detected corners fall outside the dilated mask.
+    Uses connected-components + goodFeaturesToTrack on Canny edges to
+    find the four marker corners. Falls back to mask centroids if not
+    enough corners are found. Returns (None, mask) when the area is too
+    small or detected corners fall outside the dilated mask.
     """
     hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
 
@@ -79,8 +108,8 @@ def detect_red_marker_corners(  # pylint: disable=too-many-locals
     lower2 = np.array([170, 120, 60], dtype=np.uint8)
     upper2 = np.array([180, 255, 255], dtype=np.uint8)
 
-    mask = cv2.inRange(hsv, lower1, upper1) | cv2.inRange(  # type: ignore[operator]
-        hsv, lower2, upper2
+    mask = cv2.bitwise_or(
+        cv2.inRange(hsv, lower1, upper1), cv2.inRange(hsv, lower2, upper2)
     )
 
     k = np.ones((5, 5), np.uint8)
@@ -111,7 +140,7 @@ def detect_red_marker_corners(  # pylint: disable=too-many-locals
     else:
         pts = corners.reshape(-1, 2).astype(np.float32)
 
-    from rescue_ai.navigation.homography import order_points
+    from rescue_ai.navigation.tracking import order_points
 
     pts4 = order_points(
         [
@@ -134,12 +163,13 @@ def detect_red_marker_corners(  # pylint: disable=too-many-locals
     return pts4, mask
 
 
-def estimate_camera_center_from_marker(
+def estimate_marker_pose_pnp(
     corners_px: np.ndarray, K: np.ndarray, marker_size_m: float = 1.0
 ) -> np.ndarray | None:
-    """PnP-based camera centre estimate from the 4 marker corners.
+    """PnP-based camera centre estimate from 4 marker corners.
 
-    Returns ``[tx, ty, |tz|]`` in metres or None if solvePnP fails.
+    Returns ``[tx, ty, |tz|]`` in metres (camera centre in marker frame),
+    or None if solvePnP fails.
     """
     marker_3d = MARKER_3D * float(marker_size_m)
     ok, _, tvec = cv2.solvePnP(

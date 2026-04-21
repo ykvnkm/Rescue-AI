@@ -67,7 +67,7 @@ CREATE INDEX IF NOT EXISTS ix_auto_decisions_mission_ts
 
 
 -- One snapshot per automatic mission of the configuration it started
--- with (navigation mode, detector, full NavigationConfig as JSON). Kept
+-- with (navigation mode, detector, full NavigationTuning as JSON). Kept
 -- separate from `missions` to avoid widening the shared row for data
 -- only automatic missions need.
 CREATE TABLE IF NOT EXISTS auto_mission_config (

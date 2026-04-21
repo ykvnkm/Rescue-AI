@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from typing import Any
 
 import pytest
 
@@ -16,7 +17,7 @@ from rescue_ai.domain.value_objects import (
 
 
 def _mission(**overrides: object) -> Mission:
-    base: dict[str, object] = {
+    base: dict[str, Any] = {
         "mission_id": "m-1",
         "source_name": "cam",
         "status": "pending",
@@ -25,7 +26,7 @@ def _mission(**overrides: object) -> Mission:
         "fps": 30.0,
     }
     base.update(overrides)
-    return Mission(**base)  # type: ignore[arg-type]
+    return Mission(**base)
 
 
 def test_mission_mode_defaults_to_operator_for_backward_compat() -> None:
@@ -73,7 +74,7 @@ def test_trajectory_point_is_frozen() -> None:
         source=TrajectorySource.MARKER,
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
-        point.x = 1.0  # type: ignore[misc]
+        setattr(point, "x", 1.0)
 
 
 def test_trajectory_point_frame_id_optional() -> None:
@@ -99,7 +100,7 @@ def test_auto_decision_is_frozen() -> None:
         created_at="2026-04-20T00:00:00+00:00",
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
-        decision.reason = "mutated"  # type: ignore[misc]
+        setattr(decision, "reason", "mutated")
 
 
 def test_auto_decision_frame_id_optional() -> None:

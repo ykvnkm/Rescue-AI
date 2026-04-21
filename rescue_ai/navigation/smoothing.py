@@ -4,25 +4,25 @@ from __future__ import annotations
 
 import numpy as np
 
-from rescue_ai.navigation.constants import SMOOTH_LR_XY, SMOOTH_LR_Z, SMOOTH_WINDOW
+from rescue_ai.navigation.tuning import NavigationTuning
 
 
-def laplacian_smooth_last(
+def laplacian_smooth_window(
     traj_points: list[np.ndarray],
     pos: np.ndarray,
-    window: int = SMOOTH_WINDOW,
-    lr_xy: float = SMOOTH_LR_XY,
-    lr_z: float = SMOOTH_LR_Z,
+    config: NavigationTuning,
 ) -> np.ndarray:
-    """Apply one Laplacian-smoothing gradient step to ``pos`` in place of last.
+    """Apply one Laplacian-smoothing gradient step to ``pos``.
 
-    Builds a path-graph Laplacian over the last ``window`` points plus
-    ``pos``, then nudges ``pos`` along the negative gradient with separate
-    learning rates for xy and z. No-op when fewer than 3 effective points.
+    Builds a path-graph Laplacian over the last ``config.smooth_window``
+    points plus ``pos``, then nudges ``pos`` along the negative gradient
+    with separate learning rates for xy and z. No-op when fewer than 3
+    effective points are available.
     """
     if len(traj_points) < 2:
         return pos
-    win = traj_points[-window:] + [pos]
+    window_start = -config.smooth_window
+    win = traj_points[window_start:] + [pos]
     n = len(win)
     if n < 3:
         return pos
@@ -35,6 +35,6 @@ def laplacian_smooth_last(
     X = np.vstack(win)
     grad = 2.0 * (L @ X)[-1]
     pos_smoothed = pos.copy()
-    pos_smoothed[:2] -= lr_xy * grad[:2]
-    pos_smoothed[2] -= lr_z * grad[2]
+    pos_smoothed[:2] -= config.smooth_lr_xy * grad[:2]
+    pos_smoothed[2] -= config.smooth_lr_z * grad[2]
     return pos_smoothed

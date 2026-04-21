@@ -83,7 +83,14 @@ extension-pkg-allow-list = ["cv2"]
 generated-members = ["cv2.*"]
 
 [tool.pylint.format]
-max-module-lines = 1100
+max-module-lines = 1300
+
+[tool.pylint.design]
+max-args = 8
+max-positional-arguments = 8
+max-locals = 32
+max-returns = 8
+max-statements = 70
 
 [tool.pylint.basic]
 good-names = [

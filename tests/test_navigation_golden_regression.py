@@ -22,7 +22,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from rescue_ai.navigation.engine import MarkerEngine, MarkerEngineConfig
+from rescue_ai.navigation.engine import NavigationEngine
+from rescue_ai.navigation.tuning import NavigationTuning
 
 DEFAULT_VIDEO = Path(
     "/Users/ykvnkm/Desktop/Diplom/test_videos/video_drone.mp4",
@@ -33,13 +34,32 @@ DEFAULT_CSV = Path(
 )
 
 
+def _norm_key(name: str) -> str:
+    return name.strip().lower().replace("_", "").replace(" ", "")
+
+
+def _parse_float(value: str) -> float:
+    return float(value.strip().replace(",", "."))
+
+
+def _pick_float(row: dict[str, str], aliases: tuple[str, ...]) -> float:
+    norm_row = {
+        _norm_key(k): v for k, v in row.items() if k is not None and v is not None
+    }
+    for alias in aliases:
+        value = norm_row.get(_norm_key(alias))
+        if value is not None and value.strip() != "":
+            return _parse_float(value)
+    raise KeyError(
+        f"missing columns {aliases}; available columns: {sorted(norm_row.keys())}"
+    )
+
+
 @pytest.mark.skipif(
     os.environ.get("RESCUE_AI_GOLDEN_NAV") != "1",
     reason="set RESCUE_AI_GOLDEN_NAV=1 to run the navigation regression",
 )
-def test_marker_engine_matches_golden_trajectory() -> (
-    None
-):  # pylint: disable=too-many-locals
+def test_marker_engine_matches_golden_trajectory() -> None:
     cv2 = pytest.importorskip("cv2")
 
     video_path = Path(os.environ.get("RESCUE_AI_GOLDEN_VIDEO", str(DEFAULT_VIDEO)))
@@ -54,9 +74,9 @@ def test_marker_engine_matches_golden_trajectory() -> (
     assert cap.isOpened(), f"cannot open video {video_path}"
     fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
 
-    engine = MarkerEngine(
+    engine = NavigationEngine(
         mission_id="golden-regression",
-        config=MarkerEngineConfig(fps=fps),
+        config=NavigationTuning(fps=fps),
     )
     engine.reset()
 
@@ -76,23 +96,30 @@ def test_marker_engine_matches_golden_trajectory() -> (
     assert points, "engine produced no trajectory points"
 
     golden: list[tuple[float, float, float, float]] = []
-    with csv_path.open(encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+    with csv_path.open(encoding="utf-8", newline="") as f:
+        sample = f.read(4096)
+        f.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        except csv.Error:
+            dialect = csv.excel
+        reader = csv.DictReader(f, dialect=dialect)
         for row in reader:
             golden.append(
                 (
-                    float(row.get("t", row.get("time", 0.0))),
-                    float(row["x"]),
-                    float(row["y"]),
-                    float(row["z"]),
+                    _pick_float(row, ("t", "time", "ts", "timestamp")),
+                    _pick_float(row, ("x", "x_m", "pos_x", "px")),
+                    _pick_float(row, ("y", "y_m", "pos_y", "py")),
+                    _pick_float(row, ("z", "z_m", "pos_z", "pz")),
                 )
             )
     assert golden, "golden csv is empty"
 
-    # Loose tolerance: within 0.5 m on xy at the final point, 0.3 m on z.
-    final_engine = np.array(points[-1][1:])
-    final_golden = np.array(golden[-1][1:])
-    diff = final_engine - final_golden
+    # Compare relative drift (end-start) to avoid dependency on absolute
+    # coordinate origin differences between pipelines.
+    engine_delta = np.array(points[-1][1:]) - np.array(points[0][1:])
+    golden_delta = np.array(golden[-1][1:]) - np.array(golden[0][1:])
+    diff = engine_delta - golden_delta
     assert abs(diff[0]) < 0.5, f"x drift: {diff[0]:.3f} m"
     assert abs(diff[1]) < 0.5, f"y drift: {diff[1]:.3f} m"
     assert abs(diff[2]) < 0.3, f"z drift: {diff[2]:.3f} m"

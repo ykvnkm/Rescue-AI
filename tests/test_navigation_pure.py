@@ -1,4 +1,4 @@
-"""Unit tests for pure navigation functions (homography, smoothing, optical flow)."""
+"""Unit tests for pure navigation functions (tracking, altitude, smoothing)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,9 @@ import cv2
 import numpy as np
 import pytest
 
-from rescue_ai.navigation.homography import (
+from rescue_ai.navigation.altitude import compute_scale_from_samples
+from rescue_ai.navigation.smoothing import laplacian_smooth_window
+from rescue_ai.navigation.tracking import (
     make_roi_mask,
     order_points,
     polygon_area,
@@ -15,8 +17,7 @@ from rescue_ai.navigation.homography import (
     project_points_median,
     safe_inv_homography,
 )
-from rescue_ai.navigation.optical_flow import compute_scale_from_samples
-from rescue_ai.navigation.smoothing import laplacian_smooth_last
+from rescue_ai.navigation.tuning import NavigationTuning
 
 
 def test_order_points_returns_tl_tr_br_bl() -> None:
@@ -98,27 +99,30 @@ def test_compute_scale_from_samples_symmetric_cloud() -> None:
     assert compute_scale_from_samples(pts) == pytest.approx(1.0)
 
 
-def test_laplacian_smooth_last_no_op_when_too_few_points() -> None:
+def test_laplacian_smooth_window_no_op_when_too_few_points() -> None:
     pos = np.array([10.0, 10.0, 5.0])
-    assert np.array_equal(laplacian_smooth_last([], pos), pos)
-    assert np.array_equal(laplacian_smooth_last([np.array([0.0, 0.0, 0.0])], pos), pos)
+    config = NavigationTuning()
+    assert np.array_equal(laplacian_smooth_window([], pos, config), pos)
+    assert np.array_equal(
+        laplacian_smooth_window([np.array([0.0, 0.0, 0.0])], pos, config), pos
+    )
 
 
-def test_laplacian_smooth_last_reduces_large_jump() -> None:
+def test_laplacian_smooth_window_reduces_large_jump() -> None:
     traj = [np.array([0.0, 0.0, 0.0]), np.array([1.0, 1.0, 0.0])]
     pos = np.array([10.0, 10.0, 5.0])
-    smoothed = laplacian_smooth_last(traj, pos)
+    smoothed = laplacian_smooth_window(traj, pos, NavigationTuning())
     assert np.linalg.norm(smoothed - pos) > 0.0
     assert smoothed[0] < pos[0]
     assert smoothed[1] < pos[1]
 
 
-def test_laplacian_smooth_last_pulls_endpoint_toward_neighbor() -> None:
+def test_laplacian_smooth_window_pulls_endpoint_toward_neighbor() -> None:
     # Endpoint of a path graph has degree 1 — smoothing pulls it toward
     # its single neighbor with magnitude ~ 2 * lr * unit_step.
     traj = [np.array([float(i), 0.0, 0.0]) for i in range(5)]
     pos = np.array([5.0, 0.0, 0.0])
-    smoothed = laplacian_smooth_last(traj, pos)
+    smoothed = laplacian_smooth_window(traj, pos, NavigationTuning())
     # x decreases (pulled back toward neighbor at x=4); y/z untouched.
     assert smoothed[0] < pos[0]
     assert smoothed[1] == pytest.approx(0.0)
