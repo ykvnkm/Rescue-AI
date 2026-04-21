@@ -60,6 +60,13 @@ def _resolve_min_detections_per_frame(payload: dict[str, object]) -> int:
     return int(alert.get("min_detections_per_frame", 1))
 
 
+_SUPPORTED_DETECTORS = {"yolo", "nanodet"}
+
+
+def _normalize_sha256(value: object) -> str | None:
+    return str(value).strip().lower() if value else None
+
+
 def _build_inference_config(
     payload: dict[str, object],
     confidence_threshold: float,
@@ -67,7 +74,21 @@ def _build_inference_config(
     infer = payload.get("infer", {})
     if not isinstance(infer, dict):
         infer = {}
-    model_sha256_raw = payload.get("model_sha256")
+
+    detector_cfg = payload.get("detector", {})
+    if not isinstance(detector_cfg, dict):
+        detector_cfg = {}
+    detector_name = str(detector_cfg.get("name", "yolo")).strip().lower()
+    if detector_name not in _SUPPORTED_DETECTORS:
+        raise ValueError(
+            f"Unsupported detector: {detector_name!r}; "
+            f"expected one of {sorted(_SUPPORTED_DETECTORS)}"
+        )
+
+    nanodet_cfg = detector_cfg.get("nanodet", {})
+    if not isinstance(nanodet_cfg, dict):
+        nanodet_cfg = {}
+
     return InferenceConfig(
         model_url=str(payload.get("model_url", DEFAULT_MODEL_URL)),
         device=str(payload.get("device", "cpu")),
@@ -75,9 +96,16 @@ def _build_inference_config(
         nms_iou=float(infer.get("nms_iou", 0.75)),
         max_det=int(infer.get("max_det", 1000)),
         confidence_threshold=confidence_threshold,
-        model_sha256=(
-            str(model_sha256_raw).strip().lower() if model_sha256_raw else None
+        model_sha256=_normalize_sha256(payload.get("model_sha256")),
+        detector_name=detector_name,
+        nanodet_config_url=(
+            str(nanodet_cfg["config_url"]) if nanodet_cfg.get("config_url") else None
         ),
+        nanodet_config_sha256=_normalize_sha256(nanodet_cfg.get("config_sha256")),
+        nanodet_onnx_url=(
+            str(nanodet_cfg["onnx_url"]) if nanodet_cfg.get("onnx_url") else None
+        ),
+        nanodet_onnx_sha256=_normalize_sha256(nanodet_cfg.get("onnx_sha256")),
     )
 
 

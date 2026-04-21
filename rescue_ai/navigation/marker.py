@@ -172,8 +172,13 @@ def estimate_marker_pose_pnp(
     or None if solvePnP fails.
     """
     marker_3d = MARKER_3D * float(marker_size_m)
+    dist_coeffs = np.zeros((4, 1), dtype=np.float64)
     ok, _, tvec = cv2.solvePnP(
-        marker_3d, corners_px, K, None, flags=cv2.SOLVEPNP_IPPE_SQUARE
+        marker_3d,
+        corners_px,
+        K,
+        dist_coeffs,
+        flags=cv2.SOLVEPNP_IPPE_SQUARE,
     )
     if not ok:
         return None

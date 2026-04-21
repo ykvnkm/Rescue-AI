@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from rescue_ai.application.inference_config import InferenceConfig
-from rescue_ai.infrastructure.yolo_detector import YoloDetector
+from rescue_ai.infrastructure.detectors.yolo_detector import YoloDetector
 
 np = __import__("pytest").importorskip("numpy")
 

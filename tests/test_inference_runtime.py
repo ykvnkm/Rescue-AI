@@ -11,7 +11,10 @@ import pytest
 from rescue_ai.application.inference_config import InferenceConfig
 from rescue_ai.application.payloads import build_frame_payload, serialize_detections
 from rescue_ai.infrastructure.annotation_index import build_annotation_index
-from rescue_ai.infrastructure.yolo_detector import YoloDetector, _resolve_person_ids
+from rescue_ai.infrastructure.detectors.yolo_detector import (
+    YoloDetector,
+    _resolve_person_ids,
+)
 
 
 def test_build_annotation_index_from_coco_json() -> None:
@@ -95,7 +98,7 @@ def test_yolo_detector_warmup_requires_ultralytics(
         raise ImportError("missing ultralytics")
 
     monkeypatch.setattr(
-        "rescue_ai.infrastructure.yolo_detector._load_yolo_class",
+        "rescue_ai.infrastructure.detectors.yolo_detector._load_yolo_class",
         _raise_import_error,
     )
 
@@ -111,7 +114,8 @@ def test_yolo_detector_validates_checksum(monkeypatch: pytest.MonkeyPatch) -> No
         model_file.write_bytes(b"fake-model")
 
         monkeypatch.setattr(
-            "rescue_ai.infrastructure.yolo_detector.MODEL_CACHE_DIR", cache_dir
+            "rescue_ai.infrastructure.detectors.yolo_detector.MODEL_CACHE_DIR",
+            cache_dir,
         )
 
         config = InferenceConfig(
@@ -130,7 +134,7 @@ def test_yolo_detector_validates_checksum(monkeypatch: pytest.MonkeyPatch) -> No
                 _ = model_path
 
         monkeypatch.setattr(
-            "rescue_ai.infrastructure.yolo_detector._load_yolo_class",
+            "rescue_ai.infrastructure.detectors.yolo_detector._load_yolo_class",
             lambda: _FakeYolo,
         )
 
@@ -150,7 +154,8 @@ def test_yolo_detector_accepts_matching_checksum(
         expected_hash = hashlib.sha256(payload).hexdigest()
 
         monkeypatch.setattr(
-            "rescue_ai.infrastructure.yolo_detector.MODEL_CACHE_DIR", cache_dir
+            "rescue_ai.infrastructure.detectors.yolo_detector.MODEL_CACHE_DIR",
+            cache_dir,
         )
 
         config = InferenceConfig(
@@ -169,7 +174,7 @@ def test_yolo_detector_accepts_matching_checksum(
                 self.model_path = model_path
 
         monkeypatch.setattr(
-            "rescue_ai.infrastructure.yolo_detector._load_yolo_class",
+            "rescue_ai.infrastructure.detectors.yolo_detector._load_yolo_class",
             lambda: _FakeYolo,
         )
 

@@ -27,10 +27,10 @@ from rescue_ai.infrastructure.batch_metrics_repository import (
     PostgresBatchMetricsRepository,
 )
 from rescue_ai.infrastructure.contract_loader import load_stream_contract
+from rescue_ai.infrastructure.detectors import build_detector
 from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
 from rescue_ai.infrastructure.s3_mission_source import S3MissionSource
 from rescue_ai.infrastructure.stage_store import S3StageStore
-from rescue_ai.infrastructure.yolo_detector import YoloDetector
 
 STAGES = ("prepare_dataset", "evaluate_model", "publish_metrics")
 DEFAULT_BATCH_OUTPUT_SUFFIX = "batch"
@@ -297,7 +297,7 @@ def _run_evaluate_model(
 ) -> dict[str, object]:
     _ = (settings, args)
     contract = load_stream_contract()
-    detector = YoloDetector(config=contract.inference)
+    detector = build_detector(contract.inference)
     val_tmp = Path(tempfile.mkdtemp(prefix="rescue_ai_eval_"))
     s3_settings = _build_s3_settings()
 

@@ -957,17 +957,19 @@ class DetectionStreamController:
 
 
 def _build_detector() -> DomainDetectorPort | None:
-    """Create YoloDetector from stream contract config (lazy, optional)."""
+    """Create detector from stream contract config (lazy, optional)."""
     try:
-        from rescue_ai.infrastructure.yolo_detector import YoloDetector
+        from rescue_ai.infrastructure.detectors import build_detector
 
         settings = get_settings()
         contract = load_stream_contract(
             service_version=settings.app.service_version,
         )
-        detector = YoloDetector(config=contract.inference)
+        detector = build_detector(contract.inference)
         logger.info(
-            "YoloDetector initialized (model_url=%s)", contract.inference.model_url
+            "Detector initialized: name=%s model_url=%s",
+            contract.inference.detector_name,
+            contract.inference.model_url,
         )
         return detector
     except (ImportError, RuntimeError, ValueError, TypeError, OSError) as error:

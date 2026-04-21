@@ -77,10 +77,16 @@ markers = [
     "integration: tests requiring a running Postgres database",
 ]
 
+[tool.coverage.run]
+omit = [
+  "rescue_ai/infrastructure/detectors/nanodet_core/*",
+]
+
 [tool.pylint.main]
 py-version = "3.12"
 extension-pkg-allow-list = ["cv2"]
 generated-members = ["cv2.*"]
+ignore-paths = ["^rescue_ai/infrastructure/detectors/nanodet_core/.*$"]
 
 [tool.pylint.format]
 max-module-lines = 1300

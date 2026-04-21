@@ -138,7 +138,7 @@ class _FakeCapture:
         if not self._script:
             return False, None
         item = self._script.pop(0)
-        if item == "fail":
+        if isinstance(item, str) and item == "fail":
             return False, None
         assert isinstance(item, np.ndarray)
         return True, item
