@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Protocol, TypedDict
 
 from rescue_ai.domain.entities import (
@@ -13,7 +13,7 @@ from rescue_ai.domain.entities import (
     Mission,
     TrajectoryPoint,
 )
-from rescue_ai.domain.value_objects import AlertStatus, ArtifactBlob
+from rescue_ai.domain.value_objects import AlertStatus, ArtifactBlob, NavMode
 
 
 class AlertReviewPayload(TypedDict):
@@ -145,11 +145,33 @@ class ArtifactStorage(Protocol):
         self, mission_id: str, ds: str
     ) -> Mapping[str, object] | None: ...
 
+    def save_trajectory_csv(
+        self,
+        mission_id: str,
+        ds: str,
+        points: Sequence[TrajectoryPoint],
+    ) -> str:
+        """Persist a mission trajectory as CSV; return the artifact URI.
+
+        Used by automatic missions (ADR-0006): layout
+        ``{prefix}/{ds}/{mission_id}/trajectory.csv``. Columns are
+        ``seq,ts_sec,frame_id,x,y,z,source``.
+        """
+
+    def save_trajectory_plot(self, mission_id: str, ds: str, png_bytes: bytes) -> str:
+        """Persist a rendered trajectory PNG under
+        ``{prefix}/{ds}/{mission_id}/plots/trajectory.png``.
+
+        Automatic missions (ADR-0006) use this alongside
+        ``save_mission_report`` to keep the S3 layout uniform with
+        operator missions (``report.json`` at the mission root).
+        """
+
 
 class DetectorPort(Protocol):
     """Port for ML detector used by both online and batch services."""
 
-    def detect(self, image_uri: str) -> list[Detection]: ...
+    def detect(self, image_uri: object) -> list[Detection]: ...
     def warmup(self) -> None: ...
     def runtime_name(self) -> str: ...
 
@@ -182,6 +204,42 @@ class AutoDecisionRepository(Protocol):
 
     def list_by_mission(self, mission_id: str) -> list[AutoDecision]:
         """Return all decisions for a mission ordered by ``ts_sec``."""
+
+
+class AutoMissionConfigRepository(Protocol):
+    """Stores the per-mission automatic configuration snapshot.
+
+    One row per mission captured when the mission starts, keeping the
+    choice of ``nav_mode`` + ``detector`` + serialized navigation tuning
+    reproducible for later analysis.
+    """
+
+    def save(
+        self,
+        *,
+        mission_id: str,
+        nav_mode: NavMode,
+        detector: str,
+        config_json: Mapping[str, object],
+    ) -> None: ...
+
+    def get(self, mission_id: str) -> Mapping[str, object] | None: ...
+
+
+class TrajectoryPlotRendererPort(Protocol):
+    """Port for rendering a PNG plot from a list of trajectory points.
+
+    Implementations live in infrastructure (matplotlib/headless Agg). The
+    domain only needs a ``(points) -> png_bytes`` contract so
+    :class:`AutoMissionService` stays I/O-free.
+    """
+
+    def render(
+        self,
+        mission_id: str,
+        points: Sequence[TrajectoryPoint],
+    ) -> bytes:
+        """Return PNG-encoded bytes of the trajectory plot."""
 
 
 class NavigationEnginePort(Protocol):

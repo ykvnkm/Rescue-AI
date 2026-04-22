@@ -20,16 +20,24 @@ import httpx
 import uvicorn
 from uvicorn.config import LOGGING_CONFIG as UVICORN_LOGGING_CONFIG
 
+from rescue_ai.application.auto_mission_service import AutoMissionService
 from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.config import Settings, get_settings
 from rescue_ai.domain.entities import Detection, FrameEvent
-from rescue_ai.domain.ports import AlertRepository, ArtifactStorage
+from rescue_ai.domain.ports import (
+    AlertRepository,
+    ArtifactStorage,
+    AutoDecisionRepository,
+    AutoMissionConfigRepository,
+)
 from rescue_ai.domain.ports import DetectorPort as DomainDetectorPort
 from rescue_ai.domain.ports import (
     FrameEventRepository,
     MissionRepository,
     ReportMetadataPayload,
+    TrajectoryRepository,
 )
+from rescue_ai.domain.value_objects import AlertRuleConfig
 from rescue_ai.infrastructure.artifact_storage import build_s3_storage
 from rescue_ai.infrastructure.contract_loader import load_stream_contract
 from rescue_ai.infrastructure.postgres_connection import wait_for_postgres
@@ -985,6 +993,7 @@ def build_api_runtime() -> tuple[
     Callable[[], None],
     DomainDetectorPort | None,
     ArtifactStorage,
+    AutoMissionService | None,
 ]:
     """Assemble API runtime dependencies (composition root)."""
     settings = get_settings()
@@ -1003,9 +1012,13 @@ def build_api_runtime() -> tuple[
     if contract.inference.model_sha256:
         report_metadata["model_sha256"] = contract.inference.model_sha256
 
-    mission_repository, alert_repository, frame_repository, reset_hook = (
-        _build_repositories(settings=settings)
-    )
+    (
+        mission_repository,
+        alert_repository,
+        frame_repository,
+        reset_hook,
+        auto_repos,
+    ) = _build_repositories(settings=settings)
 
     artifact_storage = build_s3_storage(settings.storage)
 
@@ -1027,7 +1040,81 @@ def build_api_runtime() -> tuple[
         pilot_service=pilot_service,
         detector=detector,
     )
-    return pilot_service, stream_controller, reset_hook, detector, artifact_storage
+
+    auto_mission_service = _build_auto_mission_service(
+        contract_dataset_fps=contract.dataset_fps,
+        alert_rules=alert_rules,
+        mission_repository=mission_repository,
+        alert_repository=alert_repository,
+        frame_repository=frame_repository,
+        auto_repos=auto_repos,
+        artifact_storage=artifact_storage,
+        detector=detector,
+    )
+
+    return (
+        pilot_service,
+        stream_controller,
+        reset_hook,
+        detector,
+        artifact_storage,
+        auto_mission_service,
+    )
+
+
+def _build_auto_mission_service(
+    *,
+    contract_dataset_fps: float,
+    alert_rules: AlertRuleConfig,
+    mission_repository: MissionRepository,
+    alert_repository: AlertRepository,
+    frame_repository: FrameEventRepository,
+    auto_repos: "_AutoRepoBundle | None",
+    artifact_storage: ArtifactStorage,
+    detector: DomainDetectorPort | None,
+) -> AutoMissionService | None:
+    """Compose :class:`AutoMissionService` if all its dependencies are available."""
+    if auto_repos is None or detector is None:
+        logger.info(
+            "AutoMissionService not wired: detector=%s auto_repos=%s",
+            detector is not None,
+            auto_repos is not None,
+        )
+        return None
+    try:
+        from rescue_ai.infrastructure.trajectory_plot import (
+            build_trajectory_plot_renderer,
+        )
+        from rescue_ai.navigation.engine import NavigationEngine
+        from rescue_ai.navigation.tuning import NavigationTuning
+    except ImportError as err:
+        logger.warning("AutoMissionService disabled (missing deps): %s", err)
+        return None
+
+    try:
+        plot_renderer = build_trajectory_plot_renderer()
+    except RuntimeError as err:
+        logger.warning("TrajectoryPlotRenderer unavailable: %s", err)
+        plot_renderer = None
+
+    nav_tuning = NavigationTuning(fps=contract_dataset_fps)
+    nav_engine = NavigationEngine(mission_id="api-auto", config=nav_tuning)
+
+    return AutoMissionService(
+        dependencies=AutoMissionService.Dependencies(
+            mission_repository=mission_repository,
+            alert_repository=alert_repository,
+            frame_event_repository=frame_repository,
+            trajectory_repository=auto_repos.trajectory_repository,
+            auto_decision_repository=auto_repos.auto_decision_repository,
+            auto_mission_config_repository=auto_repos.auto_mission_config_repository,
+            artifact_storage=artifact_storage,
+            detector=detector,
+            navigation_engine=nav_engine,
+            trajectory_plot_renderer=plot_renderer,
+        ),
+        alert_rules=alert_rules,
+    )
 
 
 def main() -> None:
@@ -1048,9 +1135,13 @@ def main() -> None:
         settings.api.port,
     )
     _prepare_postgres_backend()
-    pilot_service, stream_controller, reset_hook, detector, artifact_storage = (
-        build_api_runtime()
-    )
+    runtime_parts = build_api_runtime()
+    pilot_service = runtime_parts[0]
+    stream_controller = runtime_parts[1]
+    reset_hook = runtime_parts[2]
+    detector = runtime_parts[3]
+    artifact_storage = runtime_parts[4]
+    auto_mission_service = runtime_parts[5] if len(runtime_parts) > 5 else None
     set_runtime(
         ApiRuntime(
             pilot_service=pilot_service,
@@ -1058,6 +1149,7 @@ def main() -> None:
             reset_hook=reset_hook,
             detector=detector,
             artifact_storage=artifact_storage,
+            auto_mission_service=auto_mission_service,
         )
     )
     uvicorn.run(
@@ -1089,6 +1181,15 @@ def _build_uvicorn_log_config() -> dict[str, Any]:
     return config
 
 
+@dataclass
+class _AutoRepoBundle:
+    """Bundle of automatic-mode repositories sharing one ``PostgresDatabase``."""
+
+    trajectory_repository: TrajectoryRepository
+    auto_decision_repository: AutoDecisionRepository
+    auto_mission_config_repository: AutoMissionConfigRepository
+
+
 def _build_repositories(
     *,
     settings: Settings,
@@ -1097,6 +1198,7 @@ def _build_repositories(
     AlertRepository,
     FrameEventRepository,
     Callable[[], None],
+    _AutoRepoBundle | None,
 ]:
     from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
     from rescue_ai.infrastructure.postgres_repositories import (
@@ -1110,11 +1212,30 @@ def _build_repositories(
         raise ValueError("DB_DSN is required")
 
     postgres_db = PostgresDatabase(dsn=dsn, schema="app")
+    try:
+        from rescue_ai.infrastructure.postgres_auto_repositories import (
+            PostgresAutoDecisionRepository,
+            PostgresAutoMissionConfigRepository,
+            PostgresTrajectoryRepository,
+        )
+
+        auto_repos: _AutoRepoBundle | None = _AutoRepoBundle(
+            trajectory_repository=PostgresTrajectoryRepository(postgres_db),
+            auto_decision_repository=PostgresAutoDecisionRepository(postgres_db),
+            auto_mission_config_repository=PostgresAutoMissionConfigRepository(
+                postgres_db
+            ),
+        )
+    except ImportError as err:
+        logger.warning("Automatic-mode repositories unavailable: %s", err)
+        auto_repos = None
+
     return (
         PostgresMissionRepository(postgres_db),
         PostgresAlertRepository(postgres_db, episode_settings=None),
         PostgresFrameEventRepository(postgres_db, episode_settings=None),
         postgres_db.truncate_all,
+        auto_repos,
     )
 
 

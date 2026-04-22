@@ -476,6 +476,22 @@
       <button class="btn secondary" id="reportBtn">Отчет по миссии</button>
     </div>
 
+    <!-- Automatic-mode stub (ADR-0006, P1.6) -->
+    <div class="card" style="margin-bottom:14px;">
+      <h3>Автоматический режим</h3>
+      <span class="hud-label">Отчёты auto-миссий</span>
+      <div class="field">
+        <label class="form-label" for="autoMissionIdInput">ID auto-миссии</label>
+        <input id="autoMissionIdInput" class="select-strong" type="text"
+               placeholder="например 9b1c..." style="width:100%;padding:6px;" />
+      </div>
+      <button class="btn secondary" id="autoReportBtn">Получить отчёт</button>
+      <pre id="autoReportBox"
+           style="margin-top:8px;font-size:11px;max-height:220px;overflow:auto;
+                  background:rgba(15,23,42,0.6);padding:8px;border-radius:6px;
+                  white-space:pre-wrap;word-break:break-word;">Нет данных</pre>
+    </div>
+
     <div class="card">
       <span class="hud-label" style="margin-bottom:8px;">Логи</span>
       <div class="log-panel" id="missionStatus">Ожидание событий системы...</div>
@@ -1045,6 +1061,29 @@ async function loadReport() {
   setMissionStatus('Отчет успешно загружен и сохранен.');
 }
 
+/* ---- Automatic-mode stub (ADR-0006, P1.6) ---- */
+async function loadAutoReport() {
+  const input = document.getElementById('autoMissionIdInput');
+  const box = document.getElementById('autoReportBox');
+  const missionId = (input.value || '').trim();
+  if (!missionId) {
+    box.textContent = 'Укажите ID auto-миссии.';
+    return;
+  }
+  box.textContent = 'Загрузка...';
+  try {
+    const resp = await fetch(`/auto-missions/${encodeURIComponent(missionId)}/report`);
+    if (!resp.ok) {
+      box.textContent = `Ошибка ${resp.status}: ${await resp.text()}`;
+      return;
+    }
+    const payload = await resp.json();
+    box.textContent = JSON.stringify(payload, null, 2);
+  } catch (err) {
+    box.textContent = `Ошибка: ${err}`;
+  }
+}
+
 /* ---- Wire up buttons ---- */
 document.getElementById('startBtn').addEventListener('click', startMission);
 document.getElementById('stopStreamBtn').addEventListener('click', stopStream);
@@ -1052,6 +1091,7 @@ document.getElementById('completeBtn').addEventListener('click', completeMission
 document.getElementById('forceCompleteBtn').addEventListener('click', forceCompleteMission);
 document.getElementById('reportBtn').addEventListener('click', loadReport);
 document.getElementById('checkRpiBtn').addEventListener('click', () => loadMissionCatalog(true));
+document.getElementById('autoReportBtn').addEventListener('click', loadAutoReport);
 
 /* ---- Boot ---- */
 setupMouseZoomAndPan();

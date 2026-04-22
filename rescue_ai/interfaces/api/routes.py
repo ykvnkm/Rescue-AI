@@ -24,6 +24,7 @@ from rescue_ai.interfaces.api.logging_utils import (
     build_source_log_fields,
     sanitize_log_text,
 )
+from rescue_ai.interfaces.api.routes_auto import router as auto_router
 from rescue_ai.interfaces.api.ui_page import build_ui_html
 
 logger = logging.getLogger(__name__)
@@ -1097,3 +1098,6 @@ def _build_alert_wall_time(created_at: str | None, offset_sec: float) -> str | N
     if base.tzinfo is None:
         base = base.replace(tzinfo=timezone.utc)
     return (base + timedelta(seconds=offset_sec)).isoformat()
+
+
+router.include_router(auto_router)

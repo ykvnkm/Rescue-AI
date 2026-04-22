@@ -21,7 +21,7 @@ class _FakeDetector:
     def warmup(self) -> None:
         return None
 
-    def detect(self, image_uri: str) -> list[Detection]:
+    def detect(self, image_uri: object) -> list[Detection]:
         _ = image_uri
         return [
             Detection(
@@ -37,7 +37,7 @@ class _FakeDetector:
 
 
 class _FailingDetector(_FakeDetector):
-    def detect(self, image_uri: str) -> list[Detection]:
+    def detect(self, image_uri: object) -> list[Detection]:
         _ = image_uri
         raise RuntimeError("detector error")
 

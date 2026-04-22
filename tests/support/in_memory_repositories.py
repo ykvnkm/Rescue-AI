@@ -1,13 +1,20 @@
 """In-memory repository implementations used only in tests."""
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
-from rescue_ai.domain.entities import Alert, FrameEvent, Mission
+from rescue_ai.domain.entities import (
+    Alert,
+    AutoDecision,
+    FrameEvent,
+    Mission,
+    TrajectoryPoint,
+)
 from rescue_ai.domain.ports import AlertReviewPayload
-from rescue_ai.domain.value_objects import AlertStatus, ArtifactBlob
+from rescue_ai.domain.value_objects import AlertStatus, ArtifactBlob, NavMode
 
 
 @dataclass
@@ -140,7 +147,7 @@ class InMemoryFrameEventRepository:
 @dataclass
 class InMemoryArtifactStorage:
     stored_frames: dict[tuple[str, int], str] = field(default_factory=dict)
-    _reports: dict[str, dict[str, object]] = field(default_factory=dict)
+    _reports: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def store_frame(
         self, mission_id: str, frame_id: int, source_uri: str, ds: str
@@ -183,6 +190,36 @@ class InMemoryArtifactStorage:
         self._reports[f"{ds}:{mission_id}:labels"] = dict(payload)
         return f"memory://missions/{ds}/{mission_id}/labels.json"
 
+    def save_trajectory_plot(self, mission_id: str, ds: str, png_bytes: bytes) -> str:
+        self._reports[f"{ds}:{mission_id}:trajectory_plot"] = {
+            "bytes": len(png_bytes),
+            "mission_id": mission_id,
+        }
+        return f"memory://missions/{ds}/{mission_id}/plots/trajectory.png"
+
+    def save_trajectory_csv(
+        self,
+        mission_id: str,
+        ds: str,
+        points: Sequence[TrajectoryPoint],
+    ) -> str:
+        key = f"{ds}:{mission_id}:trajectory"
+        self._reports[key] = {
+            "points": [
+                {
+                    "seq": point.seq,
+                    "ts_sec": point.ts_sec,
+                    "frame_id": point.frame_id,
+                    "x": point.x,
+                    "y": point.y,
+                    "z": point.z,
+                    "source": str(point.source),
+                }
+                for point in points
+            ]
+        }
+        return f"memory://missions/{ds}/{mission_id}/trajectory.csv"
+
     def write_report(self, run_key: str, payload: dict[str, object]) -> str:
         self._reports[run_key] = dict(payload)
         return f"memory://batch/{run_key}/report.json"
@@ -190,3 +227,56 @@ class InMemoryArtifactStorage:
     def write_debug_rows(self, run_key: str, rows: list[dict[str, object]]) -> str:
         _ = rows
         return f"memory://batch/{run_key}/debug.csv"
+
+
+class InMemoryTrajectoryRepository:
+    def __init__(self) -> None:
+        self.points: dict[str, list[TrajectoryPoint]] = {}
+
+    def add(self, point: TrajectoryPoint) -> None:
+        bucket = self.points.setdefault(point.mission_id, [])
+        for idx, existing in enumerate(bucket):
+            if existing.seq == point.seq:
+                bucket[idx] = point
+                return
+        bucket.append(point)
+
+    def list_by_mission(self, mission_id: str) -> list[TrajectoryPoint]:
+        return sorted(self.points.get(mission_id, []), key=lambda item: item.seq)
+
+
+class InMemoryAutoDecisionRepository:
+    def __init__(self) -> None:
+        self.decisions: dict[str, list[AutoDecision]] = {}
+
+    def add(self, decision: AutoDecision) -> None:
+        bucket = self.decisions.setdefault(decision.mission_id, [])
+        bucket.append(decision)
+
+    def list_by_mission(self, mission_id: str) -> list[AutoDecision]:
+        return sorted(
+            self.decisions.get(mission_id, []),
+            key=lambda item: (item.ts_sec, item.decision_id),
+        )
+
+
+class InMemoryAutoMissionConfigRepository:
+    def __init__(self) -> None:
+        self.saved: dict[str, dict[str, object]] = {}
+
+    def save(
+        self,
+        *,
+        mission_id: str,
+        nav_mode: NavMode,
+        detector: str,
+        config_json: Mapping[str, object],
+    ) -> None:
+        self.saved[mission_id] = {
+            "nav_mode": str(nav_mode),
+            "detector": detector,
+            "config_json": dict(config_json),
+        }
+
+    def get(self, mission_id: str) -> Mapping[str, object] | None:
+        return self.saved.get(mission_id)

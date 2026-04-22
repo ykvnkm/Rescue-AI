@@ -18,7 +18,7 @@ import re
 import torch
 
 try:
-    from torch.utils.data._utils.collate import string_classes  # type: ignore
+    from torch.utils.data._utils.collate import string_classes
 except Exception:  # noqa: BLE001
     string_classes = (str, bytes)
 

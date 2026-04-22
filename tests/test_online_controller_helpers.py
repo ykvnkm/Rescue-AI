@@ -61,7 +61,7 @@ class _FakePilotService:
 
 
 class _FakeDetector:
-    def detect(self, image_uri: str) -> list[Detection]:
+    def detect(self, image_uri: object) -> list[Detection]:
         _ = image_uri
         return []
 
@@ -73,7 +73,7 @@ class _FakeDetector:
 
 
 class _TypeErrorDetector:
-    def detect(self, image_uri: str) -> list[Detection]:
+    def detect(self, image_uri: object) -> list[Detection]:
         if isinstance(image_uri, str):
             return []
         raise TypeError("source must be string")
@@ -446,6 +446,7 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
         config_hash = "hash"
         config_path = "configs/test.yaml"
         service_version = "dev"
+        dataset_fps = 6.0
         inference = _Inference()
         alert_rules = AlertRuleConfig(0.5, 1.0, 1, 0.0, 1.0, 1.0, 1.0)
 
@@ -461,6 +462,7 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
             InMemoryAlertRepository(db),
             InMemoryFrameEventRepository(db),
             lambda: None,
+            None,
         ),
     )
     monkeypatch.setattr(
@@ -474,15 +476,22 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
 
     monkeypatch.setattr(online_main, "_build_detector", _build_detector)
 
-    pilot_service, stream_controller, reset_hook, detector, artifact_storage = (
-        online_main.build_api_runtime()
-    )
+    (
+        pilot_service,
+        stream_controller,
+        reset_hook,
+        detector,
+        artifact_storage,
+        auto_mission_service,
+    ) = online_main.build_api_runtime()
 
     assert pilot_service is not None
     assert stream_controller is not None
     assert callable(reset_hook)
     assert detector is not None
     assert artifact_storage is not None
+    # auto_mission_service is None because _build_repositories returned no auto_repos.
+    assert auto_mission_service is None
 
     calls: dict[str, object] = {}
     monkeypatch.setattr(
@@ -499,6 +508,7 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
             reset_hook,
             detector,
             artifact_storage,
+            auto_mission_service,
         ),
     )
     monkeypatch.setattr(

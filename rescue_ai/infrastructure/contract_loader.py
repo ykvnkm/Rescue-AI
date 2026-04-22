@@ -123,9 +123,12 @@ class StreamContract:
     service_version: str
 
 
-def load_stream_contract(service_version: str = "dev") -> StreamContract:
-    """Load and resolve the stream contract from the default YAML file."""
-    contract_path = DEFAULT_CONTRACT_PATH
+def load_stream_contract(
+    service_version: str = "dev",
+    contract_path: Path | None = None,
+) -> StreamContract:
+    """Load and resolve the stream contract from ``contract_path`` (or default)."""
+    contract_path = contract_path or DEFAULT_CONTRACT_PATH
     payload = _require_mapping(
         yaml.safe_load(contract_path.read_text(encoding="utf-8"))
     )

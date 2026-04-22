@@ -6,7 +6,7 @@ import csv
 import json
 import mimetypes
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from io import StringIO
@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from rescue_ai.config import StorageSettings
+from rescue_ai.domain.entities import TrajectoryPoint
 from rescue_ai.domain.value_objects import ArtifactBlob
 
 try:
@@ -199,6 +200,46 @@ class S3ArtifactStorage:
             return None
         return payload
 
+    def save_trajectory_csv(
+        self,
+        mission_id: str,
+        ds: str,
+        points: Sequence[TrajectoryPoint],
+    ) -> str:
+        key = self._trajectory_key(mission_id, ds)
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["seq", "ts_sec", "frame_id", "x", "y", "z", "source"])
+        for point in points:
+            writer.writerow(
+                [
+                    point.seq,
+                    point.ts_sec,
+                    "" if point.frame_id is None else point.frame_id,
+                    point.x,
+                    point.y,
+                    point.z,
+                    str(point.source),
+                ]
+            )
+        self._client.put_object(
+            Bucket=self._settings.bucket,
+            Key=key,
+            Body=buffer.getvalue().encode("utf-8"),
+            ContentType="text/csv",
+        )
+        return f"s3://{self._settings.bucket}/{key}"
+
+    def save_trajectory_plot(self, mission_id: str, ds: str, png_bytes: bytes) -> str:
+        key = self._trajectory_plot_key(mission_id, ds)
+        self._client.put_object(
+            Bucket=self._settings.bucket,
+            Key=key,
+            Body=png_bytes,
+            ContentType="image/png",
+        )
+        return f"s3://{self._settings.bucket}/{key}"
+
     def write_report(self, run_key: str, payload: dict[str, object]) -> str:
         """Write a batch run report to S3."""
         safe_key = run_key.replace(":", "__")
@@ -227,6 +268,20 @@ class S3ArtifactStorage:
     def _report_key(self, mission_id: str, ds: str) -> str:
         return self._key_for_mission_file(
             mission_id=mission_id, ds=ds, leaf="report.json"
+        )
+
+    def _trajectory_key(self, mission_id: str, ds: str) -> str:
+        return self._key_for_mission_file(
+            mission_id=mission_id,
+            ds=ds,
+            leaf="trajectory.csv",
+        )
+
+    def _trajectory_plot_key(self, mission_id: str, ds: str) -> str:
+        return self._key_for_mission_file(
+            mission_id=mission_id,
+            ds=ds,
+            leaf="plots/trajectory.png",
         )
 
     def _labels_key(self, mission_id: str, ds: str) -> str:
