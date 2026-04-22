@@ -14,11 +14,13 @@ from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.config import (
     ApiSettings,
     AppSettings,
+    AutoStreamSettings,
     DatabaseSettings,
     DetectionSettings,
     RpiSettings,
     Settings,
     StorageSettings,
+    UploadSettings,
 )
 from rescue_ai.domain.entities import Detection
 from rescue_ai.domain.value_objects import AlertRuleConfig
@@ -136,6 +138,8 @@ def _settings() -> Settings:
             RPI_RTSP_PATH_PREFIX="live",
         ),
         detection=DetectionSettings(),
+        uploads=UploadSettings(),
+        auto_stream=AutoStreamSettings(),
     )
 
 
@@ -483,6 +487,7 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
         detector,
         artifact_storage,
         auto_mission_service,
+        auto_session_manager,
     ) = online_main.build_api_runtime()
 
     assert pilot_service is not None
@@ -492,6 +497,7 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
     assert artifact_storage is not None
     # auto_mission_service is None because _build_repositories returned no auto_repos.
     assert auto_mission_service is None
+    assert auto_session_manager is None
 
     calls: dict[str, object] = {}
     monkeypatch.setattr(
@@ -509,6 +515,7 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
             detector,
             artifact_storage,
             auto_mission_service,
+            auto_session_manager,
         ),
     )
     monkeypatch.setattr(

@@ -72,6 +72,24 @@ class DetectionSettings(BaseEnvSettings):
     http_timeout_sec: float = Field(default=1.0, alias="DETECTION_HTTP_TIMEOUT_SEC")
 
 
+class UploadSettings(BaseEnvSettings):
+    """Local storage for UI-uploaded video files (stand-mode auto sessions)."""
+
+    uploads_dir: str = Field(
+        default="/tmp/rescue-ai/uploads",
+        alias="UPLOAD_DIR",
+    )
+    max_upload_mb: int = Field(default=512, alias="UPLOAD_MAX_MB")
+
+
+class AutoStreamSettings(BaseEnvSettings):
+    """Auto-mode WebSocket stream encoding defaults."""
+
+    ws_jpeg_quality: int = Field(default=55, alias="AUTO_WS_JPEG_QUALITY")
+    ws_max_width: int = Field(default=640, alias="AUTO_WS_MAX_WIDTH")
+    ws_emit_max_fps: float = Field(default=8.0, alias="AUTO_WS_EMIT_MAX_FPS")
+
+
 class Settings(BaseSettings):
     """Aggregated application settings."""
 
@@ -81,6 +99,8 @@ class Settings(BaseSettings):
     storage: StorageSettings
     rpi: RpiSettings
     detection: DetectionSettings
+    uploads: UploadSettings
+    auto_stream: AutoStreamSettings
 
 
 @lru_cache(maxsize=1)
@@ -92,4 +112,6 @@ def get_settings() -> Settings:
         storage=StorageSettings(),
         rpi=RpiSettings(),
         detection=DetectionSettings(),
+        uploads=UploadSettings(),
+        auto_stream=AutoStreamSettings(),
     )

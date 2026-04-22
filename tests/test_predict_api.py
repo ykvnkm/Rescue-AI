@@ -119,11 +119,13 @@ def test_ready_not_ready_without_env(monkeypatch) -> None:
     from rescue_ai.config import (
         ApiSettings,
         AppSettings,
+        AutoStreamSettings,
         DatabaseSettings,
         DetectionSettings,
         RpiSettings,
         Settings,
         StorageSettings,
+        UploadSettings,
     )
     from rescue_ai.interfaces.api import routes
 
@@ -141,6 +143,8 @@ def test_ready_not_ready_without_env(monkeypatch) -> None:
             ),
             rpi=RpiSettings(RPI_BASE_URL=""),
             detection=DetectionSettings(),
+            uploads=UploadSettings(),
+            auto_stream=AutoStreamSettings(),
         ),
     )
     response = client.get("/ready")

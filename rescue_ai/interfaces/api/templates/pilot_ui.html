@@ -6,6 +6,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Sans:wght@400;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <style>
     :root {
       --bg: #070c17;
@@ -441,6 +442,125 @@
       .layout { grid-template-columns: 1fr; }
       .meta-row { grid-template-columns: 1fr 1fr; }
     }
+
+    /* ── Mode switcher (Operator / Auto) + Auto-mode UI ───────── */
+    .mode-tabs {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin: 0 0 16px;
+    }
+    .mode-tab {
+      flex: 0 0 auto;
+      padding: 10px 22px;
+      border: 1px solid rgba(251,146,60,0.28);
+      background: rgba(15,23,42,0.7);
+      color: var(--text);
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: 700;
+      font-family: 'Space Grotesk', sans-serif;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      transition: all 0.15s ease;
+    }
+    .mode-tab.active {
+      border-color: var(--accent);
+      box-shadow: 0 12px 30px rgba(249,115,22,0.25);
+      background: linear-gradient(120deg, rgba(249,115,22,0.22), rgba(12,18,34,0.7));
+    }
+    #autoMode { display: none; }
+    #autoMode.active { display: block; }
+    #operatorMode.hidden { display: none; }
+
+    .sub-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+    .sub-tab {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid rgba(148,163,184,0.2);
+      background: rgba(15,23,42,0.6);
+      color: var(--text);
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      font-family: 'Space Grotesk', sans-serif;
+      transition: all 0.15s ease;
+    }
+    .sub-tab.active {
+      border-color: var(--hud);
+      background: linear-gradient(120deg, rgba(34,211,238,0.18), rgba(12,18,34,0.7));
+    }
+    .auto-form .field { margin-bottom: 10px; }
+    .auto-form label { display:block; font-size:12px; color: var(--muted); margin-bottom:4px; }
+    .auto-form input[type="text"], .auto-form input[type="number"], .auto-form select {
+      width: 100%;
+      background: rgba(15,23,42,0.8);
+      border: 1px solid rgba(148,163,184,0.22);
+      border-radius: 10px;
+      color: var(--text);
+      padding: 8px 10px;
+      font-family: inherit;
+      font-size: 13px;
+    }
+    .auto-form input[type="file"] { color: var(--muted); font-size: 12px; }
+    .auto-chips {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .auto-chip {
+      padding: 8px 10px;
+      background: rgba(15,23,42,0.85);
+      border: 1px solid rgba(148,163,184,0.15);
+      border-radius: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .auto-chip strong { display: block; color: var(--text); font-size: 15px; font-family: 'JetBrains Mono', monospace; }
+    .auto-video-wrap {
+      position: relative;
+      background: rgba(4,8,16,0.8);
+      border: 1px solid rgba(148,163,184,0.18);
+      border-radius: var(--radius);
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .auto-video-wrap img { width: 100%; height: 100%; object-fit: contain; display: none; }
+    .auto-video-wrap img.active { display: block; }
+    .auto-video-placeholder { color: var(--muted); font-size: 13px; }
+    .auto-plots {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto auto;
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .auto-plot {
+      background: rgba(12,18,34,0.9);
+      border: 1px solid rgba(148,163,184,0.14);
+      border-radius: 14px;
+      padding: 10px;
+      min-height: 240px;
+    }
+    .auto-plot.wide { grid-column: 1 / span 2; min-height: 320px; }
+    .auto-plot h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .auto-alert-log {
+      margin-top: 12px;
+      max-height: 160px;
+      overflow: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      background: rgba(15,23,42,0.6);
+      border-radius: 10px;
+      padding: 8px;
+      color: var(--muted);
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
@@ -448,6 +568,12 @@
   <h1>Наземная станция мониторинга</h1>
 </header>
 
+<div class="mode-tabs">
+  <button type="button" class="mode-tab active" data-mode="operator" id="modeTabOperator">Операторский режим</button>
+  <button type="button" class="mode-tab" data-mode="auto" id="modeTabAuto">Автоматический режим</button>
+</div>
+
+<div id="operatorMode">
 <div class="layout">
   <aside>
     <!-- RPi connection status -->
@@ -474,22 +600,6 @@
       <button class="btn secondary" id="completeBtn">Закончить миссию</button>
       <button class="btn secondary" id="forceCompleteBtn">Экстренно завершить</button>
       <button class="btn secondary" id="reportBtn">Отчет по миссии</button>
-    </div>
-
-    <!-- Automatic-mode stub (ADR-0006, P1.6) -->
-    <div class="card" style="margin-bottom:14px;">
-      <h3>Автоматический режим</h3>
-      <span class="hud-label">Отчёты auto-миссий</span>
-      <div class="field">
-        <label class="form-label" for="autoMissionIdInput">ID auto-миссии</label>
-        <input id="autoMissionIdInput" class="select-strong" type="text"
-               placeholder="например 9b1c..." style="width:100%;padding:6px;" />
-      </div>
-      <button class="btn secondary" id="autoReportBtn">Получить отчёт</button>
-      <pre id="autoReportBox"
-           style="margin-top:8px;font-size:11px;max-height:220px;overflow:auto;
-                  background:rgba(15,23,42,0.6);padding:8px;border-radius:6px;
-                  white-space:pre-wrap;word-break:break-word;">Нет данных</pre>
     </div>
 
     <div class="card">
@@ -546,6 +656,102 @@
 
   </section>
 </div>
+</div><!-- /#operatorMode -->
+
+<div id="autoMode">
+  <div class="layout">
+    <aside>
+      <div class="card" style="margin-bottom:14px;">
+        <h3>Автоматический режим</h3>
+        <span class="hud-label">Источник данных</span>
+        <div class="sub-tabs" id="autoSourceTabs">
+          <button type="button" class="sub-tab active" data-src="video">Видео</button>
+          <button type="button" class="sub-tab" data-src="rtsp">RTSP</button>
+          <button type="button" class="sub-tab" data-src="frames">Кадры</button>
+        </div>
+
+        <form class="auto-form" id="autoStartForm" onsubmit="return false;">
+          <div class="field" data-src-field="video">
+            <label for="autoVideoFile">Видео файл</label>
+            <input type="file" id="autoVideoFile" accept="video/*" />
+          </div>
+          <div class="field" data-src-field="rtsp" style="display:none;">
+            <label for="autoRtspUrl">RTSP URL</label>
+            <input type="text" id="autoRtspUrl" placeholder="rtsp://host:8554/live/session" />
+          </div>
+          <div class="field" data-src-field="frames" style="display:none;">
+            <label for="autoFramesDir">Путь к директории с кадрами</label>
+            <input type="text" id="autoFramesDir" placeholder="/data/missions/forest-2026" />
+          </div>
+
+          <div class="field">
+            <label for="autoDetector">Детектор</label>
+            <select id="autoDetector">
+              <option value="yolo" selected>YOLOv8</option>
+              <option value="nanodet">NanoDet</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="autoNavMode">Режим навигации</label>
+            <select id="autoNavMode">
+              <option value="auto" selected>auto</option>
+              <option value="marker">marker</option>
+              <option value="no_marker">no_marker</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="autoFps">FPS</label>
+            <input type="number" id="autoFps" value="6" min="1" max="60" step="1" />
+          </div>
+
+          <button class="btn" id="autoStartBtn" type="submit">Запустить сессию</button>
+          <button class="btn secondary" id="autoStopBtn" type="button" disabled>Остановить</button>
+        </form>
+
+        <div class="auto-chips">
+          <div class="auto-chip">Люди<strong id="autoChipPeople">0</strong></div>
+          <div class="auto-chip">Сред. FPS<strong id="autoChipAvgFps">0.00</strong></div>
+          <div class="auto-chip">Отброшено<strong id="autoChipDropped">0</strong></div>
+          <div class="auto-chip">Кадр ID<strong id="autoChipFrameId">—</strong></div>
+          <div class="auto-chip">Алертов<strong id="autoChipAlerts">0</strong></div>
+          <div class="auto-chip">Высота Z<strong id="autoChipZ">—</strong></div>
+        </div>
+
+        <div style="margin-top:10px;font-size:12px;color:var(--muted);">
+          Статус: <strong id="autoSessionStatus" style="color:var(--text);">не запущено</strong>
+        </div>
+      </div>
+
+      <div class="card">
+        <span class="hud-label" style="margin-bottom:8px;">Лог событий</span>
+        <div class="auto-alert-log" id="autoEventLog">Ожидание запуска сессии...</div>
+      </div>
+    </aside>
+
+    <section class="card console" style="padding:16px;">
+      <span class="hud-label">Живой поток</span>
+      <div class="auto-video-wrap">
+        <div class="auto-video-placeholder" id="autoVideoEmpty">Поток не запущен</div>
+        <img id="autoVideoImg" alt="живой кадр авто-сессии" />
+      </div>
+
+      <div class="auto-plots">
+        <div class="auto-plot wide">
+          <h4>Траектория 3D</h4>
+          <div id="autoPlot3d" style="width:100%;height:290px;"></div>
+        </div>
+        <div class="auto-plot">
+          <h4>Плоскость XY</h4>
+          <div id="autoPlotXY" style="width:100%;height:230px;"></div>
+        </div>
+        <div class="auto-plot">
+          <h4>Высота Z(t)</h4>
+          <div id="autoPlotZ" style="width:100%;height:230px;"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div><!-- /#autoMode -->
 
 <script>
 const alertSeenAt = new Map();
@@ -1061,29 +1267,6 @@ async function loadReport() {
   setMissionStatus('Отчет успешно загружен и сохранен.');
 }
 
-/* ---- Automatic-mode stub (ADR-0006, P1.6) ---- */
-async function loadAutoReport() {
-  const input = document.getElementById('autoMissionIdInput');
-  const box = document.getElementById('autoReportBox');
-  const missionId = (input.value || '').trim();
-  if (!missionId) {
-    box.textContent = 'Укажите ID auto-миссии.';
-    return;
-  }
-  box.textContent = 'Загрузка...';
-  try {
-    const resp = await fetch(`/auto-missions/${encodeURIComponent(missionId)}/report`);
-    if (!resp.ok) {
-      box.textContent = `Ошибка ${resp.status}: ${await resp.text()}`;
-      return;
-    }
-    const payload = await resp.json();
-    box.textContent = JSON.stringify(payload, null, 2);
-  } catch (err) {
-    box.textContent = `Ошибка: ${err}`;
-  }
-}
-
 /* ---- Wire up buttons ---- */
 document.getElementById('startBtn').addEventListener('click', startMission);
 document.getElementById('stopStreamBtn').addEventListener('click', stopStream);
@@ -1091,11 +1274,332 @@ document.getElementById('completeBtn').addEventListener('click', completeMission
 document.getElementById('forceCompleteBtn').addEventListener('click', forceCompleteMission);
 document.getElementById('reportBtn').addEventListener('click', loadReport);
 document.getElementById('checkRpiBtn').addEventListener('click', () => loadMissionCatalog(true));
-document.getElementById('autoReportBtn').addEventListener('click', loadAutoReport);
 
 /* ---- Boot ---- */
 setupMouseZoomAndPan();
 loadMissionCatalog(false);
+
+/* ================================================================
+ * Automatic-mode UI (ADR-0006)
+ *   - mode switcher (operator ↔ auto)
+ *   - video/rtsp/frames sub-tabs
+ *   - Start/Stop session, WebSocket live stream, Plotly plots
+ * ================================================================ */
+
+const AUTO = {
+  sourceKind: 'video',
+  session: null,
+  ws: null,
+  plots: { initialized: false },
+  traj: { x: [], y: [], z: [], ts: [] },
+  persons: 0,
+  alerts: 0,
+  dropped: 0,
+};
+
+function setActiveMode(mode) {
+  const isAuto = mode === 'auto';
+  document.getElementById('modeTabOperator').classList.toggle('active', !isAuto);
+  document.getElementById('modeTabAuto').classList.toggle('active', isAuto);
+  document.getElementById('operatorMode').classList.toggle('hidden', isAuto);
+  document.getElementById('autoMode').classList.toggle('active', isAuto);
+  if (isAuto && !AUTO.plots.initialized) {
+    initAutoPlots();
+  }
+  if (isAuto) {
+    refreshActiveAutoSession();
+  }
+}
+
+document.getElementById('modeTabOperator').addEventListener('click', () => setActiveMode('operator'));
+document.getElementById('modeTabAuto').addEventListener('click', () => setActiveMode('auto'));
+
+/* ---- Source sub-tabs ---- */
+document.querySelectorAll('#autoSourceTabs .sub-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const kind = btn.getAttribute('data-src');
+    AUTO.sourceKind = kind;
+    document.querySelectorAll('#autoSourceTabs .sub-tab').forEach(b => {
+      b.classList.toggle('active', b === btn);
+    });
+    document.querySelectorAll('[data-src-field]').forEach(field => {
+      field.style.display = field.getAttribute('data-src-field') === kind ? '' : 'none';
+    });
+  });
+});
+
+/* ---- Plotly initialization ---- */
+function initAutoPlots() {
+  const layout3d = {
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    margin: { l: 0, r: 0, t: 0, b: 0 },
+    scene: {
+      xaxis: { title: 'X', color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.15)' },
+      yaxis: { title: 'Y', color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.15)' },
+      zaxis: { title: 'Z', color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.15)' },
+      bgcolor: 'rgba(12,18,34,0.6)',
+    },
+    showlegend: false,
+  };
+  Plotly.newPlot('autoPlot3d', [{
+    x: [], y: [], z: [],
+    type: 'scatter3d', mode: 'lines+markers',
+    line: { color: '#f97316', width: 4 },
+    marker: { size: 3, color: '#fb923c' },
+  }], layout3d, { displayModeBar: false, responsive: true });
+
+  const flatLayout = (xTitle, yTitle) => ({
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(12,18,34,0.6)',
+    margin: { l: 40, r: 10, t: 8, b: 32 },
+    xaxis: { title: xTitle, color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.12)' },
+    yaxis: { title: yTitle, color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.12)' },
+    showlegend: false,
+  });
+  Plotly.newPlot('autoPlotXY', [{
+    x: [], y: [], mode: 'lines+markers',
+    line: { color: '#22d3ee', width: 2 },
+    marker: { size: 4, color: '#38bdf8' },
+  }], flatLayout('X', 'Y'), { displayModeBar: false, responsive: true });
+  Plotly.newPlot('autoPlotZ', [{
+    x: [], y: [], mode: 'lines',
+    line: { color: '#f97316', width: 2 },
+  }], flatLayout('t, сек', 'Z'), { displayModeBar: false, responsive: true });
+  AUTO.plots.initialized = true;
+}
+
+function resetAutoPlots() {
+  AUTO.traj = { x: [], y: [], z: [], ts: [] };
+  if (!AUTO.plots.initialized) return;
+  Plotly.restyle('autoPlot3d', { x: [[]], y: [[]], z: [[]] });
+  Plotly.restyle('autoPlotXY', { x: [[]], y: [[]] });
+  Plotly.restyle('autoPlotZ', { x: [[]], y: [[]] });
+}
+
+function pushTrajectoryPoint(point) {
+  if (!point) return;
+  AUTO.traj.x.push(point.x);
+  AUTO.traj.y.push(point.y);
+  AUTO.traj.z.push(point.z);
+  AUTO.traj.ts.push(point.ts_sec);
+  if (!AUTO.plots.initialized) return;
+  Plotly.restyle('autoPlot3d', { x: [AUTO.traj.x], y: [AUTO.traj.y], z: [AUTO.traj.z] });
+  Plotly.restyle('autoPlotXY', { x: [AUTO.traj.x], y: [AUTO.traj.y] });
+  Plotly.restyle('autoPlotZ', { x: [AUTO.traj.ts], y: [AUTO.traj.z] });
+}
+
+/* ---- Event log ---- */
+function autoLog(message) {
+  const box = document.getElementById('autoEventLog');
+  const ts = new Date().toLocaleTimeString('ru-RU');
+  const line = `[${ts}] ${message}`;
+  if (box.textContent === 'Ожидание запуска сессии...' || !box.textContent) {
+    box.textContent = line;
+  } else {
+    box.textContent = `${line}\n${box.textContent}`;
+  }
+}
+
+function setAutoSessionStatus(text) {
+  document.getElementById('autoSessionStatus').textContent = text;
+}
+
+/* ---- Start / stop ---- */
+async function startAutoSession() {
+  if (AUTO.session) {
+    autoLog('Сессия уже активна.');
+    return;
+  }
+  const detector = document.getElementById('autoDetector').value;
+  const navMode = document.getElementById('autoNavMode').value;
+  const fps = parseFloat(document.getElementById('autoFps').value) || 6;
+
+  const formData = new FormData();
+  formData.append('source_kind', AUTO.sourceKind);
+  formData.append('detector_name', detector);
+  formData.append('nav_mode', navMode);
+  formData.append('fps', String(fps));
+
+  if (AUTO.sourceKind === 'video') {
+    const fileInput = document.getElementById('autoVideoFile');
+    if (!fileInput.files || !fileInput.files[0]) {
+      autoLog('Выберите видео файл.');
+      return;
+    }
+    formData.append('file', fileInput.files[0]);
+  } else if (AUTO.sourceKind === 'rtsp') {
+    const url = document.getElementById('autoRtspUrl').value.trim();
+    if (!url) { autoLog('Укажите RTSP URL.'); return; }
+    formData.append('source_value', url);
+  } else if (AUTO.sourceKind === 'frames') {
+    const dir = document.getElementById('autoFramesDir').value.trim();
+    if (!dir) { autoLog('Укажите путь к директории.'); return; }
+    formData.append('source_value', dir);
+  }
+
+  autoLog('Запуск сессии...');
+  setAutoSessionStatus('запуск...');
+  resetAutoPlots();
+  AUTO.persons = 0;
+  AUTO.alerts = 0;
+  AUTO.dropped = 0;
+  updateAutoChips({});
+
+  try {
+    const resp = await fetch('/auto-sessions/start', { method: 'POST', body: formData });
+    if (!resp.ok) {
+      const text = await resp.text();
+      autoLog(`Ошибка ${resp.status}: ${text}`);
+      setAutoSessionStatus('ошибка запуска');
+      return;
+    }
+    const info = await resp.json();
+    AUTO.session = info;
+    autoLog(`Сессия ${info.session_id} запущена (mission=${info.mission_id}).`);
+    setAutoSessionStatus('запущена');
+    document.getElementById('autoStartBtn').disabled = true;
+    document.getElementById('autoStopBtn').disabled = false;
+    connectAutoStream(info.session_id);
+  } catch (err) {
+    autoLog(`Сетевая ошибка: ${err}`);
+    setAutoSessionStatus('ошибка сети');
+  }
+}
+
+async function stopAutoSession() {
+  if (!AUTO.session) { autoLog('Нет активной сессии.'); return; }
+  const sessionId = AUTO.session.session_id;
+  autoLog(`Остановка сессии ${sessionId}...`);
+  try {
+    const resp = await fetch(`/auto-sessions/${encodeURIComponent(sessionId)}/stop`, { method: 'POST' });
+    if (!resp.ok) {
+      autoLog(`Ошибка остановки: ${resp.status}`);
+      return;
+    }
+    const data = await resp.json();
+    autoLog(`Сессия остановлена. Кадров: ${data.frames_consumed}, алертов: ${data.alerts_total}.`);
+  } catch (err) {
+    autoLog(`Ошибка остановки: ${err}`);
+  }
+}
+
+function connectAutoStream(sessionId) {
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = `${protocol}://${window.location.host}/auto-sessions/${encodeURIComponent(sessionId)}/stream`;
+  try {
+    AUTO.ws = new WebSocket(wsUrl);
+  } catch (err) {
+    autoLog(`Не удалось открыть WebSocket: ${err}`);
+    return;
+  }
+  AUTO.ws.onopen = () => autoLog('WebSocket подключён.');
+  AUTO.ws.onmessage = (event) => {
+    let msg;
+    try { msg = JSON.parse(event.data); } catch { return; }
+    handleAutoEvent(msg);
+  };
+  AUTO.ws.onclose = () => {
+    autoLog('WebSocket закрыт.');
+    finalizeAutoSession();
+  };
+  AUTO.ws.onerror = () => autoLog('Ошибка WebSocket.');
+}
+
+function handleAutoEvent(msg) {
+  if (!msg || !msg.type) return;
+  if (msg.type === 'ready') {
+    autoLog('Готов к приёму кадров.');
+    return;
+  }
+  if (msg.type === 'frame') {
+    if (msg.frame_jpeg_b64) {
+      const img = document.getElementById('autoVideoImg');
+      img.src = `data:image/jpeg;base64,${msg.frame_jpeg_b64}`;
+      img.classList.add('active');
+      document.getElementById('autoVideoEmpty').style.display = 'none';
+    }
+    AUTO.persons = msg.person_count || 0;
+    AUTO.alerts += (msg.alerts || []).length;
+    if (msg.stats) AUTO.dropped = msg.stats.frames_dropped || AUTO.dropped;
+    pushTrajectoryPoint(msg.trajectory_point);
+    updateAutoChips({
+      frame_id: msg.frame_id,
+      avg_fps: msg.stats ? msg.stats.avg_stream_fps : null,
+      z: msg.trajectory_point ? msg.trajectory_point.z : null,
+    });
+    if (msg.alerts && msg.alerts.length) {
+      msg.alerts.forEach(a =>
+        autoLog(`АЛЕРТ frame=${a.frame_id} score=${(a.score || 0).toFixed(2)}`));
+    }
+    return;
+  }
+  if (msg.type === 'done') {
+    autoLog(`Сессия завершена. Всего кадров: ${msg.frames_consumed}, алертов: ${msg.alerts_total}.`);
+    setAutoSessionStatus('завершена');
+    if (msg.report) {
+      autoLog(`Отчёт: ${JSON.stringify(msg.report).slice(0, 180)}...`);
+    }
+    finalizeAutoSession();
+    return;
+  }
+  if (msg.type === 'error') {
+    autoLog(`Ошибка: ${msg.message || '—'}`);
+    setAutoSessionStatus('ошибка');
+    return;
+  }
+}
+
+function updateAutoChips(partial) {
+  document.getElementById('autoChipPeople').textContent = String(AUTO.persons);
+  document.getElementById('autoChipAlerts').textContent = String(AUTO.alerts);
+  document.getElementById('autoChipDropped').textContent = String(AUTO.dropped);
+  if (partial.frame_id !== undefined && partial.frame_id !== null) {
+    document.getElementById('autoChipFrameId').textContent = String(partial.frame_id);
+  }
+  if (partial.avg_fps !== undefined && partial.avg_fps !== null) {
+    document.getElementById('autoChipAvgFps').textContent = Number(partial.avg_fps).toFixed(2);
+  }
+  if (partial.z !== undefined && partial.z !== null) {
+    document.getElementById('autoChipZ').textContent = Number(partial.z).toFixed(2);
+  }
+}
+
+function finalizeAutoSession() {
+  AUTO.session = null;
+  if (AUTO.ws) {
+    try { AUTO.ws.close(); } catch {}
+    AUTO.ws = null;
+  }
+  document.getElementById('autoStartBtn').disabled = false;
+  document.getElementById('autoStopBtn').disabled = true;
+}
+
+async function refreshActiveAutoSession() {
+  try {
+    const resp = await fetch('/auto-sessions/active');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data.running && data.session_id) {
+      AUTO.session = {
+        session_id: data.session_id,
+        mission_id: data.mission_id,
+      };
+      setAutoSessionStatus('активна (переподключение)');
+      autoLog(`Обнаружена активная сессия ${data.session_id}. Подключаемся...`);
+      document.getElementById('autoStartBtn').disabled = true;
+      document.getElementById('autoStopBtn').disabled = false;
+      if (!AUTO.ws) connectAutoStream(data.session_id);
+    } else {
+      setAutoSessionStatus('не запущено');
+    }
+  } catch (err) {
+    // Auto mode may not be configured — that's fine.
+  }
+}
+
+document.getElementById('autoStartBtn').addEventListener('click', startAutoSession);
+document.getElementById('autoStopBtn').addEventListener('click', stopAutoSession);
 </script>
 </body>
 </html>

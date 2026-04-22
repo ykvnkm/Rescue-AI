@@ -45,10 +45,12 @@ def _settings() -> Settings:
     from rescue_ai.config import (
         ApiSettings,
         AppSettings,
+        AutoStreamSettings,
         DatabaseSettings,
         DetectionSettings,
         RpiSettings,
         StorageSettings,
+        UploadSettings,
     )
 
     return Settings(
@@ -63,6 +65,8 @@ def _settings() -> Settings:
             RPI_TIMEOUT_SEC=1.0,
         ),
         detection=DetectionSettings(),
+        uploads=UploadSettings(),
+        auto_stream=AutoStreamSettings(),
     )
 
 

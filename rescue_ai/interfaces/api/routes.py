@@ -25,6 +25,7 @@ from rescue_ai.interfaces.api.logging_utils import (
     sanitize_log_text,
 )
 from rescue_ai.interfaces.api.routes_auto import router as auto_router
+from rescue_ai.interfaces.api.routes_auto_sessions import router as auto_sessions_router
 from rescue_ai.interfaces.api.ui_page import build_ui_html
 
 logger = logging.getLogger(__name__)
@@ -1101,3 +1102,4 @@ def _build_alert_wall_time(created_at: str | None, offset_sec: float) -> str | N
 
 
 router.include_router(auto_router)
+router.include_router(auto_sessions_router)

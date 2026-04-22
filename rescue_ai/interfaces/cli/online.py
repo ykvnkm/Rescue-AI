@@ -14,13 +14,17 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import uvicorn
 from uvicorn.config import LOGGING_CONFIG as UVICORN_LOGGING_CONFIG
 
 from rescue_ai.application.auto_mission_service import AutoMissionService
+from rescue_ai.application.auto_session_manager import (
+    AutoSessionManager,
+    VideoSourceFactory,
+)
 from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.config import Settings, get_settings
 from rescue_ai.domain.entities import Detection, FrameEvent
@@ -994,6 +998,7 @@ def build_api_runtime() -> tuple[
     DomainDetectorPort | None,
     ArtifactStorage,
     AutoMissionService | None,
+    AutoSessionManager | None,
 ]:
     """Assemble API runtime dependencies (composition root)."""
     settings = get_settings()
@@ -1052,6 +1057,16 @@ def build_api_runtime() -> tuple[
         detector=detector,
     )
 
+    auto_session_manager: AutoSessionManager | None = None
+    if auto_mission_service is not None:
+        auto_session_manager = AutoSessionManager(
+            service=auto_mission_service,
+            source_factory=cast(VideoSourceFactory, _auto_video_source_factory),
+            ws_jpeg_quality=settings.auto_stream.ws_jpeg_quality,
+            ws_max_width=settings.auto_stream.ws_max_width,
+            ws_emit_max_fps=settings.auto_stream.ws_emit_max_fps,
+        )
+
     return (
         pilot_service,
         stream_controller,
@@ -1059,7 +1074,41 @@ def build_api_runtime() -> tuple[
         detector,
         artifact_storage,
         auto_mission_service,
+        auto_session_manager,
     )
+
+
+def _auto_video_source_factory(
+    source_kind: str,
+    source_value: str,
+    fps: float,
+) -> tuple[object, str]:
+    """Composition-root factory that maps (kind, value) to a video port.
+
+    Used by :class:`AutoSessionManager` to resolve ``/auto-sessions/start``
+    payloads without forcing the API layer to import infrastructure.
+    """
+    from rescue_ai.infrastructure.video import (
+        FileVideoSource,
+        FolderFramesSource,
+        RTSPVideoSource,
+    )
+
+    if source_kind == "video":
+        path = Path(source_value)
+        if not path.is_file():
+            raise FileNotFoundError(f"video file not found: {source_value}")
+        return FileVideoSource(str(path), fps_override=fps), str(path)
+    if source_kind == "frames":
+        path = Path(source_value)
+        if not path.is_dir():
+            raise FileNotFoundError(f"frames directory not found: {source_value}")
+        return FolderFramesSource(str(path), fps=fps), str(path)
+    if source_kind == "rtsp":
+        if not source_value:
+            raise ValueError("rtsp url must be non-empty")
+        return RTSPVideoSource(source_value), source_value
+    raise ValueError(f"unknown source_kind: {source_kind}")
 
 
 def _build_auto_mission_service(
@@ -1142,6 +1191,7 @@ def main() -> None:
     detector = runtime_parts[3]
     artifact_storage = runtime_parts[4]
     auto_mission_service = runtime_parts[5] if len(runtime_parts) > 5 else None
+    auto_session_manager = runtime_parts[6] if len(runtime_parts) > 6 else None
     set_runtime(
         ApiRuntime(
             pilot_service=pilot_service,
@@ -1150,6 +1200,7 @@ def main() -> None:
             detector=detector,
             artifact_storage=artifact_storage,
             auto_mission_service=auto_mission_service,
+            auto_session_manager=auto_session_manager,
         )
     )
     uvicorn.run(
