@@ -20,11 +20,14 @@ Mirrors :class:`PilotService` but runs without a human reviewer:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Protocol
 from uuid import NAMESPACE_URL, uuid5
+
+logger = logging.getLogger(__name__)
 
 from rescue_ai.domain.alert_policy import MissionAlertState, evaluate_alert
 from rescue_ai.domain.entities import (
@@ -166,7 +169,20 @@ class AutoMissionService:
             detector=detector_name,
             config_json=dict(config_json or {}),
         )
-        self._deps.navigation_engine.reset()
+        # ADR-0006 + diplom-prod parity: pin the engine to the
+        # caller-chosen nav_mode and feed the real source FPS so the
+        # marker-side ``dt`` fallback uses correct timing. NavMode.AUTO
+        # keeps the legacy auto-probe behaviour.
+        self._deps.navigation_engine.reset(nav_mode=nav_mode, fps=fps)
+        logger.info(
+            "Auto mission started: mission_id=%s source=%s fps=%.3f "
+            "nav_mode=%s detector=%s",
+            mission.mission_id,
+            source_name,
+            fps,
+            nav_mode,
+            detector_name,
+        )
         self._runtimes[mission.mission_id] = AutoMissionService._Runtime()
         return mission
 
@@ -263,8 +279,15 @@ class AutoMissionService:
 
         runtime = self._runtimes.setdefault(mission_id, AutoMissionService._Runtime())
 
-        detections = list(self._deps.detector.detect(frame_bgr))
-
+        # Navigation first, detection second.
+        #
+        # diplom-prod runs them on independent stride paths so detector
+        # transforms (resize / JPEG / imgsz) never reach the navigation
+        # branch. Here both consume the same in-memory frame, so the
+        # safe order is nav → det: even if a downstream detector ends up
+        # mutating the input array (it shouldn't, but ultralytics history
+        # is mixed), the navigation engine has already snapshotted what
+        # it needs.
         traj_point = self._run_navigation(
             mission_id=mission_id,
             runtime=runtime,
@@ -272,6 +295,8 @@ class AutoMissionService:
             ts_sec=ts_sec,
             frame_id=frame_id,
         )
+
+        detections = list(self._deps.detector.detect(frame_bgr))
 
         frame_event = FrameEvent(
             mission_id=mission_id,
@@ -292,6 +317,7 @@ class AutoMissionService:
         stored_image_uri = image_uri
         alerts: list[Alert] = []
         decisions: list[AutoDecision] = []
+        frame_event_persisted = False
 
         if evaluation.should_create_alert and evaluation.best_detection is not None:
             stored_image_uri = self._deps.artifact_storage.store_frame(
@@ -311,6 +337,8 @@ class AutoMissionService:
                 primary_detection=evaluation.best_detection,
                 detections=list(evaluation.positives),
             )
+            self._deps.frame_event_repository.add(frame_event)
+            frame_event_persisted = True
             self._deps.alert_repository.add(alert)
             alerts.append(alert)
             decisions.append(
@@ -339,7 +367,8 @@ class AutoMissionService:
                 )
             )
 
-        self._deps.frame_event_repository.add(frame_event)
+        if not frame_event_persisted:
+            self._deps.frame_event_repository.add(frame_event)
         return AutoFrameOutcome(
             detections=detections,
             trajectory_point=traj_point,

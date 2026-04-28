@@ -11,7 +11,7 @@ from rescue_ai.application.auto_mission_service import (
     AutoFrameOutcome,
     AutoMissionService,
 )
-from rescue_ai.domain.entities import Detection, TrajectoryPoint
+from rescue_ai.domain.entities import Alert, Detection, FrameEvent, TrajectoryPoint
 from rescue_ai.domain.value_objects import (
     AlertRuleConfig,
     AutoDecisionKind,
@@ -57,9 +57,18 @@ class FakeNavigationEngine:
 
     queue: list[TrajectoryPoint | None] = field(default_factory=list)
     reset_calls: int = 0
+    last_nav_mode: NavMode | None = None
+    last_fps: float | None = None
 
-    def reset(self) -> None:
+    def reset(
+        self,
+        *,
+        nav_mode: NavMode | None = None,
+        fps: float | None = None,
+    ) -> None:
         self.reset_calls += 1
+        self.last_nav_mode = nav_mode
+        self.last_fps = fps
 
     def step(
         self,
@@ -83,6 +92,33 @@ class FakeNavigationEngine:
             z=point.z,
             source=point.source,
         )
+
+
+class RecordingFrameEventRepository(InMemoryFrameEventRepository):
+    def __init__(self, db: InMemoryDatabase, calls: list[str]) -> None:
+        super().__init__(db)
+        self._calls = calls
+
+    def add(self, frame_event: FrameEvent) -> None:
+        self._calls.append(f"frame:{frame_event.frame_id}")
+        super().add(frame_event)
+
+
+class ForeignKeyCheckingAlertRepository(InMemoryAlertRepository):
+    def __init__(self, db: InMemoryDatabase, calls: list[str]) -> None:
+        super().__init__(db)
+        self._db = db
+        self._calls = calls
+
+    def add(self, alert: Alert) -> None:
+        exists = any(
+            frame.frame_id == alert.frame_id
+            for frame in self._db.mission_frames.get(alert.mission_id, [])
+        )
+        if not exists:
+            raise AssertionError("alert inserted before frame event")
+        self._calls.append(f"alert:{alert.frame_id}")
+        super().add(alert)
 
 
 def _alert_rules(**overrides: float) -> AlertRuleConfig:
@@ -278,6 +314,48 @@ def test_ingest_frame_with_alert_persists_alert_and_decision() -> None:
     assert harness.artifacts.stored_frames[(mission.mission_id, 7)] == alert.image_uri
     stored_event = harness.db.mission_frames[mission.mission_id][0]
     assert stored_event.image_uri == alert.image_uri
+
+
+def test_ingest_frame_persists_frame_before_alert() -> None:
+    detection = Detection(
+        bbox=(1.0, 2.0, 3.0, 4.0),
+        score=0.9,
+        label="person",
+        model_name="fake",
+    )
+    db = InMemoryDatabase()
+    calls: list[str] = []
+    service = AutoMissionService(
+        dependencies=AutoMissionService.Dependencies(
+            mission_repository=InMemoryMissionRepository(db),
+            alert_repository=ForeignKeyCheckingAlertRepository(db, calls),
+            frame_event_repository=RecordingFrameEventRepository(db, calls),
+            trajectory_repository=InMemoryTrajectoryRepository(),
+            auto_decision_repository=InMemoryAutoDecisionRepository(),
+            auto_mission_config_repository=InMemoryAutoMissionConfigRepository(),
+            artifact_storage=InMemoryArtifactStorage(),
+            detector=FakeDetector(queue=[[detection]]),
+            navigation_engine=FakeNavigationEngine(),
+        ),
+        alert_rules=_alert_rules(),
+    )
+    mission = service.start_auto_mission(
+        source_name="fk-order",
+        total_frames=1,
+        fps=1.0,
+        nav_mode=NavMode.NO_MARKER,
+        detector_name="yolo",
+    )
+
+    service.ingest_frame(
+        mission_id=mission.mission_id,
+        frame_bgr=object(),
+        ts_sec=0.0,
+        frame_id=7,
+        image_uri="file:///tmp/frame.jpg",
+    )
+
+    assert calls == ["frame:7", "alert:7"]
 
 
 def test_ingest_frame_records_suppressed_decision_when_cooldown_blocks() -> None:

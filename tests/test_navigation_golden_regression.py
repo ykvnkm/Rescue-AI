@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from rescue_ai.domain.value_objects import NavMode
 from rescue_ai.navigation.engine import NavigationEngine
 from rescue_ai.navigation.tuning import NavigationTuning
 
@@ -78,7 +79,9 @@ def test_marker_engine_matches_golden_trajectory() -> None:
         mission_id="golden-regression",
         config=NavigationTuning(fps=fps),
     )
-    engine.reset()
+    # Pin the engine to MARKER and feed the real source FPS — that's
+    # the contract diplom-prod runs against.
+    engine.reset(nav_mode=NavMode.MARKER, fps=fps)
 
     points: list[tuple[float, float, float, float]] = []
     frame_idx = 0

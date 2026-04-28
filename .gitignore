@@ -3,6 +3,7 @@
 .env.*.local
 infra/platform.env
 infra/platform.env.local
+infra/offline.env.offline
 
 # python
 __pycache__/

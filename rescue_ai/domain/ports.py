@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Protocol, TypedDict
 
 from rescue_ai.domain.entities import (
@@ -14,6 +15,75 @@ from rescue_ai.domain.entities import (
     TrajectoryPoint,
 )
 from rescue_ai.domain.value_objects import AlertStatus, ArtifactBlob, NavMode
+
+
+@dataclass(frozen=True)
+class OutboxRecord:
+    """One pending replication entry, ADR-0007 §3.
+
+    Carries either a JSON payload (DB UPSERT) or an S3 artifact pointer
+    (``local_path`` → ``s3_bucket/s3_key``) — never both. The local
+    transaction that writes to the domain table also writes one of these
+    rows; the sync-worker drains them at-least-once with idempotency
+    enforced via ``idempotency_key``.
+    """
+
+    entity_type: str
+    entity_id: str
+    operation: str
+    payload_json: Mapping[str, object]
+    idempotency_key: str
+    local_path: str | None = None
+    s3_bucket: str | None = None
+    s3_key: str | None = None
+
+
+class SyncOutbox(Protocol):
+    """Persistence + scheduling contract for the replication outbox."""
+
+    def enqueue(self, record: OutboxRecord, *, conn: object | None = None) -> None:
+        """Append a pending row.
+
+        ``conn`` is an optional caller-owned database connection. When
+        supplied, the implementation MUST insert in that connection and
+        not commit — it lets the caller put the outbox write in the
+        same transaction as the domain write.
+        """
+
+    def claim_pending(self, batch_size: int) -> list["OutboxRow"]: ...
+
+    def mark_synced(self, outbox_id: int) -> None: ...
+
+    def mark_failed(self, outbox_id: int, error: str) -> None: ...
+
+    def reset_stuck(self, processing_timeout_sec: float) -> int: ...
+
+
+@dataclass(frozen=True)
+class OutboxRow:
+    """Outbox row as seen by the sync-worker."""
+
+    id: int
+    entity_type: str
+    entity_id: str
+    operation: str
+    payload_json: Mapping[str, object]
+    local_path: str | None
+    s3_bucket: str | None
+    s3_key: str | None
+    idempotency_key: str
+    attempts: int
+
+
+class RemoteSyncTarget(Protocol):
+    """Where the sync-worker delivers outbox rows.
+
+    A single Protocol covers both DB-UPSERTs and S3 uploads — keeping
+    the worker free of branching on entity type.
+    """
+
+    def deliver(self, row: OutboxRow) -> None:
+        """Deliver one row idempotently. Raises on transport failure."""
 
 
 class AlertReviewPayload(TypedDict):
@@ -251,8 +321,24 @@ class NavigationEnginePort(Protocol):
     are supplied by the caller and poses are returned synchronously.
     """
 
-    def reset(self) -> None:
-        """Clear internal state and start a new trajectory."""
+    def reset(
+        self,
+        *,
+        nav_mode: NavMode | None = None,
+        fps: float | None = None,
+    ) -> None:
+        """Clear internal state and start a new trajectory.
+
+        ``nav_mode`` mirrors diplom-prod's ``force_marker_mode`` — it
+        lets the caller (which knows whether detection is enabled) pin
+        the engine to ``MARKER`` / ``NO_MARKER`` instead of letting the
+        engine auto-probe. ``None`` and :class:`NavMode.AUTO` keep the
+        legacy auto-probe behaviour.
+
+        ``fps`` is the real frame-rate of the source bound to the new
+        mission; tuning is rebuilt with it so the ``dt`` fallback used by
+        speed gates matches reality.
+        """
 
     def step(
         self,

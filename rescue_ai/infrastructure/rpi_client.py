@@ -8,7 +8,7 @@ from pathlib import PurePosixPath
 
 import httpx
 
-from rescue_ai.config import RpiSettings
+from rescue_ai.config import RpiSettings, SecuritySettings
 
 
 @dataclass(frozen=True)
@@ -40,17 +40,36 @@ class RpiStreamSession:
 class RpiClient:
     """Communicates with the RPi source service over HTTP."""
 
-    def __init__(self, settings: RpiSettings) -> None:
+    def __init__(
+        self,
+        settings: RpiSettings,
+        security: SecuritySettings | None = None,
+    ) -> None:
         self._base_url = settings.base_url.rstrip("/")
         self._missions_dir = settings.missions_dir.strip()
         self._rtsp_port = settings.rtsp_port
         self._rtsp_path_prefix = settings.rtsp_path_prefix
+        # mTLS material is forwarded to httpx as ``verify=ca_path`` and
+        # ``cert=(crt, key)``. ``None``/empty disables both — preserving
+        # cloud-mode HTTP behaviour.
+        self._verify: str | bool = True
+        self._cert: tuple[str, str] | None = None
+        if security is not None and security.tls_mode == "mtls":
+            self._verify = security.ca_cert_path
+            self._cert = (security.client_cert_path, security.client_key_path)
+
+    def _request_kwargs(self, timeout_sec: float) -> dict[str, object]:
+        kwargs: dict[str, object] = {"timeout": timeout_sec}
+        if self._cert is not None:
+            kwargs["verify"] = self._verify
+            kwargs["cert"] = self._cert
+        return kwargs
 
     def health(self, timeout_sec: float = 5.0) -> dict[str, object]:
         """Check RPi service health. Raises on connection failure."""
         response = httpx.get(
             f"{self._base_url}/health",
-            timeout=timeout_sec,
+            **self._request_kwargs(timeout_sec),
         )
         response.raise_for_status()
         return response.json()
@@ -59,7 +78,7 @@ class RpiClient:
         """Fetch the mission catalog from RPi."""
         response = httpx.get(
             f"{self._base_url}/mission/catalog",
-            timeout=timeout_sec,
+            **self._request_kwargs(timeout_sec),
         )
         response.raise_for_status()
         data = response.json()
@@ -93,7 +112,7 @@ class RpiClient:
                 "loop": False,
                 "target_fps": target_fps,
             },
-            timeout=timeout_sec,
+            **self._request_kwargs(timeout_sec),
         )
         if response.status_code == 404:
             raise ValueError(f"RPi mission not found: {mission_id}")
@@ -136,7 +155,7 @@ class RpiClient:
         """Stop an active streaming session."""
         response = httpx.post(
             f"{self._base_url}/source/stop/{session_id}",
-            timeout=timeout_sec,
+            **self._request_kwargs(timeout_sec),
         )
         response.raise_for_status()
         return response.json()
@@ -147,7 +166,7 @@ class RpiClient:
         """Get statistics for an active session."""
         response = httpx.get(
             f"{self._base_url}/source/session/{session_id}",
-            timeout=timeout_sec,
+            **self._request_kwargs(timeout_sec),
         )
         response.raise_for_status()
         return response.json()
@@ -183,7 +202,7 @@ class RpiClient:
         response = httpx.get(
             f"{self._base_url}/source/raw_file",
             params={"path": mission.annotations_json},
-            timeout=timeout_sec,
+            **self._request_kwargs(timeout_sec),
         )
         response.raise_for_status()
         payload = response.json()

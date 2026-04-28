@@ -23,14 +23,17 @@ Design constraints:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass, field, replace
 from uuid import uuid4
 
 import cv2
 import numpy as np
 
 from rescue_ai.domain.entities import TrajectoryPoint
-from rescue_ai.domain.value_objects import TrajectorySource
+from rescue_ai.domain.value_objects import NavMode, TrajectorySource
+
+logger = logging.getLogger(__name__)
 from rescue_ai.navigation.altitude import (
     AltitudeUpdate,
     compute_scale_from_samples,
@@ -572,15 +575,40 @@ class NavigationEngine:
         self._no_marker: NoMarkerEngine | None = None
         self._initialised = False
         self._seq = 0
+        # ``nav_mode`` mirrors diplom-prod's force_marker_mode. When set
+        # to NO_MARKER / MARKER the init phase short-circuits without
+        # running the marker probe. ``AUTO`` (or ``None``) keeps the
+        # legacy auto-probe behaviour.
+        self._forced_mode: NavMode | None = None
 
     # ── NavigationEnginePort ────────────────────────────────────
 
-    def reset(self) -> None:
+    def reset(
+        self,
+        *,
+        nav_mode: NavMode | None = None,
+        fps: float | None = None,
+    ) -> None:
         self._init = _Init()
         self._marker = None
         self._no_marker = None
         self._initialised = False
         self._seq = 0
+        if fps is not None and fps > 0.0 and abs(fps - self._config.fps) > 1e-9:
+            # NavigationTuning is frozen so the engine rebuilds it with
+            # the real source FPS — that fps drives auto_marker_seconds
+            # and the ``dt`` fallback inside the marker speed gate.
+            self._config = replace(self._config, fps=float(fps))
+        if nav_mode is None or nav_mode == NavMode.AUTO:
+            self._forced_mode = None
+        else:
+            self._forced_mode = nav_mode
+        logger.debug(
+            "NavigationEngine.reset: mission_id=%s nav_mode=%s fps=%.3f",
+            self._mission_id,
+            "auto" if self._forced_mode is None else str(self._forced_mode),
+            self._config.fps,
+        )
 
     def step(
         self,
@@ -590,6 +618,12 @@ class NavigationEngine:
     ) -> TrajectoryPoint | None:
         frame = np.asarray(frame_bgr)
         if frame.ndim != 3 or frame.shape[2] != 3:
+            logger.debug(
+                "NavigationEngine.step: skip frame_id=%s ts=%.3f shape=%s",
+                frame_id,
+                ts_sec,
+                frame.shape if hasattr(frame, "shape") else None,
+            )
             return None
 
         if not self._initialised:
@@ -599,21 +633,76 @@ class NavigationEngine:
             frame_marker = cv2.resize(
                 frame, (self._config.marker_resize_w, self._config.marker_resize_h)
             )
-            return self._marker.step(frame_marker, ts_sec, frame_id)
+            point = self._marker.step(frame_marker, ts_sec, frame_id)
+            logger.debug(
+                "nav step: frame_id=%s ts=%.3f mode=marker shape=%s xyz=(%.3f,%.3f,%.3f)",
+                frame_id,
+                ts_sec,
+                frame.shape,
+                point.x,
+                point.y,
+                point.z,
+            )
+            return point
         assert self._no_marker is not None
-        return self._no_marker.step(frame, ts_sec, frame_id)
+        point = self._no_marker.step(frame, ts_sec, frame_id)
+        logger.debug(
+            "nav step: frame_id=%s ts=%.3f mode=no_marker shape=%s xyz=(%.3f,%.3f,%.3f)",
+            frame_id,
+            ts_sec,
+            frame.shape,
+            point.x,
+            point.y,
+            point.z,
+        )
+        return point
 
     # ── init phase ──────────────────────────────────────────────
 
     def _collect_init_frame(
         self, frame_bgr: np.ndarray, ts_sec: float, frame_id: int | None
     ) -> TrajectoryPoint | None:
+        # When the caller pinned nav_mode=NO_MARKER (e.g. detection is
+        # enabled — see diplom-prod source_profile force_marker_mode), we
+        # skip the buffer entirely: no_marker pose starts at origin from
+        # the very first frame, just like the upstream pipeline.
+        if self._forced_mode == NavMode.NO_MARKER:
+            return self._start_no_marker_immediately(frame_bgr, ts_sec, frame_id)
+
         config = self._config
         max_init = max(1, int(config.auto_marker_seconds * config.fps))
         self._init.buffer.append((frame_id, ts_sec, frame_bgr.copy()))
         if len(self._init.buffer) < max_init:
             return None
         return self._finalise_init()
+
+    def _start_no_marker_immediately(
+        self, frame_bgr: np.ndarray, ts_sec: float, frame_id: int | None
+    ) -> TrajectoryPoint:
+        """Initialise no-marker pipeline from the very first frame."""
+        engine = NoMarkerEngine(mission_id=self._mission_id, config=self._config)
+        x, y, z = engine.seed_from_init(frame_bgr)
+        self._no_marker = engine
+        self._initialised = True
+        self._init = _Init()
+        logger.info(
+            "Navigation init: mission_id=%s mode=no_marker (forced) "
+            "first_frame_id=%s ts=%.3f shape=%s",
+            self._mission_id,
+            frame_id,
+            ts_sec,
+            frame_bgr.shape,
+        )
+        return TrajectoryPoint(
+            mission_id=self._mission_id,
+            seq=0,
+            ts_sec=float(ts_sec),
+            x=float(x),
+            y=float(y),
+            z=float(z),
+            source=TrajectorySource.OPTICAL_FLOW,
+            frame_id=frame_id,
+        )
 
     def _finalise_init(self) -> TrajectoryPoint | None:
         config = self._config
@@ -635,6 +724,12 @@ class NavigationEngine:
 
         if candidates:
             return self._init_marker_mode(candidates)
+        if self._forced_mode == NavMode.MARKER:
+            logger.warning(
+                "Navigation init: mission_id=%s nav_mode=marker forced but "
+                "no marker found in init window — falling back to no_marker",
+                self._mission_id,
+            )
         return self._init_no_marker_mode()
 
     def _init_marker_mode(
@@ -658,6 +753,19 @@ class NavigationEngine:
         self._init = _Init()
         self._seq = 0
 
+        logger.info(
+            "Navigation init: mission_id=%s mode=marker init_frames=%d "
+            "candidates=%d best_frame_id=%s ts=%.3f xyz=(%.3f,%.3f,%.3f)",
+            self._mission_id,
+            len(candidates) if candidates else 0,
+            len(candidates),
+            best_fid,
+            best_ts,
+            x,
+            y,
+            z,
+        )
+
         return TrajectoryPoint(
             mission_id=self._mission_id,
             seq=0,
@@ -679,6 +787,18 @@ class NavigationEngine:
         self._no_marker = engine
         self._initialised = True
         self._seq = 0
+
+        logger.info(
+            "Navigation init: mission_id=%s mode=no_marker init_frames=%d "
+            "first_frame_id=%s ts=%.3f xyz=(%.3f,%.3f,%.3f)",
+            self._mission_id,
+            len(buf),
+            first_fid,
+            first_ts,
+            x,
+            y,
+            z,
+        )
 
         remaining = buf[1:]
         self._init = _Init()

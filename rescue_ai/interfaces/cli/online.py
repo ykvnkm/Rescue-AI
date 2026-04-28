@@ -1146,6 +1146,12 @@ def _build_auto_mission_service(
         logger.warning("TrajectoryPlotRenderer unavailable: %s", err)
         plot_renderer = None
 
+    # Use the contract dataset FPS only as the construction-time
+    # default. The real per-mission FPS is forwarded later via
+    # ``NavigationEngine.reset(fps=...)`` in
+    # :meth:`AutoMissionService.start_auto_mission`, so the engine's
+    # marker speed gate operates on the actual frame rate of the
+    # source — not the dataset's prior.
     nav_tuning = NavigationTuning(fps=contract_dataset_fps)
     nav_engine = NavigationEngine(mission_id="api-auto", config=nav_tuning)
 

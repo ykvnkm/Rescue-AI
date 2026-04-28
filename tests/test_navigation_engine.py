@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from rescue_ai.domain.value_objects import TrajectorySource
+from rescue_ai.domain.value_objects import NavMode, TrajectorySource
 from rescue_ai.navigation.engine import NavigationEngine
 from rescue_ai.navigation.tuning import NavigationTuning
 
@@ -92,6 +92,43 @@ def test_engine_step_rejects_non_image_input() -> None:
     engine.reset()
     assert engine.step(np.zeros((10, 10), dtype=np.uint8), ts_sec=0.0) is None
     assert engine.step(np.zeros((10, 10, 4), dtype=np.uint8), ts_sec=0.0) is None
+
+
+def test_engine_forced_no_marker_skips_init_buffer() -> None:
+    """ADR-0007 / diplom-prod parity: when nav_mode=NO_MARKER is forced
+    (e.g. detection enabled), the engine emits a point on the very first
+    frame instead of buffering ``auto_marker_seconds * fps`` frames."""
+    config = NavigationTuning(fps=10.0, auto_marker_seconds=3.0)
+    engine = NavigationEngine(mission_id="m-test", config=config)
+    engine.reset(nav_mode=NavMode.NO_MARKER, fps=6.0)
+
+    out = engine.step(_textured_frame(config, seed=1), ts_sec=0.0, frame_id=0)
+
+    assert out is not None
+    assert out.seq == 0
+    assert out.source is TrajectorySource.OPTICAL_FLOW
+    assert out.x == 0.0 and out.y == 0.0
+
+
+def test_engine_forced_marker_does_auto_probe() -> None:
+    """nav_mode=MARKER still buffers init frames and probes for marker."""
+    config = NavigationTuning(fps=10.0, auto_marker_seconds=0.1)
+    engine = NavigationEngine(mission_id="m-test", config=config)
+    engine.reset(nav_mode=NavMode.MARKER)
+
+    out0 = engine.step(_red_marker_frame(config), ts_sec=0.0, frame_id=0)
+    # First frame with auto_marker_seconds=0.1 * fps=10 = 1 frame init,
+    # so the engine commits immediately.
+    assert out0 is not None
+    assert out0.source is TrajectorySource.MARKER
+
+
+def test_engine_reset_updates_fps_into_tuning() -> None:
+    config = NavigationTuning(fps=30.0, auto_marker_seconds=0.1)
+    engine = NavigationEngine(mission_id="m-test", config=config)
+    engine.reset(fps=6.0)
+    # Internal config now reflects the per-mission fps.
+    assert abs(engine._config.fps - 6.0) < 1e-9
 
 
 def test_engine_emits_monotonic_seq_after_init() -> None:
