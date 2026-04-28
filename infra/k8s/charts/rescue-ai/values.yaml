@@ -1,0 +1,21 @@
+# Дефолты umbrella-чарта — собирают cloud-профиль (managed Postgres
+# + S3, без локальных subcharts). Конкретные профили лежат в
+# infra/k8s/values/{cloud,offline,hybrid,dev}.yaml.
+
+rescue-ai-api:
+  enabled: true
+  deployment:
+    deploymentMode: cloud
+
+rescue-ai-sync-worker:
+  enabled: false  # включается только в hybrid
+
+# Внешние managed зависимости — не разворачиваем поды.
+postgresql:
+  enabled: false
+
+minio:
+  enabled: false
+
+vault:
+  enabled: false

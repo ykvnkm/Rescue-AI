@@ -1,0 +1,64 @@
+replicaCount: 1
+
+# Чарт включается только в hybrid-профиле. Umbrella-чарт ставит
+# enabled=true только в hybrid.yaml.
+enabled: false
+
+image:
+  repository: rescue-ai/online
+  pullPolicy: IfNotPresent
+  tag: "local"
+
+deployment:
+  logLevel: INFO
+  appEnv: field
+  serviceVersion: dev
+
+# Тюнинг sync-worker — мапится 1:1 на DEPLOYMENT_SYNC_* env-vars.
+sync:
+  batchSize: 50
+  intervalSec: 10
+  maxAttempts: 10
+  processingTimeoutSec: 120
+
+# Источник секретов — те же варианты, что у API. См. rescue-ai-api/values.yaml.
+secrets:
+  source: kube
+  kube:
+    existingSecret: ""
+    inline:
+      DB_DSN: ""
+      DEPLOYMENT_REMOTE_DB_DSN: ""
+      DEPLOYMENT_REMOTE_S3_ACCESS_KEY_ID: ""
+      DEPLOYMENT_REMOTE_S3_SECRET_ACCESS_KEY: ""
+  vault:
+    role: rescue-ai-sync-worker
+    secretPath: rescue-ai/sync-worker
+
+config:
+  remoteS3:
+    endpoint: ""
+    region: ru-central1
+    bucket: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

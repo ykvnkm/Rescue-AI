@@ -1,0 +1,18 @@
+dependencies:
+- name: rescue-ai-api
+  repository: file://../rescue-ai-api
+  version: 0.1.0
+- name: rescue-ai-sync-worker
+  repository: file://../rescue-ai-sync-worker
+  version: 0.1.0
+- name: postgresql
+  repository: https://charts.bitnami.com/bitnami
+  version: 15.5.38
+- name: minio
+  repository: https://charts.bitnami.com/bitnami
+  version: 14.7.16
+- name: vault
+  repository: https://helm.releases.hashicorp.com
+  version: 0.30.0
+digest: sha256:c32aa29d52e9e295c0b235cc3f1e945f6ce439b4a05732f29deb9725def9b1f4
+generated: "2026-04-28T22:01:08.838916+03:00"

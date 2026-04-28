@@ -1,0 +1,47 @@
+apiVersion: v2
+name: rescue-ai
+description: |
+  Umbrella-чарт всего стека Rescue-AI.
+
+  Включает application-чарты (api, sync-worker) и инфраструктурные
+  subcharts (postgresql, minio, vault) — последние можно отключить
+  через .enabled, чтобы использовать managed-ресурсы (Supabase /
+  Yandex S3 / external Vault).
+
+  ADR-0008 §1.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: Maxim Yakovenko
+
+dependencies:
+  - name: rescue-ai-api
+    version: 0.1.0
+    repository: file://../rescue-ai-api
+    condition: rescue-ai-api.enabled
+
+  - name: rescue-ai-sync-worker
+    version: 0.1.0
+    repository: file://../rescue-ai-sync-worker
+    condition: rescue-ai-sync-worker.enabled
+
+  # Инфра-зависимости — стандартные bitnami-чарты. Включаются только
+  # для offline/hybrid профилей (см. values/offline.yaml + hybrid.yaml).
+  - name: postgresql
+    version: "15.5.38"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+
+  - name: minio
+    version: "14.7.16"
+    repository: https://charts.bitnami.com/bitnami
+    condition: minio.enabled
+
+  # Vault. Используем dev-mode (HA=false, storage=inmem) — этого
+  # достаточно для дипломной защиты. Production-режим требует
+  # отдельной процедуры init/unseal (см. ADR-0008 §3 + runbook).
+  - name: vault
+    version: "0.30.0"
+    repository: https://helm.releases.hashicorp.com
+    condition: vault.enabled

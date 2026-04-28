@@ -1,0 +1,87 @@
+# Профиль `offline` — k3s на полевой станции (ADR-0007 §2 + ADR-0008 §2).
+#
+# Postgres = bitnami subchart, single-node, persistent volume.
+# MinIO    = bitnami subchart, single-node, persistent volume.
+# Vault    = dev-mode (in-memory), достаточно для дипломной защиты.
+# Sync-worker = НЕ запускается (offline = без интернета).
+
+rescue-ai-api:
+  enabled: true
+  image:
+    repository: rescue-ai/online
+    tag: local
+    pullPolicy: IfNotPresent
+  deployment:
+    deploymentMode: offline
+    appEnv: field
+    logLevel: INFO
+  config:
+    storage:
+      s3Endpoint: "http://rescue-ai-minio.rescue-ai.svc.cluster.local:9000"
+      s3Region: ru-central1
+      s3Bucket: rescue-artifacts
+      s3Prefix: missions
+    rpi:
+      baseUrl: "https://192.168.0.118:9100"
+      missionsDir: "/home/ykvnkm/Documents/missions"
+  security:
+    tlsMode: "mtls"
+    ca:
+      # Создать в k8s заранее:
+      #   kubectl create secret generic rpi-mtls \
+      #     --from-file=ca.crt=scripts/security/out/station-root-ca.crt \
+      #     --from-file=client.crt=scripts/security/out/gcs-client.crt \
+      #     --from-file=client.key=scripts/security/out/gcs-client.key
+      existingSecret: rpi-mtls
+  secrets:
+    source: vault
+    vault:
+      role: rescue-ai-api
+      secretPath: rescue-ai/api
+  service:
+    type: ClusterIP
+
+rescue-ai-sync-worker:
+  enabled: false
+
+postgresql:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/postgresql
+  auth:
+    username: rescue
+    password: rescue-offline-dev
+    database: rescue_ai
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+    initdb:
+      # Применяем те же init-скрипты, что и offline docker-compose.
+      # Файлы лежат в репо, монтировать их в сабчарт нельзя — поэтому
+      # на станции выполняется `kubectl create configmap pg-init --from-file=infra/postgres/init/`
+      # и через extraVolumes подключается. Подробнее — в runbook'е.
+      scriptsConfigMap: pg-init
+
+minio:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/minio
+  auth:
+    rootUser: rescueadmin
+    rootPassword: rescueadmin
+  defaultBuckets: "rescue-artifacts"
+  persistence:
+    enabled: true
+    size: 50Gi
+
+vault:
+  enabled: true
+  server:
+    dev:
+      enabled: true
+      devRootToken: "root-dev-token"
+  injector:
+    enabled: true

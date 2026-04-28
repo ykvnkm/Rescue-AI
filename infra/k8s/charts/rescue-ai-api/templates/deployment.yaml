@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rescue-ai-api.fullname" . }}
+  labels:
+    {{- include "rescue-ai-api.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "rescue-ai-api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rescue-ai-api.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Перезапуск пода при обновлении ConfigMap'а — checksum-аннотация.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if eq .Values.secrets.source "vault" }}
+        # Vault Agent Injector подмешивает sidecar'ы и пишет файлы
+        # в /vault/secrets/. См. ADR-0008 §3.
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.secrets.vault.role | quote }}
+        # Один шаблон секрета — экспортируется как KV v2 объект и
+        # читается приложением через init-loader (см. command ниже).
+        vault.hashicorp.com/agent-inject-secret-app.env: {{ printf "secret/data/%s" .Values.secrets.vault.secretPath | quote }}
+        vault.hashicorp.com/agent-inject-template-app.env: |
+          {{`{{- with secret "`}}{{ printf "secret/data/%s" .Values.secrets.vault.secretPath }}{{`" -}}`}}
+          {{`{{- range $k, $v := .Data.data }}`}}
+          {{`{{ $k }}={{ $v }}`}}
+          {{`{{- end }}`}}
+          {{`{{- end }}`}}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "rescue-ai-api.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- if eq .Values.secrets.source "vault" }}
+          # Vault Agent Injector положил KV-секрет в /vault/secrets/app.env.
+          # Source грузит его в окружение перед стартом приложения.
+          # Это сохраняет совместимость с pydantic-settings (читает env-vars).
+          command:
+            - /bin/sh
+            - -c
+            - |
+              if [ -f /vault/secrets/app.env ]; then
+                set -a
+                . /vault/secrets/app.env
+                set +a
+              fi
+              exec python -m rescue_ai.interfaces.cli.online
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "rescue-ai-api.fullname" . }}-config
+            {{- if eq .Values.secrets.source "kube" }}
+            - secretRef:
+                name: {{ include "rescue-ai-api.kubeSecretName" . }}
+            {{- end }}
+          env:
+            - name: APP_ENV
+              value: {{ .Values.deployment.appEnv | quote }}
+            - name: APP_LOG_LEVEL
+              value: {{ .Values.deployment.logLevel | quote }}
+            - name: SERVICE_VERSION
+              value: {{ .Values.deployment.serviceVersion | quote }}
+            - name: DEPLOYMENT_MODE
+              value: {{ .Values.deployment.deploymentMode | quote }}
+            - name: APP_HOST
+              value: "0.0.0.0"
+            - name: APP_PORT
+              value: "8000"
+          {{- if and (eq (.Values.security.tlsMode | toString) "mtls") .Values.security.ca.existingSecret }}
+          volumeMounts:
+            - name: rpi-mtls
+              mountPath: /app/certs
+              readOnly: true
+          {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- if and (eq (.Values.security.tlsMode | toString) "mtls") .Values.security.ca.existingSecret }}
+      volumes:
+        - name: rpi-mtls
+          secret:
+            secretName: {{ .Values.security.ca.existingSecret }}
+            items:
+              - key: ca.crt
+                path: station-root-ca.crt
+              - key: client.crt
+                path: gcs-client.crt
+              - key: client.key
+                path: gcs-client.key
+                mode: 0600
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

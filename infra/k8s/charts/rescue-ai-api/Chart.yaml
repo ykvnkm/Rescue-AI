@@ -1,0 +1,14 @@
+apiVersion: v2
+name: rescue-ai-api
+description: |
+  Rescue-AI online API — FastAPI с pilot/auto-mission/operator-routes,
+  YOLO-детектором и навигационным движком (см. ADR-0006).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - rescue-ai
+  - fastapi
+  - search-and-rescue
+maintainers:
+  - name: Maxim Yakovenko
