@@ -329,11 +329,10 @@ class NavigationEnginePort(Protocol):
     ) -> None:
         """Clear internal state and start a new trajectory.
 
-        ``nav_mode`` mirrors diplom-prod's ``force_marker_mode`` — it
-        lets the caller (which knows whether detection is enabled) pin
-        the engine to ``MARKER`` / ``NO_MARKER`` instead of letting the
-        engine auto-probe. ``None`` and :class:`NavMode.AUTO` keep the
-        legacy auto-probe behaviour.
+        ``nav_mode`` lets the caller pin the engine to ``MARKER`` /
+        ``NO_MARKER`` instead of letting it auto-probe. Detection being
+        enabled is not, by itself, a reason to force ``NO_MARKER``.
+        ``None`` and :class:`NavMode.AUTO` keep auto-probe behaviour.
 
         ``fps`` is the real frame-rate of the source bound to the new
         mission; tuning is rebuilt with it so the ``dt`` fallback used by
@@ -365,5 +364,9 @@ class VideoFramePort(Protocol):
 
     def frames(self) -> object:
         """Yield ``(frame_bgr, ts_sec, frame_id)`` tuples in capture order."""
+
+    @property
+    def fps(self) -> float:
+        """Effective source FPS, when known, for navigation timing."""
 
     def close(self) -> None: ...

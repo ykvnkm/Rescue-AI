@@ -62,9 +62,11 @@ logger = logging.getLogger(__name__)
 
 
 def _build_source(
-    uri: str, fps_override: float | None
-) -> tuple[Iterator[tuple[object, float, int]], str]:
-    """Return ``(frames_iterator, canonical_source_name)`` for a URI.
+    uri: str,
+    fps_override: float | None,
+    default_fps: float = 30.0,
+) -> tuple[Iterator[tuple[object, float, int]], str, float]:
+    """Return ``(frames_iterator, canonical_source_name, source_fps)`` for a URI.
 
     Accepted schemes:
 
@@ -77,24 +79,22 @@ def _build_source(
     scheme = parsed.scheme.lower()
 
     if scheme in {"rtsp", "rtsps"}:
-        return RTSPVideoSource(uri).frames(), uri
+        source = RTSPVideoSource(uri, fps_hint=fps_override or default_fps)
+        return source.frames(), uri, source.fps
 
     if scheme == "folder":
         path = Path(parsed.path or parsed.netloc).expanduser()
-        return (
-            FolderFramesSource(path, fps=fps_override or 30.0).frames(),
-            path.as_posix(),
-        )
+        source = FolderFramesSource(path, fps=fps_override or default_fps)
+        return source.frames(), path.as_posix(), source.fps
 
     # File path (with or without file:// scheme).
     raw_path = parsed.path if scheme == "file" else uri
     path = Path(raw_path).expanduser()
     if path.is_dir():
-        return (
-            FolderFramesSource(path, fps=fps_override or 30.0).frames(),
-            path.as_posix(),
-        )
-    return FileVideoSource(path, fps_override=fps_override).frames(), path.as_posix()
+        source = FolderFramesSource(path, fps=fps_override or default_fps)
+        return source.frames(), path.as_posix(), source.fps
+    source = FileVideoSource(path, fps_override=fps_override)
+    return source.frames(), path.as_posix(), source.fps
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -187,8 +187,11 @@ def main(argv: list[str] | None = None) -> int:
         contract_path=Path(args.config) if args.config else None,
     )
 
-    frames, source_name = _build_source(args.source, fps_override=args.fps)
-    fps_final = float(args.fps or contract.dataset_fps)
+    frames, source_name, fps_final = _build_source(
+        args.source,
+        fps_override=args.fps,
+        default_fps=contract.dataset_fps,
+    )
 
     service = _build_service(
         settings=settings,

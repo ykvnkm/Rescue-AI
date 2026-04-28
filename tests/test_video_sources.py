@@ -47,6 +47,7 @@ def test_file_source_yields_sequential_ids_and_ts(tmp_path: Path) -> None:
     src = FileVideoSource(video)
     items = list(src.frames())
 
+    assert src.fps == pytest.approx(10.0)
     assert [fid for _, _, fid in items] == [0, 1, 2, 3, 4]
     ts = [t for _, t, _ in items]
     assert ts[0] == pytest.approx(0.0)
@@ -63,6 +64,7 @@ def test_file_source_fps_override(tmp_path: Path) -> None:
     items = list(src.frames())
     ts = [t for _, t, _ in items]
 
+    assert src.fps == pytest.approx(25.0)
     assert ts[1] == pytest.approx(1.0 / 25.0)
 
 
@@ -99,6 +101,7 @@ def test_folder_source_sorts_by_filename(tmp_path: Path) -> None:
     src = FolderFramesSource(frames_dir, fps=10.0)
     items = list(src.frames())
 
+    assert src.fps == pytest.approx(10.0)
     fills = [int(frame[0, 0, 0]) for frame, _, _ in items]
     assert fills == [10, 20, 40]
     assert [fid for _, _, fid in items] == [0, 1, 2]
@@ -150,6 +153,11 @@ class _FakeCapture:
 def test_rtsp_rejects_empty_url() -> None:
     with pytest.raises(ValueError):
         RTSPVideoSource("")
+
+
+def test_rtsp_exposes_fps_hint() -> None:
+    src = RTSPVideoSource("rtsp://fake/stream", fps_hint=12.5)
+    assert src.fps == pytest.approx(12.5)
 
 
 def test_rtsp_reconnects_on_transient_read_failure() -> None:

@@ -127,6 +127,14 @@ class _MarkerState:
     processed: int = 0
 
 
+@dataclass(frozen=True)
+class _MarkerTrackOutcome:
+    """State transition result for one marker LK/RANSAC step."""
+
+    accepted: bool
+    force_redetect: bool = False
+
+
 class MarkerEngine:
     """Marker-based navigation engine.
 
@@ -214,10 +222,12 @@ class MarkerEngine:
 
         reset = self._try_direct_redetect(frame_marker, ts_sec)
 
-        self._lk_track_step(cur_gray, ts_sec, reset)
+        track = self._lk_track_step(cur_gray, ts_sec, reset)
 
         if (
-            s.prev_pts_marker is None
+            not track.accepted
+            or track.force_redetect
+            or s.prev_pts_marker is None
             or len(s.prev_pts_marker) < config.min_track_pts_marker
         ):
             s.prev_pts_marker = self._detect_features(cur_gray, cur_roi)
@@ -345,7 +355,9 @@ class MarkerEngine:
         s.last_accept_t_abs = ts_sec
         return 1
 
-    def _lk_track_step(self, cur_gray: np.ndarray, ts_sec: float, reset: int) -> None:
+    def _lk_track_step(
+        self, cur_gray: np.ndarray, ts_sec: float, reset: int
+    ) -> _MarkerTrackOutcome:
         s = self._state
         config = self._config
 
@@ -362,7 +374,7 @@ class MarkerEngine:
             or len(s.prev_pts_marker) < config.min_track_pts_marker
             or s.prev_gray_marker is None
         ):
-            return
+            return _MarkerTrackOutcome(accepted=False)
 
         result: LKTrackResult = lk_ransac_homography(
             prev_gray=s.prev_gray_marker,
@@ -378,7 +390,9 @@ class MarkerEngine:
             or result.inlier_mask is None
             or s.H_prev_to_plane is None
         ):
-            return
+            return _MarkerTrackOutcome(
+                accepted=False, force_redetect=result.force_redetect
+            )
 
         inliers_cnt = int(result.inlier_mask.sum())
         n_total = max(1, len(result.p0_good))
@@ -391,7 +405,9 @@ class MarkerEngine:
 
         min_inl_dyn = max(config.min_inliers_marker, int(0.30 * n_total))
         if inliers_cnt < min_inl_dyn or ratio < config.min_inlier_ratio_marker:
-            return
+            return _MarkerTrackOutcome(
+                accepted=False, force_redetect=result.force_redetect
+            )
 
         inl_mask = result.inlier_mask.reshape(-1).astype(bool)
         p1_in = result.p1_good[inl_mask]
@@ -403,7 +419,9 @@ class MarkerEngine:
             fallback_xy_px=(s.track_x, s.track_y),
         )
         if H_cur_to_plane is None or xy_candidate is None:
-            return
+            return _MarkerTrackOutcome(
+                accepted=False, force_redetect=result.force_redetect
+            )
 
         dt = float(ts_sec - s.last_accept_t_abs)
         if dt <= 0:
@@ -413,16 +431,23 @@ class MarkerEngine:
         )
         max_step = config.max_speed_marker * dt * float(config.max_step_scale_marker)
         if not (reset == 1 or step_px <= max_step):
-            return
+            return _MarkerTrackOutcome(
+                accepted=False, force_redetect=result.force_redetect
+            )
 
         s.last_accept_t_abs = float(ts_sec)
         s.H_prev_to_plane = H_cur_to_plane
         s.last_xy = (float(xy_candidate[0]), float(xy_candidate[1]))
         s.prev_pts_marker = p1_in.reshape(-1, 1, 2).astype(np.float32)
+        return _MarkerTrackOutcome(accepted=True, force_redetect=result.force_redetect)
 
     def set_last_accept_ts(self, ts_sec: float) -> None:
         """Set reference timestamp after marker-mode init replay."""
         self._state.last_accept_t_abs = float(ts_sec)
+
+    def reset_sequence(self) -> None:
+        """Reset externally visible sequence after hidden init replay."""
+        self._state.seq = 0
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -575,10 +600,10 @@ class NavigationEngine:
         self._no_marker: NoMarkerEngine | None = None
         self._initialised = False
         self._seq = 0
-        # ``nav_mode`` mirrors diplom-prod's force_marker_mode. When set
-        # to NO_MARKER / MARKER the init phase short-circuits without
-        # running the marker probe. ``AUTO`` (or ``None``) keeps the
-        # legacy auto-probe behaviour.
+        self._emitted_points = 0
+        # ``nav_mode`` mirrors diplom-prod's mode pinning. ``NO_MARKER``
+        # starts optical-flow odometry immediately; ``MARKER`` keeps the
+        # marker init window; ``AUTO`` (or ``None``) probes and picks.
         self._forced_mode: NavMode | None = None
 
     # ── NavigationEnginePort ────────────────────────────────────
@@ -594,6 +619,7 @@ class NavigationEngine:
         self._no_marker = None
         self._initialised = False
         self._seq = 0
+        self._emitted_points = 0
         if fps is not None and fps > 0.0 and abs(fps - self._config.fps) > 1e-9:
             # NavigationTuning is frozen so the engine rebuilds it with
             # the real source FPS — that fps drives auto_marker_seconds
@@ -634,44 +660,49 @@ class NavigationEngine:
                 frame, (self._config.marker_resize_w, self._config.marker_resize_h)
             )
             point = self._marker.step(frame_marker, ts_sec, frame_id)
-            logger.debug(
-                "nav step: frame_id=%s ts=%.3f mode=marker shape=%s xyz=(%.3f,%.3f,%.3f)",
+            return self._log_emitted_point(
+                point,
                 frame_id,
                 ts_sec,
                 frame.shape,
-                point.x,
-                point.y,
-                point.z,
+                selected_mode="marker",
+                marker_found=True,
             )
-            return point
         assert self._no_marker is not None
         point = self._no_marker.step(frame, ts_sec, frame_id)
-        logger.debug(
-            "nav step: frame_id=%s ts=%.3f mode=no_marker shape=%s xyz=(%.3f,%.3f,%.3f)",
+        return self._log_emitted_point(
+            point,
             frame_id,
             ts_sec,
             frame.shape,
-            point.x,
-            point.y,
-            point.z,
+            selected_mode="no_marker",
+            marker_found=False,
         )
-        return point
 
     # ── init phase ──────────────────────────────────────────────
 
     def _collect_init_frame(
         self, frame_bgr: np.ndarray, ts_sec: float, frame_id: int | None
     ) -> TrajectoryPoint | None:
-        # When the caller pinned nav_mode=NO_MARKER (e.g. detection is
-        # enabled — see diplom-prod source_profile force_marker_mode), we
-        # skip the buffer entirely: no_marker pose starts at origin from
-        # the very first frame, just like the upstream pipeline.
+        # When the caller explicitly pins nav_mode=NO_MARKER we skip the
+        # marker init buffer: no-marker pose starts at origin from the
+        # very first raw frame.
         if self._forced_mode == NavMode.NO_MARKER:
             return self._start_no_marker_immediately(frame_bgr, ts_sec, frame_id)
 
         config = self._config
         max_init = max(1, int(config.auto_marker_seconds * config.fps))
         self._init.buffer.append((frame_id, ts_sec, frame_bgr.copy()))
+        logger.debug(
+            "NavigationEngine.step: frame_id=%s ts_sec=%.6f input_shape=%s "
+            "selected_mode=init marker_found=%s source=%s emitted_points=%d",
+            frame_id,
+            ts_sec,
+            frame_bgr.shape,
+            None,
+            None,
+            self._emitted_points,
+        )
         if len(self._init.buffer) < max_init:
             return None
         return self._finalise_init()
@@ -693,7 +724,7 @@ class NavigationEngine:
             ts_sec,
             frame_bgr.shape,
         )
-        return TrajectoryPoint(
+        point = TrajectoryPoint(
             mission_id=self._mission_id,
             seq=0,
             ts_sec=float(ts_sec),
@@ -702,6 +733,14 @@ class NavigationEngine:
             z=float(z),
             source=TrajectorySource.OPTICAL_FLOW,
             frame_id=frame_id,
+        )
+        return self._log_emitted_point(
+            point,
+            frame_id,
+            ts_sec,
+            frame_bgr.shape,
+            selected_mode="no_marker",
+            marker_found=False,
         )
 
     def _finalise_init(self) -> TrajectoryPoint | None:
@@ -742,7 +781,9 @@ class NavigationEngine:
         stack = np.stack([c[2] for c in topk], axis=0)
         median_corners = np.median(stack, axis=0)
         best = min(topk, key=lambda c: float(np.linalg.norm(c[2] - median_corners)))
-        _, _, best_pts4, best_fid, best_ts, best_fm = best
+        best_idx, _, best_pts4, best_fid, best_ts, best_fm = best
+        init_frames_count = len(self._init.buffer)
+        best_raw_shape = self._init.buffer[best_idx][2].shape
 
         engine = MarkerEngine(mission_id=self._mission_id, config=config)
         x, y, z = engine.seed_from_init(best_pts4.astype(np.float32), best_fm)
@@ -750,14 +791,20 @@ class NavigationEngine:
 
         self._marker = engine
         self._initialised = True
-        self._init = _Init()
         self._seq = 0
+
+        engine.step(best_fm, ts_sec=float(best_ts), frame_id=best_fid)
+        for fid, ts, orig in self._init.buffer[best_idx + 1 :]:
+            fm = cv2.resize(orig, (config.marker_resize_w, config.marker_resize_h))
+            engine.step(fm, ts_sec=float(ts), frame_id=fid)
+        engine.reset_sequence()
+        self._init = _Init()
 
         logger.info(
             "Navigation init: mission_id=%s mode=marker init_frames=%d "
             "candidates=%d best_frame_id=%s ts=%.3f xyz=(%.3f,%.3f,%.3f)",
             self._mission_id,
-            len(candidates) if candidates else 0,
+            init_frames_count,
             len(candidates),
             best_fid,
             best_ts,
@@ -766,7 +813,7 @@ class NavigationEngine:
             z,
         )
 
-        return TrajectoryPoint(
+        point = TrajectoryPoint(
             mission_id=self._mission_id,
             seq=0,
             ts_sec=float(best_ts),
@@ -775,6 +822,14 @@ class NavigationEngine:
             z=float(z),
             source=TrajectorySource.MARKER,
             frame_id=best_fid,
+        )
+        return self._log_emitted_point(
+            point,
+            best_fid,
+            best_ts,
+            best_raw_shape,
+            selected_mode="marker",
+            marker_found=True,
         )
 
     def _init_no_marker_mode(self) -> TrajectoryPoint:
@@ -817,10 +872,46 @@ class NavigationEngine:
         # state matches what upstream would have after running through
         # the init window. Emitted points are discarded; seq is reset so
         # the next external step gets seq=1.
+        engine.step(first_frame, ts_sec=float(first_ts), frame_id=first_fid)
         for fid, ts, frame in remaining:
             engine.step(frame, ts_sec=float(ts), frame_id=fid)
         engine.reset_sequence()
-        return first_point
+        return self._log_emitted_point(
+            first_point,
+            first_fid,
+            first_ts,
+            first_frame.shape,
+            selected_mode="no_marker",
+            marker_found=False,
+        )
+
+    def _log_emitted_point(
+        self,
+        point: TrajectoryPoint,
+        frame_id: int | None,
+        ts_sec: float,
+        input_shape: tuple[int, ...],
+        *,
+        selected_mode: str,
+        marker_found: bool,
+    ) -> TrajectoryPoint:
+        self._emitted_points += 1
+        logger.debug(
+            "NavigationEngine.step: frame_id=%s ts_sec=%.6f input_shape=%s "
+            "selected_mode=%s marker_found=%s source=%s "
+            "x=%.6f y=%.6f z=%.6f emitted_points=%d",
+            frame_id,
+            ts_sec,
+            input_shape,
+            selected_mode,
+            marker_found,
+            str(point.source),
+            point.x,
+            point.y,
+            point.z,
+            self._emitted_points,
+        )
+        return point
 
 
 # ── Convenience ─────────────────────────────────────────────────────

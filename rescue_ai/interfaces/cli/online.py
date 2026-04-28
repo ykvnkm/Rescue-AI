@@ -1081,8 +1081,8 @@ def build_api_runtime() -> tuple[
 def _auto_video_source_factory(
     source_kind: str,
     source_value: str,
-    fps: float,
-) -> tuple[object, str]:
+    fps: float | None,
+) -> tuple[object, str, float]:
     """Composition-root factory that maps (kind, value) to a video port.
 
     Used by :class:`AutoSessionManager` to resolve ``/auto-sessions/start``
@@ -1098,16 +1098,19 @@ def _auto_video_source_factory(
         path = Path(source_value)
         if not path.is_file():
             raise FileNotFoundError(f"video file not found: {source_value}")
-        return FileVideoSource(str(path), fps_override=fps), str(path)
+        source = FileVideoSource(str(path), fps_override=fps)
+        return source, str(path), source.fps
     if source_kind == "frames":
         path = Path(source_value)
         if not path.is_dir():
             raise FileNotFoundError(f"frames directory not found: {source_value}")
-        return FolderFramesSource(str(path), fps=fps), str(path)
+        source = FolderFramesSource(str(path), fps=fps or 30.0)
+        return source, str(path), source.fps
     if source_kind == "rtsp":
         if not source_value:
             raise ValueError("rtsp url must be non-empty")
-        return RTSPVideoSource(source_value), source_value
+        source = RTSPVideoSource(source_value, fps_hint=fps or 30.0)
+        return source, source_value, source.fps
     raise ValueError(f"unknown source_kind: {source_kind}")
 
 

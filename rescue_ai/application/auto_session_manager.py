@@ -47,8 +47,12 @@ class VideoFramePort(Protocol):
     def close(self) -> None: ...
 
 
-# (source_kind, source_value, fps) -> (VideoFramePort, resolved_value)
-VideoSourceFactory = Callable[[str, str, float], tuple[VideoFramePort, str]]
+# (source_kind, source_value, fps_hint)
+#     -> (VideoFramePort, resolved_value, source_fps)
+VideoSourceFactory = Callable[
+    [str, str, float | None],
+    tuple[VideoFramePort, str, float],
+]
 
 
 @dataclass
@@ -515,8 +519,8 @@ class AutoSessionManager:
         *,
         source_kind: str,
         source_value: str,
-        fps: float,
-    ) -> tuple[VideoFramePort, str]:
+        fps: float | None,
+    ) -> tuple[VideoFramePort, str, float]:
         """Resolve a ``(kind, value)`` pair into a ``VideoFramePort``.
 
         Uses the injected :class:`VideoSourceFactory`. Callers must inject

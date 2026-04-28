@@ -701,7 +701,7 @@
           </div>
           <div class="field">
             <label for="autoFps">FPS</label>
-            <input type="number" id="autoFps" value="6" min="1" max="60" step="1" />
+            <input type="number" id="autoFps" placeholder="auto" min="1" max="60" step="1" />
           </div>
 
           <button class="btn" id="autoStartBtn" type="submit">Запустить сессию</button>
@@ -1325,8 +1325,23 @@ document.querySelectorAll('#autoSourceTabs .sub-tab').forEach(btn => {
     document.querySelectorAll('[data-src-field]').forEach(field => {
       field.style.display = field.getAttribute('data-src-field') === kind ? '' : 'none';
     });
+    updateAutoFpsField();
   });
 });
+
+function updateAutoFpsField() {
+  const input = document.getElementById('autoFps');
+  if (!input) return;
+  if (AUTO.sourceKind === 'video') {
+    input.value = '';
+    input.disabled = true;
+    input.placeholder = 'auto';
+  } else {
+    input.disabled = false;
+    input.placeholder = AUTO.sourceKind === 'frames' ? '30' : '30';
+  }
+}
+updateAutoFpsField();
 
 /* ---- Plotly initialization ---- */
 function initAutoPlots() {
@@ -1413,13 +1428,16 @@ async function startAutoSession() {
   }
   const detector = document.getElementById('autoDetector').value;
   const navMode = document.getElementById('autoNavMode').value;
-  const fps = parseFloat(document.getElementById('autoFps').value) || 6;
+  const fpsRaw = document.getElementById('autoFps').value.trim();
+  const fps = fpsRaw ? parseFloat(fpsRaw) : null;
 
   const formData = new FormData();
   formData.append('source_kind', AUTO.sourceKind);
   formData.append('detector_name', detector);
   formData.append('nav_mode', navMode);
-  formData.append('fps', String(fps));
+  if (AUTO.sourceKind !== 'video' && Number.isFinite(fps) && fps > 0) {
+    formData.append('fps', String(fps));
+  }
 
   if (AUTO.sourceKind === 'video') {
     const fileInput = document.getElementById('autoVideoFile');

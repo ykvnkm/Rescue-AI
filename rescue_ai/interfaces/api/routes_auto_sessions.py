@@ -174,7 +174,11 @@ async def start_auto_session(
     ),
     nav_mode: NavMode = Form(default=NavMode.AUTO),
     detector_name: str = Form(default="yolo"),
-    fps: float = Form(default=6.0, gt=0.0),
+    fps: float | None = Form(
+        default=None,
+        gt=0.0,
+        description="Optional FPS override. Video files use container FPS by default.",
+    ),
     file: UploadFile | None = File(default=None),
 ) -> dict[str, object]:
     """Create an automatic mission and start streaming frames."""
@@ -190,11 +194,19 @@ async def start_auto_session(
             detail="source_value (or uploaded file for source_kind=video) is required",
         )
 
+    fps_hint = None if source_kind == "video" else fps
+    if source_kind == "video" and fps is not None:
+        logger.info(
+            "Endpoint start_auto_session: ignoring FPS override %.3f for video "
+            "source; using container FPS",
+            fps,
+        )
+
     try:
-        source, canonical_value = manager.build_source(
+        source, canonical_value, source_fps = manager.build_source(
             source_kind=source_kind,
             source_value=resolved_value,
-            fps=fps,
+            fps=fps_hint,
         )
     except FileNotFoundError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -208,7 +220,7 @@ async def start_auto_session(
         sanitize_log_text(canonical_value),
         nav_mode,
         detector_name,
-        fps,
+        source_fps,
     )
     try:
         session = manager.start_session(
@@ -218,7 +230,7 @@ async def start_auto_session(
                 source_value=canonical_value,
                 nav_mode=nav_mode,
                 detector_name=detector_name,
-                fps=fps,
+                fps=source_fps,
             ),
         )
     except RuntimeError as error:
