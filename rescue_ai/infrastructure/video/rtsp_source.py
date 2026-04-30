@@ -49,6 +49,7 @@ class RTSPVideoSource:
         reconnect_initial_sec: float = _DEFAULT_RECONNECT_INITIAL,
         reconnect_max_sec: float = _DEFAULT_RECONNECT_MAX,
         max_reconnect_attempts: int = _DEFAULT_MAX_ATTEMPTS,
+        fps_hint: float = 30.0,
         sleep_fn: Callable[[float], None] | None = None,
         capture_factory: Callable[[str], CaptureLike] | None = None,
     ) -> None:
@@ -58,10 +59,16 @@ class RTSPVideoSource:
         self._reconnect_initial = float(reconnect_initial_sec)
         self._reconnect_max = float(reconnect_max_sec)
         self._max_attempts = int(max_reconnect_attempts)
+        self._fps_hint = float(fps_hint) if fps_hint > 0.0 else 30.0
         self._sleep = sleep_fn or time.sleep
         self._capture_factory = capture_factory or cv2.VideoCapture
         self._cap: CaptureLike | None = None
         self._closed = False
+
+    @property
+    def fps(self) -> float:
+        """Best-known stream FPS; live RTSP timestamps still use wall time."""
+        return self._fps_hint
 
     def frames(self) -> Iterator[tuple[np.ndarray, float, int]]:
         """Read frames until closed; reconnect on transient failure."""

@@ -5,13 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 import pytest
 
 from rescue_ai.application.auto_mission_service import (
     AutoFrameOutcome,
     AutoMissionService,
 )
-from rescue_ai.domain.entities import Detection, TrajectoryPoint
+from rescue_ai.domain.entities import Alert, Detection, FrameEvent, TrajectoryPoint
 from rescue_ai.domain.value_objects import (
     AlertRuleConfig,
     AutoDecisionKind,
@@ -57,9 +58,18 @@ class FakeNavigationEngine:
 
     queue: list[TrajectoryPoint | None] = field(default_factory=list)
     reset_calls: int = 0
+    last_nav_mode: NavMode | None = None
+    last_fps: float | None = None
 
-    def reset(self) -> None:
+    def reset(
+        self,
+        *,
+        nav_mode: NavMode | None = None,
+        fps: float | None = None,
+    ) -> None:
         self.reset_calls += 1
+        self.last_nav_mode = nav_mode
+        self.last_fps = fps
 
     def step(
         self,
@@ -83,6 +93,61 @@ class FakeNavigationEngine:
             z=point.z,
             source=point.source,
         )
+
+
+class RecordingNavigationEngine(FakeNavigationEngine):
+    """Navigation double that records the raw frame it receives."""
+
+    seen_shape: tuple[int, ...] | None = None
+    seen_first_pixel: int | None = None
+
+    def step(
+        self,
+        frame_bgr: object,
+        ts_sec: float,
+        frame_id: int | None = None,
+    ) -> TrajectoryPoint | None:
+        _ = (ts_sec, frame_id)
+        assert isinstance(frame_bgr, np.ndarray)
+        self.seen_shape = frame_bgr.shape
+        self.seen_first_pixel = int(frame_bgr[0, 0, 0])
+        return None
+
+
+class MutatingDetector(FakeDetector):
+    """Detector double that simulates preprocessing mutating its input."""
+
+    def detect(self, image_uri: object) -> list[Detection]:
+        if isinstance(image_uri, np.ndarray):
+            image_uri[:] = 99
+        return []
+
+
+class RecordingFrameEventRepository(InMemoryFrameEventRepository):
+    def __init__(self, db: InMemoryDatabase, calls: list[str]) -> None:
+        super().__init__(db)
+        self._calls = calls
+
+    def add(self, frame_event: FrameEvent) -> None:
+        self._calls.append(f"frame:{frame_event.frame_id}")
+        super().add(frame_event)
+
+
+class ForeignKeyCheckingAlertRepository(InMemoryAlertRepository):
+    def __init__(self, db: InMemoryDatabase, calls: list[str]) -> None:
+        super().__init__(db)
+        self._db = db
+        self._calls = calls
+
+    def add(self, alert: Alert) -> None:
+        exists = any(
+            frame.frame_id == alert.frame_id
+            for frame in self._db.mission_frames.get(alert.mission_id, [])
+        )
+        if not exists:
+            raise AssertionError("alert inserted before frame event")
+        self._calls.append(f"alert:{alert.frame_id}")
+        super().add(alert)
 
 
 def _alert_rules(**overrides: float) -> AlertRuleConfig:
@@ -243,6 +308,33 @@ def test_ingest_frame_no_detection_produces_frame_event_only() -> None:
     assert harness.decision_repo.list_by_mission(mission.mission_id) == []
 
 
+def test_ingest_frame_sends_raw_frame_to_navigation_before_detection() -> None:
+    navigation = RecordingNavigationEngine()
+    detector = MutatingDetector()
+    harness = _build_service(detector=detector, navigation=navigation)
+    mission = harness.service.start_auto_mission(
+        source_name="raw-branch",
+        total_frames=1,
+        fps=12.0,
+        nav_mode=NavMode.AUTO,
+        detector_name="mutating",
+    )
+    frame = np.zeros((32, 48, 3), dtype=np.uint8)
+    frame[0, 0, 0] = 7
+
+    harness.service.ingest_frame(
+        mission_id=mission.mission_id,
+        frame_bgr=frame,
+        ts_sec=0.0,
+        frame_id=0,
+        image_uri="source://raw/0",
+    )
+
+    assert navigation.seen_shape == (32, 48, 3)
+    assert navigation.seen_first_pixel == 7
+    assert int(frame[0, 0, 0]) == 99
+
+
 def test_ingest_frame_with_alert_persists_alert_and_decision() -> None:
     detection = Detection(
         bbox=(1.0, 2.0, 3.0, 4.0),
@@ -278,6 +370,48 @@ def test_ingest_frame_with_alert_persists_alert_and_decision() -> None:
     assert harness.artifacts.stored_frames[(mission.mission_id, 7)] == alert.image_uri
     stored_event = harness.db.mission_frames[mission.mission_id][0]
     assert stored_event.image_uri == alert.image_uri
+
+
+def test_ingest_frame_persists_frame_before_alert() -> None:
+    detection = Detection(
+        bbox=(1.0, 2.0, 3.0, 4.0),
+        score=0.9,
+        label="person",
+        model_name="fake",
+    )
+    db = InMemoryDatabase()
+    calls: list[str] = []
+    service = AutoMissionService(
+        dependencies=AutoMissionService.Dependencies(
+            mission_repository=InMemoryMissionRepository(db),
+            alert_repository=ForeignKeyCheckingAlertRepository(db, calls),
+            frame_event_repository=RecordingFrameEventRepository(db, calls),
+            trajectory_repository=InMemoryTrajectoryRepository(),
+            auto_decision_repository=InMemoryAutoDecisionRepository(),
+            auto_mission_config_repository=InMemoryAutoMissionConfigRepository(),
+            artifact_storage=InMemoryArtifactStorage(),
+            detector=FakeDetector(queue=[[detection]]),
+            navigation_engine=FakeNavigationEngine(),
+        ),
+        alert_rules=_alert_rules(),
+    )
+    mission = service.start_auto_mission(
+        source_name="fk-order",
+        total_frames=1,
+        fps=1.0,
+        nav_mode=NavMode.NO_MARKER,
+        detector_name="yolo",
+    )
+
+    service.ingest_frame(
+        mission_id=mission.mission_id,
+        frame_bgr=object(),
+        ts_sec=0.0,
+        frame_id=7,
+        image_uri="file:///tmp/frame.jpg",
+    )
+
+    assert calls == ["frame:7", "alert:7"]
 
 
 def test_ingest_frame_records_suppressed_decision_when_cooldown_blocks() -> None:

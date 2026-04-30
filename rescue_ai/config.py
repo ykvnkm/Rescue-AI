@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+DeploymentMode = Literal["cloud", "offline", "hybrid"]
+TlsMode = Literal["off", "mtls"]
 
 
 class BaseEnvSettings(BaseSettings):
@@ -94,6 +99,89 @@ class AutoStreamSettings(BaseEnvSettings):
     )
 
 
+class DeploymentSettings(BaseEnvSettings):
+    """Deployment profile (cloud / offline / hybrid).
+
+    See ADR-0007. Selects which Postgres/S3 endpoints are authoritative
+    and whether the transactional outbox + sync-worker are enabled.
+    The application code is identical across modes; only DSNs and the
+    enable flag differ.
+    """
+
+    mode: DeploymentMode = Field(default="cloud", alias="DEPLOYMENT_MODE")
+
+    # Remote (cloud) targets — used directly in `cloud`, used as the
+    # sync target by the sync-worker in `hybrid`.
+    remote_db_dsn: str = Field(default="", alias="DEPLOYMENT_REMOTE_DB_DSN")
+    remote_s3_endpoint: str = Field(
+        default="", alias="DEPLOYMENT_REMOTE_S3_ENDPOINT"
+    )
+    remote_s3_region: str = Field(
+        default="ru-central1", alias="DEPLOYMENT_REMOTE_S3_REGION"
+    )
+    remote_s3_access_key_id: str = Field(
+        default="", alias="DEPLOYMENT_REMOTE_S3_ACCESS_KEY_ID"
+    )
+    remote_s3_secret_access_key: str = Field(
+        default="", alias="DEPLOYMENT_REMOTE_S3_SECRET_ACCESS_KEY"
+    )
+    remote_s3_bucket: str = Field(default="", alias="DEPLOYMENT_REMOTE_S3_BUCKET")
+
+    # Sync-worker tuning (hybrid only).
+    sync_batch_size: int = Field(default=50, alias="DEPLOYMENT_SYNC_BATCH_SIZE")
+    sync_interval_sec: float = Field(
+        default=10.0, alias="DEPLOYMENT_SYNC_INTERVAL_SEC"
+    )
+    sync_max_attempts: int = Field(
+        default=10, alias="DEPLOYMENT_SYNC_MAX_ATTEMPTS"
+    )
+    sync_processing_timeout_sec: float = Field(
+        default=120.0, alias="DEPLOYMENT_SYNC_PROCESSING_TIMEOUT_SEC"
+    )
+
+    @property
+    def is_offline_first(self) -> bool:
+        """Local Postgres/MinIO is the primary store (offline or hybrid)."""
+        return self.mode in ("offline", "hybrid")
+
+    @property
+    def outbox_enabled(self) -> bool:
+        """Hybrid is the only mode that produces outbox rows."""
+        return self.mode == "hybrid"
+
+
+class SecuritySettings(BaseEnvSettings):
+    """Transport security (mTLS for the RPi link).
+
+    See ADR-0007. ``off`` is dev-only; offline/hybrid profiles must run
+    with ``mtls`` because the RPi link traverses an untrusted local
+    network with no public tunnel in front of it.
+    """
+
+    tls_mode: TlsMode = Field(default="off", alias="TLS_MODE")
+    ca_cert_path: str = Field(default="", alias="TLS_CA_CERT_PATH")
+    client_cert_path: str = Field(default="", alias="TLS_CLIENT_CERT_PATH")
+    client_key_path: str = Field(default="", alias="TLS_CLIENT_KEY_PATH")
+
+    @model_validator(mode="after")
+    def _validate_paths(self) -> "SecuritySettings":
+        if self.tls_mode == "mtls":
+            missing = [
+                name
+                for name, value in (
+                    ("TLS_CA_CERT_PATH", self.ca_cert_path),
+                    ("TLS_CLIENT_CERT_PATH", self.client_cert_path),
+                    ("TLS_CLIENT_KEY_PATH", self.client_key_path),
+                )
+                if not value
+            ]
+            if missing:
+                raise ValueError(
+                    "TLS_MODE=mtls requires: " + ", ".join(missing)
+                )
+        return self
+
+
 class Settings(BaseSettings):
     """Aggregated application settings."""
 
@@ -105,6 +193,26 @@ class Settings(BaseSettings):
     detection: DetectionSettings
     uploads: UploadSettings
     auto_stream: AutoStreamSettings
+    # Defaults keep cloud-mode wiring valid for callers that still
+    # construct ``Settings(app=..., api=..., ...)`` without the new
+    # sub-settings (legacy tests, scripts).
+    deployment: DeploymentSettings = Field(default_factory=DeploymentSettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
+
+    @model_validator(mode="after")
+    def _validate_profile(self) -> "Settings":
+        # ADR-0007 §4: non-cloud profiles must run mTLS — the RPi link
+        # in the field is not protected by a public tunnel.
+        if (
+            self.deployment.mode in ("offline", "hybrid")
+            and self.security.tls_mode == "off"
+            and self.app.env != "dev"
+        ):
+            raise ValueError(
+                "TLS_MODE=off is not allowed when DEPLOYMENT_MODE="
+                f"{self.deployment.mode} outside dev"
+            )
+        return self
 
 
 @lru_cache(maxsize=1)
@@ -118,4 +226,6 @@ def get_settings() -> Settings:
         detection=DetectionSettings(),
         uploads=UploadSettings(),
         auto_stream=AutoStreamSettings(),
+        deployment=DeploymentSettings(),
+        security=SecuritySettings(),
     )

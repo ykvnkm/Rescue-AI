@@ -37,7 +37,7 @@ COPY rescue_ai ./rescue_ai
 COPY scripts ./scripts
 COPY infra/postgres/init ./infra/postgres/init
 
-RUN mkdir -p /app/runtime && chown -R appuser:appuser /app
+RUN mkdir -p /app/runtime/models && chown -R appuser:appuser /app
 
 USER appuser
 
@@ -55,7 +55,7 @@ COPY infra/postgres/init ./infra/postgres/init
 COPY infra/airflow/dags /opt/airflow/dags
 COPY infra/airflow/plugins /opt/airflow/plugins
 
-RUN mkdir -p /app/runtime /opt/airflow/logs && chown -R appuser:appuser /app /opt/airflow
+RUN mkdir -p /app/runtime/models /opt/airflow/logs && chown -R appuser:appuser /app /opt/airflow
 
 USER appuser
 

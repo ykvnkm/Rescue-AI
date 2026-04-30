@@ -1,0 +1,76 @@
+# Профиль `cloud` — managed Kubernetes (Yandex MK или аналог).
+#
+# Postgres = managed (Supabase / Yandex Managed PostgreSQL).
+# S3       = Yandex Cloud Object Storage.
+# Vault    = либо external (managed), либо deployed отдельно (вне umbrella).
+# Секреты приходят через Vault Agent Injector — pod аннотируется
+# и читает /vault/secrets/app.env при старте.
+
+rescue-ai-api:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ghcr.io/ykvnkm/rescue-ai/online
+    tag: latest
+    pullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: ghcr-pull
+  deployment:
+    deploymentMode: cloud
+    appEnv: prod
+    logLevel: INFO
+    serviceVersion: ${IMAGE_TAG}
+  config:
+    storage:
+      s3Endpoint: "https://storage.yandexcloud.net"
+      s3Region: ru-central1
+      s3Bucket: rescue-ai-mission-artifacts
+      s3Prefix: missions
+    rpi:
+      baseUrl: "https://rpi.cloudflare-tunnel.example.com"
+      missionsDir: "/home/ykvnkm/Documents/missions"
+  security:
+    # cloud-режим оставляет TLS off в самом приложении — канал до
+    # RPi прикрыт cloudflared-туннелем (см. ADR-0007 §5).
+    tlsMode: "off"
+  secrets:
+    source: vault
+    vault:
+      role: rescue-ai-api
+      secretPath: rescue-ai/api
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: rescue-ai.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: rescue-ai-tls
+        hosts:
+          - rescue-ai.example.com
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+
+rescue-ai-sync-worker:
+  enabled: false
+
+postgresql:
+  enabled: false
+minio:
+  enabled: false
+vault:
+  # Vault предполагается уже развёрнутым в кластере отдельным релизом
+  # (production-режим, не из этого umbrella). Аннотации Vault Agent
+  # Injector работают вне зависимости от того, кто его развернул.
+  enabled: false

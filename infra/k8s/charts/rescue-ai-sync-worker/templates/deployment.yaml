@@ -1,0 +1,71 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rescue-ai-sync-worker.fullname" . }}
+  labels:
+    {{- include "rescue-ai-sync-worker.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "rescue-ai-sync-worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rescue-ai-sync-worker.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if eq .Values.secrets.source "vault" }}
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.secrets.vault.role | quote }}
+        vault.hashicorp.com/agent-inject-secret-app.env: {{ .Values.secrets.vault.secretPath | quote }}
+        vault.hashicorp.com/agent-inject-template-app.env: |
+          {{`{{- with secret "`}}{{ .Values.secrets.vault.secretPath }}{{`" -}}`}}
+          {{`{{- range $k, $v := .Data.data }}`}}
+          {{`{{ $k }}={{ $v }}`}}
+          {{`{{- end }}`}}
+          {{`{{- end }}`}}
+        {{- end }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: sync-worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- if eq .Values.secrets.source "vault" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              if [ -f /vault/secrets/app.env ]; then
+                set -a
+                . /vault/secrets/app.env
+                set +a
+              fi
+              exec python -m rescue_ai.infrastructure.sync.run_worker
+          {{- else }}
+          command: ["python", "-m", "rescue_ai.infrastructure.sync.run_worker"]
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "rescue-ai-sync-worker.fullname" . }}-config
+            {{- if eq .Values.secrets.source "kube" }}
+            - secretRef:
+                name: {{ include "rescue-ai-sync-worker.kubeSecretName" . }}
+            {{- end }}
+          env:
+            - name: APP_ENV
+              value: {{ .Values.deployment.appEnv | quote }}
+            - name: APP_LOG_LEVEL
+              value: {{ .Values.deployment.logLevel | quote }}
+            - name: SERVICE_VERSION
+              value: {{ .Values.deployment.serviceVersion | quote }}
+            - name: DEPLOYMENT_MODE
+              value: "hybrid"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+{{- end }}

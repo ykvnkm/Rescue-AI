@@ -1,0 +1,94 @@
+# Профиль `hybrid` — расширение offline с включённым sync-worker'ом.
+# Локально пишем в Postgres + MinIO + replication_outbox, sync-worker
+# дрейнит outbox в remote (Supabase + Yandex S3), когда станция видит
+# интернет (ADR-0007 §3).
+
+rescue-ai-api:
+  enabled: true
+  image:
+    repository: rescue-ai/online
+    tag: local
+  deployment:
+    deploymentMode: hybrid
+    appEnv: field
+    logLevel: INFO
+  config:
+    storage:
+      s3Endpoint: "http://rescue-ai-minio.rescue-ai.svc.cluster.local:9000"
+      s3Region: ru-central1
+      s3Bucket: rescue-artifacts
+      s3Prefix: missions
+    rpi:
+      baseUrl: "https://192.168.0.118:9100"
+      missionsDir: "/home/ykvnkm/Documents/missions"
+  security:
+    tlsMode: "mtls"
+    ca:
+      existingSecret: rpi-mtls
+  secrets:
+    source: vault
+    vault:
+      role: rescue-ai-api
+      secretPath: rescue-ai/api
+
+rescue-ai-sync-worker:
+  enabled: true
+  image:
+    repository: rescue-ai/online
+    tag: local
+  deployment:
+    appEnv: field
+    logLevel: INFO
+  sync:
+    batchSize: 50
+    intervalSec: 10
+    maxAttempts: 10
+    processingTimeoutSec: 120
+  config:
+    remoteS3:
+      endpoint: "https://storage.yandexcloud.net"
+      region: ru-central1
+      bucket: rescue-ai-mission-artifacts
+  secrets:
+    source: vault
+    vault:
+      role: rescue-ai-sync-worker
+      secretPath: rescue-ai/sync-worker
+
+postgresql:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/postgresql
+  auth:
+    username: rescue
+    password: rescue-offline-dev
+    database: rescue_ai
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+    initdb:
+      scriptsConfigMap: pg-init
+
+minio:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/minio
+  auth:
+    rootUser: rescueadmin
+    rootPassword: rescueadmin
+  defaultBuckets: "rescue-artifacts"
+  persistence:
+    enabled: true
+    size: 50Gi
+
+vault:
+  enabled: true
+  server:
+    dev:
+      enabled: true
+      devRootToken: "root-dev-token"
+  injector:
+    enabled: true

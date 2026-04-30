@@ -1,0 +1,9 @@
+apiVersion: v2
+name: rescue-ai-sync-worker
+description: |
+  Hybrid-only sync-worker (ADR-0007 §3). Дрейнит local replication_outbox
+  в remote Postgres + S3. Включается только при profile=hybrid в umbrella
+  values; в cloud/offline разворачивание не происходит.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

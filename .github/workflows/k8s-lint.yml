@@ -1,0 +1,125 @@
+name: k8s-lint
+
+# Помимо стандартного CI, проверяем Helm-чарты на синтаксис и
+# рендерится ли каждый профиль (dev / cloud / offline / hybrid)
+# без ошибок.  Это даёт нам быструю обратную связь до того,
+# как чарт попадёт в реальный кластер.
+#
+# ADR-0008 §5.
+
+on:
+  push:
+    paths:
+      - "infra/k8s/**"
+      - ".github/workflows/k8s-lint.yml"
+  pull_request:
+    paths:
+      - "infra/k8s/**"
+      - ".github/workflows/k8s-lint.yml"
+
+jobs:
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Add chart repos
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo add hashicorp https://helm.releases.hashicorp.com
+          helm repo update
+
+      - name: Update umbrella dependencies
+        run: helm dependency update infra/k8s/charts/rescue-ai
+
+      - name: helm lint (api)
+        run: helm lint infra/k8s/charts/rescue-ai-api
+
+      - name: helm lint (sync-worker)
+        run: helm lint infra/k8s/charts/rescue-ai-sync-worker
+
+      - name: helm lint (umbrella)
+        run: helm lint infra/k8s/charts/rescue-ai
+
+      - name: helm template — dev profile
+        run: |
+          helm template rescue-ai infra/k8s/charts/rescue-ai \
+            -f infra/k8s/values/dev.yaml > /tmp/dev.yaml
+          test -s /tmp/dev.yaml
+
+      - name: helm template — cloud profile
+        run: |
+          helm template rescue-ai infra/k8s/charts/rescue-ai \
+            -f infra/k8s/values/cloud.yaml > /tmp/cloud.yaml
+          test -s /tmp/cloud.yaml
+
+      - name: helm template — offline profile
+        run: |
+          helm template rescue-ai infra/k8s/charts/rescue-ai \
+            -f infra/k8s/values/offline.yaml > /tmp/offline.yaml
+          test -s /tmp/offline.yaml
+
+      - name: helm template — hybrid profile
+        run: |
+          helm template rescue-ai infra/k8s/charts/rescue-ai \
+            -f infra/k8s/values/hybrid.yaml > /tmp/hybrid.yaml
+          test -s /tmp/hybrid.yaml
+          # В hybrid должен появиться sync-worker Deployment.
+          grep -q "rescue-ai-sync-worker" /tmp/hybrid.yaml
+
+      - name: hybrid contains sync-worker, dev/cloud/offline — нет
+        run: |
+          ! grep -q "rescue-ai-sync-worker" /tmp/dev.yaml
+          ! grep -q "rescue-ai-sync-worker" /tmp/cloud.yaml
+          ! grep -q "rescue-ai-sync-worker" /tmp/offline.yaml
+
+      - name: cloud has Vault Agent Injector annotations
+        run: |
+          grep -q "vault.hashicorp.com/agent-inject" /tmp/cloud.yaml
+
+      - name: dev has plain kube Secret (no Vault)
+        run: |
+          ! grep -q "vault.hashicorp.com/agent-inject" /tmp/dev.yaml
+
+  kind-smoke:
+    # Лёгкий smoke: поднимаем kind, ставим чарт в dev-режиме,
+    # ждём readiness API. Без интернета внешним секретам неоткуда
+    # взяться, поэтому на CI используем dev (inline secrets).
+    needs: helm-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - uses: helm/kind-action@v1
+        with:
+          version: v0.23.0
+          cluster_name: rescue-ai
+
+      - name: Build online image
+        run: docker build -t rescue-ai/online:local -f Dockerfile .
+
+      - name: Load image into kind
+        run: kind load docker-image rescue-ai/online:local --name rescue-ai
+
+      - name: Helm install (dev profile)
+        run: |
+          helm dependency update infra/k8s/charts/rescue-ai
+          kubectl create namespace rescue-ai
+          helm install rescue-ai infra/k8s/charts/rescue-ai \
+            -n rescue-ai \
+            -f infra/k8s/values/dev.yaml \
+            --wait --timeout 5m
+
+      - name: API health check
+        run: |
+          kubectl -n rescue-ai port-forward svc/rescue-ai-rescue-ai-api 8000:8000 &
+          sleep 5
+          curl -fsS http://localhost:8000/health

@@ -33,6 +33,11 @@ class FolderFramesSource:
         if not self._files:
             raise ValueError(f"no frame files in directory: {self._dir}")
 
+    @property
+    def fps(self) -> float:
+        """Synthetic FPS used for frame timestamps."""
+        return self._fps
+
     def frames(self) -> Iterator[tuple[np.ndarray, float, int]]:
         """Iterate the sorted frame list; skip files that fail to decode."""
         dt = 1.0 / self._fps

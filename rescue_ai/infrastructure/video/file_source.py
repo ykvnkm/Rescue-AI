@@ -47,11 +47,7 @@ class FileVideoSource:
             raise RuntimeError(f"cannot open video file: {self._path}")
         self._cap = cap
 
-        reported = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-        fps = self._fps_override if self._fps_override is not None else reported
-        if fps <= 0.0:
-            fps = _DEFAULT_FPS
-        dt = 1.0 / fps
+        dt = 1.0 / self._fps
 
         frame_id = 0
         try:
@@ -79,3 +75,14 @@ class FileVideoSource:
         if self._cap is not None:
             self._cap.release()
             self._cap = None
+
+    def _resolve_fps(self) -> float:
+        if self._fps_override is not None and self._fps_override > 0.0:
+            return float(self._fps_override)
+
+        cap = cv2.VideoCapture(self._path)
+        try:
+            reported = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        finally:
+            cap.release()
+        return reported if reported > 0.0 else _DEFAULT_FPS

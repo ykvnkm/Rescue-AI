@@ -3,6 +3,8 @@
 .env.*.local
 infra/platform.env
 infra/platform.env.local
+infra/offline/.env.offline
+scripts/security/out/
 
 # python
 __pycache__/

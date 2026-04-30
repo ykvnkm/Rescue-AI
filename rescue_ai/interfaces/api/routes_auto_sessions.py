@@ -242,7 +242,7 @@ async def start_auto_session(
     )
 
     try:
-        source, canonical_value = manager.build_source(
+        source, canonical_value, source_fps = manager.build_source(
             source_kind=source_kind,
             source_value=resolved_value,
             fps=fps,

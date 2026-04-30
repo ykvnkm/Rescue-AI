@@ -50,7 +50,8 @@ class _FakeDetector:
 class _FakeNavigation:
     reset_calls: int = 0
 
-    def reset(self) -> None:
+    def reset(self, *, nav_mode: object = None, fps: float | None = None) -> None:
+        _ = (nav_mode, fps)
         self.reset_calls += 1
 
     def step(
