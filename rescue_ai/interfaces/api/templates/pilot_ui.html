@@ -201,6 +201,55 @@
       border-color: rgba(251,146,60,0.8);
       box-shadow: 0 0 0 3px rgba(249,115,22,0.2), inset 0 0 0 1px rgba(255,255,255,0.06);
     }
+    .input-strong {
+      width: 100%;
+      padding: 11px 13px;
+      border-radius: 11px;
+      border: 1px solid rgba(255,255,255,0.22);
+      background:
+        linear-gradient(135deg, rgba(249,115,22,0.06), rgba(15,23,42,0.82)),
+        rgba(0,0,0,0.28);
+      color: var(--text);
+      font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      outline: none;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+      transition: border-color 0.16s ease, box-shadow 0.16s ease;
+    }
+    .input-strong:focus {
+      border-color: rgba(251,146,60,0.8);
+      box-shadow: 0 0 0 3px rgba(249,115,22,0.2), inset 0 0 0 1px rgba(255,255,255,0.06);
+    }
+    .file-strong {
+      width: 100%;
+      padding: 11px 13px;
+      border-radius: 11px;
+      border: 1px dashed rgba(255,255,255,0.28);
+      background: rgba(0,0,0,0.22);
+      color: var(--text);
+      font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color 0.16s ease, background 0.16s ease;
+    }
+    .file-strong:hover {
+      border-color: rgba(251,146,60,0.55);
+      background: rgba(249,115,22,0.06);
+    }
+    .file-strong::file-selector-button {
+      margin-right: 10px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: linear-gradient(120deg, #f97316, #fb923c);
+      color: #07121e;
+      font-family: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
     .rpi-check-btn {
       border: none;
       border-radius: 10px;
@@ -504,6 +553,37 @@
       font-size: 13px;
     }
     .auto-form input[type="file"] { color: var(--muted); font-size: 12px; }
+    .auto-toggle-row {
+      display: flex; align-items: center; gap: 10px; margin: 10px 0;
+    }
+    .auto-toggle-row .auto-toggle-text { display: flex; flex-direction: column; }
+    .auto-toggle-row .auto-toggle-title { font-weight: 700; font-size: 13px; color: var(--text); }
+    .auto-toggle-row .auto-toggle-hint { color: var(--muted); font-size: 11px; }
+    .switch {
+      position: relative; display: inline-block;
+      width: 44px; height: 24px; flex-shrink: 0;
+    }
+    .switch input { display: none; }
+    .switch .slider {
+      position: absolute; cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(255,255,255,0.18);
+      transition: .2s; border-radius: 24px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+    }
+    .switch .slider:before {
+      position: absolute; content: "";
+      height: 18px; width: 18px;
+      left: 3px; bottom: 3px;
+      background: #0f172a;
+      transition: .2s; border-radius: 50%;
+      box-shadow: 0 6px 15px rgba(0,0,0,0.35);
+    }
+    .switch input:checked + .slider {
+      background: linear-gradient(120deg, #38bdf8, #fb923c);
+      box-shadow: 0 10px 30px rgba(56,189,248,0.35);
+    }
+    .switch input:checked + .slider:before { transform: translateX(20px); }
     .auto-chips {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -663,58 +743,121 @@
     <aside>
       <div class="card" style="margin-bottom:14px;">
         <h3>Автоматический режим</h3>
+
+        <div class="field" style="margin-bottom:12px;">
+          <label class="form-label" for="autoNsuChannel">Режим вычислений</label>
+          <select id="autoNsuChannel" class="select-strong">
+            <option value="local" selected>Стендовый</option>
+            <option value="stream">Потоковый (RaspberryPi)</option>
+          </select>
+        </div>
+
+        <div id="autoRpiRow" style="display:none;margin-bottom:12px;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,0.14);background:rgba(0,0,0,0.22);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">
+              <div style="font-size:12px;color:var(--muted);">Состояние канала RaspberryPi</div>
+              <div style="font-size:13px;color:var(--text);">
+                Статус: <strong id="autoRpiStatus" style="color:#fbbf24;">не проверено</strong>
+              </div>
+              <div id="autoRpiCatalogSummary" style="font-size:12px;color:var(--muted);"></div>
+            </div>
+            <button id="autoRpiCheckBtn" type="button" class="btn" style="width:auto;padding:8px 12px;">Проверить канал</button>
+          </div>
+        </div>
+
         <span class="hud-label">Источник данных</span>
         <div class="sub-tabs" id="autoSourceTabs">
           <button type="button" class="sub-tab active" data-src="video">Видео</button>
-          <button type="button" class="sub-tab" data-src="rtsp">RTSP</button>
-          <button type="button" class="sub-tab" data-src="frames">Кадры</button>
+          <button type="button" class="sub-tab" data-src="rtsp" data-channel="local">RTSP поток</button>
+          <button type="button" class="sub-tab" data-src="frames">Поток кадров</button>
         </div>
 
         <form class="auto-form" id="autoStartForm" onsubmit="return false;">
-          <div class="field" data-src-field="video">
-            <label for="autoVideoFile">Видео файл</label>
-            <input type="file" id="autoVideoFile" accept="video/*" />
+          <!-- VIDEO source: local = file upload, stream = mission select from RPi -->
+          <div class="field" data-src-field="video" data-channel="local">
+            <label class="form-label" for="autoVideoFile">Видео файл</label>
+            <input type="file" id="autoVideoFile" accept="video/*" class="file-strong" />
           </div>
-          <div class="field" data-src-field="rtsp" style="display:none;">
-            <label for="autoRtspUrl">RTSP URL</label>
-            <input type="text" id="autoRtspUrl" placeholder="rtsp://host:8554/live/session" />
-          </div>
-          <div class="field" data-src-field="frames" style="display:none;">
-            <label for="autoFramesDir">Путь к директории с кадрами</label>
-            <input type="text" id="autoFramesDir" placeholder="/data/missions/forest-2026" />
+          <div class="field" data-src-field="video" data-channel="stream" style="display:none;">
+            <label class="form-label" for="autoVideoMission">Миссия RaspberryPi</label>
+            <select id="autoVideoMission" class="select-strong"><option value="">— проверьте канал —</option></select>
+            <small style="color:var(--muted);font-size:11px;">Запустится потоковая обработка миссии с RPi.</small>
           </div>
 
+          <!-- RTSP source: только в стендовом режиме -->
+          <div class="field" data-src-field="rtsp" data-channel="local" style="display:none;">
+            <label class="form-label" for="autoRtspUrl">RTSP URL</label>
+            <input type="text" id="autoRtspUrl" class="input-strong" placeholder="rtsp://host:8554/live/session" />
+          </div>
+
+          <!-- FRAMES source: local = путь к папке, stream = миссия RPi -->
+          <div class="field" data-src-field="frames" data-channel="local" style="display:none;">
+            <label class="form-label" for="autoFramesDir">Путь к директории с кадрами</label>
+            <input type="text" id="autoFramesDir" class="input-strong" placeholder="/data/missions/forest-2026" />
+          </div>
+          <div class="field" data-src-field="frames" data-channel="stream" style="display:none;">
+            <label class="form-label" for="autoFramesMission">Миссия RaspberryPi</label>
+            <select id="autoFramesMission" class="select-strong"><option value="">— проверьте канал —</option></select>
+            <small style="color:var(--muted);font-size:11px;">Каталог подтянется после проверки канала.</small>
+          </div>
+
+          <!-- common controls -->
           <div class="field">
-            <label for="autoDetector">Детектор</label>
-            <select id="autoDetector">
-              <option value="yolo" selected>YOLOv8</option>
-              <option value="nanodet">NanoDet</option>
+            <label class="form-label" for="autoDetector">Детектор</label>
+            <select id="autoDetector" class="select-strong">
+              <option value="yolo" selected>YOLOv8n multi-scale</option>
+              <option value="nanodet">NanoDet Plus</option>
             </select>
           </div>
           <div class="field">
-            <label for="autoNavMode">Режим навигации</label>
-            <select id="autoNavMode">
+            <label class="form-label" for="autoNavMode">Режим навигации</label>
+            <select id="autoNavMode" class="select-strong">
               <option value="auto" selected>auto</option>
               <option value="marker">marker</option>
               <option value="no_marker">no_marker</option>
             </select>
           </div>
           <div class="field">
-            <label for="autoFps">FPS</label>
-            <input type="number" id="autoFps" value="6" min="1" max="60" step="1" />
+            <label class="form-label" for="autoFps">FPS</label>
+            <input type="number" id="autoFps" class="input-strong" value="6" min="1" max="60" step="1" />
+          </div>
+
+          <div class="auto-toggle-row">
+            <label class="switch"><input type="checkbox" id="autoDetectEnabled" checked /><span class="slider"></span></label>
+            <div class="auto-toggle-text">
+              <div class="auto-toggle-title">Детекция людей</div>
+              <div class="auto-toggle-hint">Отключите, если нужна только траектория</div>
+            </div>
+          </div>
+          <div class="auto-toggle-row">
+            <label class="switch"><input type="checkbox" id="autoSaveVideo" /><span class="slider"></span></label>
+            <div class="auto-toggle-text">
+              <div class="auto-toggle-title">Сохранить видео с детекцией</div>
+              <div class="auto-toggle-hint">Сохранение обработанного ролика в отчет</div>
+            </div>
+          </div>
+          <div class="auto-toggle-row" data-src-field="video" data-channel="local">
+            <label class="switch"><input type="checkbox" id="autoDemoLoop" /><span class="slider"></span></label>
+            <div class="auto-toggle-text">
+              <div class="auto-toggle-title">Демо-цикл видео</div>
+              <div class="auto-toggle-hint">Автоперезапуск через 5 секунд после завершения</div>
+            </div>
           </div>
 
           <button class="btn" id="autoStartBtn" type="submit">Запустить сессию</button>
           <button class="btn secondary" id="autoStopBtn" type="button" disabled>Остановить</button>
+          <button class="btn secondary" id="autoReportBtn" type="button">Отчет по миссии</button>
         </form>
 
         <div class="auto-chips">
           <div class="auto-chip">Люди<strong id="autoChipPeople">0</strong></div>
+          <div class="auto-chip">Кадр ID<strong id="autoChipFrameId">—</strong></div>
           <div class="auto-chip">Сред. FPS<strong id="autoChipAvgFps">0.00</strong></div>
           <div class="auto-chip">Отброшено<strong id="autoChipDropped">0</strong></div>
-          <div class="auto-chip">Кадр ID<strong id="autoChipFrameId">—</strong></div>
           <div class="auto-chip">Алертов<strong id="autoChipAlerts">0</strong></div>
           <div class="auto-chip">Высота Z<strong id="autoChipZ">—</strong></div>
+          <div class="auto-chip" data-channel="stream" style="display:none;">RPi FPS<strong id="autoChipRpiFps">—</strong></div>
+          <div class="auto-chip" data-channel="stream" style="display:none;">RPi Drop<strong id="autoChipRpiDropped">—</strong></div>
         </div>
 
         <div style="margin-top:10px;font-size:12px;color:var(--muted);">
@@ -747,6 +890,35 @@
         <div class="auto-plot">
           <h4>Высота Z(t)</h4>
           <div id="autoPlotZ" style="width:100%;height:230px;"></div>
+        </div>
+      </div>
+
+      <div class="card" id="autoReportCard" style="padding:14px;margin-top:12px;display:none;">
+        <h3 style="margin-bottom:10px;">Отчет автоматической миссии</h3>
+        <table class="report-table">
+          <tbody>
+            <tr><td>Mission ID</td><td id="arMissionId">&mdash;</td></tr>
+            <tr><td>Статус</td><td id="arStatus">&mdash;</td></tr>
+            <tr><td>Источник</td><td id="arSource">&mdash;</td></tr>
+            <tr><td>FPS</td><td id="arFps">&mdash;</td></tr>
+            <tr><td>Кадров обработано</td><td id="arFrames">&mdash;</td></tr>
+            <tr><td>Алертов всего</td><td id="arAlerts">&mdash;</td></tr>
+            <tr><td>Точек траектории</td><td id="arPoints">&mdash;</td></tr>
+            <tr><td>Длительность (с)</td><td id="arDuration">&mdash;</td></tr>
+            <tr><td>Решения</td><td id="arDecisions">&mdash;</td></tr>
+            <tr><td>Сгенерирован</td><td id="arGeneratedAt">&mdash;</td></tr>
+          </tbody>
+        </table>
+        <div style="margin-top:12px;">
+          <h4 style="margin-bottom:6px;">График траектории</h4>
+          <div id="arPlotWrap" style="background:rgba(0,0,0,0.25);border-radius:8px;padding:6px;text-align:center;">
+            <span id="arPlotEmpty" style="color:var(--muted);font-size:13px;">График ещё не сформирован.</span>
+            <img id="arPlotImg" alt="trajectory plot" style="display:none;max-width:100%;border-radius:6px;" />
+          </div>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+          <a id="arDownloadCsv" class="btn secondary" style="flex:1;text-align:center;text-decoration:none;" target="_blank" rel="noopener">Скачать trajectory.csv</a>
+          <a id="arDownloadJson" class="btn secondary" style="flex:1;text-align:center;text-decoration:none;" target="_blank" rel="noopener">Скачать report.json</a>
         </div>
       </div>
     </section>
@@ -1295,6 +1467,7 @@ const AUTO = {
   persons: 0,
   alerts: 0,
   dropped: 0,
+  lastMissionId: '',
 };
 
 function setActiveMode(mode) {
@@ -1314,19 +1487,135 @@ function setActiveMode(mode) {
 document.getElementById('modeTabOperator').addEventListener('click', () => setActiveMode('operator'));
 document.getElementById('modeTabAuto').addEventListener('click', () => setActiveMode('auto'));
 
-/* ---- Source sub-tabs ---- */
+/* ---- Channel (Стендовый / Потоковый) + source sub-tabs ---- */
+AUTO.nsuChannel = 'local';
+AUTO.rpiCatalog = { missions: [] };
+
+function applyAutoChannelAndTab() {
+  const channel = AUTO.nsuChannel;
+  const stream = channel === 'stream';
+  const rpiRow = document.getElementById('autoRpiRow');
+  if (rpiRow) rpiRow.style.display = stream ? 'block' : 'none';
+
+  // Tab visibility: hide RTSP in stream mode; if it was active, jump to video.
+  document.querySelectorAll('#autoSourceTabs .sub-tab').forEach(btn => {
+    const tabChannel = btn.getAttribute('data-channel');
+    const hide = tabChannel && tabChannel !== channel;
+    btn.style.display = hide ? 'none' : 'inline-block';
+  });
+  if (stream && AUTO.sourceKind === 'rtsp') {
+    AUTO.sourceKind = 'video';
+    document.querySelectorAll('#autoSourceTabs .sub-tab').forEach(b => {
+      b.classList.toggle('active', b.getAttribute('data-src') === 'video');
+    });
+  }
+
+  // Field visibility: only fields whose data-src-field matches current tab,
+  // AND whose data-channel is empty or matches current channel.
+  document.querySelectorAll('[data-src-field]').forEach(field => {
+    const kindMatch = field.getAttribute('data-src-field') === AUTO.sourceKind;
+    const fieldChannel = field.getAttribute('data-channel');
+    const channelMatch = !fieldChannel || fieldChannel === channel;
+    field.style.display = (kindMatch && channelMatch) ? '' : 'none';
+  });
+
+  // Stream-only chips.
+  document.querySelectorAll('.auto-chip[data-channel="stream"]').forEach(chip => {
+    chip.style.display = stream ? '' : 'none';
+  });
+}
+
 document.querySelectorAll('#autoSourceTabs .sub-tab').forEach(btn => {
   btn.addEventListener('click', () => {
-    const kind = btn.getAttribute('data-src');
-    AUTO.sourceKind = kind;
+    AUTO.sourceKind = btn.getAttribute('data-src');
     document.querySelectorAll('#autoSourceTabs .sub-tab').forEach(b => {
       b.classList.toggle('active', b === btn);
     });
-    document.querySelectorAll('[data-src-field]').forEach(field => {
-      field.style.display = field.getAttribute('data-src-field') === kind ? '' : 'none';
-    });
+    applyAutoChannelAndTab();
   });
 });
+
+const autoNsuChannelSel = document.getElementById('autoNsuChannel');
+if (autoNsuChannelSel) {
+  autoNsuChannelSel.addEventListener('change', async () => {
+    AUTO.nsuChannel = autoNsuChannelSel.value;
+    applyAutoChannelAndTab();
+    if (AUTO.nsuChannel === 'stream') {
+      await autoCheckRpi(false);
+    }
+  });
+}
+
+function fillAutoMissionSelects() {
+  const missions = Array.isArray(AUTO.rpiCatalog.missions) ? AUTO.rpiCatalog.missions : [];
+  const targets = [
+    document.getElementById('autoVideoMission'),
+    document.getElementById('autoFramesMission'),
+  ];
+  for (const sel of targets) {
+    if (!sel) continue;
+    sel.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    placeholder.textContent = missions.length ? 'Выберите миссию' : 'Миссии не найдены';
+    sel.appendChild(placeholder);
+    for (const m of missions) {
+      const opt = document.createElement('option');
+      opt.value = String(m.mission_id || m.id || '');
+      const label = m.name || m.mission_id || m.id || 'миссия';
+      opt.textContent = `Миссия ${opt.value}${m.name ? `: ${m.name}` : ''}`;
+      if (!opt.value) opt.disabled = true;
+      sel.appendChild(opt);
+    }
+  }
+}
+
+async function autoCheckRpi(userTriggered) {
+  const statusEl = document.getElementById('autoRpiStatus');
+  const summaryEl = document.getElementById('autoRpiCatalogSummary');
+  if (statusEl) { statusEl.textContent = 'проверяем...'; statusEl.style.color = '#fbbf24'; }
+  if (summaryEl) summaryEl.textContent = '';
+  try {
+    const res = await fetch('/rpi/status');
+    const data = await res.json();
+    if (!data.connected) {
+      if (statusEl) { statusEl.textContent = 'канал недоступен'; statusEl.style.color = '#fca5a5'; }
+      if (userTriggered) autoLog('RaspberryPi недоступен.');
+      return false;
+    }
+    if (statusEl) { statusEl.textContent = 'канал активен'; statusEl.style.color = '#86efac'; }
+  } catch (err) {
+    if (statusEl) { statusEl.textContent = 'ошибка канала'; statusEl.style.color = '#fca5a5'; }
+    if (userTriggered) autoLog(`Ошибка проверки канала: ${err}`);
+    return false;
+  }
+  try {
+    const res = await fetch('/rpi/missions');
+    if (!res.ok) {
+      if (summaryEl) summaryEl.textContent = 'каталог недоступен';
+      return false;
+    }
+    const data = await res.json();
+    AUTO.rpiCatalog.missions = Array.isArray(data.missions) ? data.missions : [];
+    fillAutoMissionSelects();
+    if (summaryEl) summaryEl.textContent = `миссий: ${AUTO.rpiCatalog.missions.length}`;
+    if (userTriggered) autoLog(`Каталог загружен: ${AUTO.rpiCatalog.missions.length} миссий.`);
+    return true;
+  } catch (err) {
+    if (summaryEl) summaryEl.textContent = 'ошибка каталога';
+    if (userTriggered) autoLog(`Ошибка каталога: ${err}`);
+    return false;
+  }
+}
+
+const autoRpiCheckBtn = document.getElementById('autoRpiCheckBtn');
+if (autoRpiCheckBtn) {
+  autoRpiCheckBtn.addEventListener('click', () => autoCheckRpi(true));
+}
+
+applyAutoChannelAndTab();
 
 /* ---- Plotly initialization ---- */
 function initAutoPlots() {
@@ -1414,28 +1703,50 @@ async function startAutoSession() {
   const detector = document.getElementById('autoDetector').value;
   const navMode = document.getElementById('autoNavMode').value;
   const fps = parseFloat(document.getElementById('autoFps').value) || 6;
+  const channel = AUTO.nsuChannel || 'local';
+  const stream = channel === 'stream';
+  const detectEnabled = document.getElementById('autoDetectEnabled').checked;
+  const saveVideo = document.getElementById('autoSaveVideo').checked;
+  const demoLoop = document.getElementById('autoDemoLoop').checked;
 
   const formData = new FormData();
   formData.append('source_kind', AUTO.sourceKind);
   formData.append('detector_name', detector);
   formData.append('nav_mode', navMode);
   formData.append('fps', String(fps));
+  formData.append('nsu_channel', channel);
+  formData.append('detect_enabled', detectEnabled ? 'true' : 'false');
+  formData.append('save_video', saveVideo ? 'true' : 'false');
+  formData.append('demo_loop', demoLoop ? 'true' : 'false');
 
   if (AUTO.sourceKind === 'video') {
-    const fileInput = document.getElementById('autoVideoFile');
-    if (!fileInput.files || !fileInput.files[0]) {
-      autoLog('Выберите видео файл.');
-      return;
+    if (stream) {
+      const missionId = document.getElementById('autoVideoMission').value;
+      if (!missionId) { autoLog('Выберите миссию RaspberryPi.'); return; }
+      formData.append('rpi_mission_id', missionId);
+    } else {
+      const fileInput = document.getElementById('autoVideoFile');
+      if (!fileInput.files || !fileInput.files[0]) {
+        autoLog('Выберите видео файл.');
+        return;
+      }
+      formData.append('file', fileInput.files[0]);
     }
-    formData.append('file', fileInput.files[0]);
   } else if (AUTO.sourceKind === 'rtsp') {
+    if (stream) { autoLog('RTSP недоступен в потоковом режиме.'); return; }
     const url = document.getElementById('autoRtspUrl').value.trim();
     if (!url) { autoLog('Укажите RTSP URL.'); return; }
     formData.append('source_value', url);
   } else if (AUTO.sourceKind === 'frames') {
-    const dir = document.getElementById('autoFramesDir').value.trim();
-    if (!dir) { autoLog('Укажите путь к директории.'); return; }
-    formData.append('source_value', dir);
+    if (stream) {
+      const missionId = document.getElementById('autoFramesMission').value;
+      if (!missionId) { autoLog('Выберите миссию RaspberryPi.'); return; }
+      formData.append('rpi_mission_id', missionId);
+    } else {
+      const dir = document.getElementById('autoFramesDir').value.trim();
+      if (!dir) { autoLog('Укажите путь к директории.'); return; }
+      formData.append('source_value', dir);
+    }
   }
 
   autoLog('Запуск сессии...');
@@ -1456,6 +1767,7 @@ async function startAutoSession() {
     }
     const info = await resp.json();
     AUTO.session = info;
+    AUTO.lastMissionId = info.mission_id || AUTO.lastMissionId;
     autoLog(`Сессия ${info.session_id} запущена (mission=${info.mission_id}).`);
     setAutoSessionStatus('запущена');
     document.getElementById('autoStartBtn').disabled = true;
@@ -1527,6 +1839,7 @@ function handleAutoEvent(msg) {
       frame_id: msg.frame_id,
       avg_fps: msg.stats ? msg.stats.avg_stream_fps : null,
       z: msg.trajectory_point ? msg.trajectory_point.z : null,
+      stream_stats: msg.stream_stats || null,
     });
     if (msg.alerts && msg.alerts.length) {
       msg.alerts.forEach(a =>
@@ -1537,8 +1850,13 @@ function handleAutoEvent(msg) {
   if (msg.type === 'done') {
     autoLog(`Сессия завершена. Всего кадров: ${msg.frames_consumed}, алертов: ${msg.alerts_total}.`);
     setAutoSessionStatus('завершена');
-    if (msg.report) {
-      autoLog(`Отчёт: ${JSON.stringify(msg.report).slice(0, 180)}...`);
+    if (msg.mission_id) {
+      AUTO.lastMissionId = msg.mission_id;
+    }
+    if (msg.report && msg.report.mission_id) {
+      renderAutoReport(msg.report);
+    } else if (AUTO.lastMissionId) {
+      loadAutoReport({ silent: true });
     }
     finalizeAutoSession();
     return;
@@ -1563,6 +1881,19 @@ function updateAutoChips(partial) {
   if (partial.z !== undefined && partial.z !== null) {
     document.getElementById('autoChipZ').textContent = Number(partial.z).toFixed(2);
   }
+  if (partial.stream_stats && typeof partial.stream_stats === 'object') {
+    const ss = partial.stream_stats;
+    const rpiFps = ss.avg_emit_fps != null
+      ? ss.avg_emit_fps
+      : (ss.target_fps != null ? ss.target_fps : null);
+    if (rpiFps != null && !Number.isNaN(Number(rpiFps))) {
+      document.getElementById('autoChipRpiFps').textContent = Number(rpiFps).toFixed(2);
+    }
+    const rpiDropped = ss.frames_dropped != null ? ss.frames_dropped : null;
+    if (rpiDropped != null) {
+      document.getElementById('autoChipRpiDropped').textContent = String(rpiDropped);
+    }
+  }
 }
 
 function finalizeAutoSession() {
@@ -1585,6 +1916,7 @@ async function refreshActiveAutoSession() {
         session_id: data.session_id,
         mission_id: data.mission_id,
       };
+      AUTO.lastMissionId = data.mission_id || AUTO.lastMissionId;
       setAutoSessionStatus('активна (переподключение)');
       autoLog(`Обнаружена активная сессия ${data.session_id}. Подключаемся...`);
       document.getElementById('autoStartBtn').disabled = true;
@@ -1598,8 +1930,78 @@ async function refreshActiveAutoSession() {
   }
 }
 
+function setReportCell(id, value, formatter) {
+  const cell = document.getElementById(id);
+  if (!cell) return;
+  if (value === undefined || value === null || value === '') {
+    cell.textContent = '—';
+    return;
+  }
+  cell.textContent = formatter ? formatter(value) : String(value);
+}
+
+function renderAutoReport(report) {
+  if (!report || typeof report !== 'object') return;
+  const card = document.getElementById('autoReportCard');
+  card.style.display = '';
+  setReportCell('arMissionId', report.mission_id);
+  setReportCell('arStatus', report.status);
+  setReportCell('arSource', report.source_name);
+  setReportCell('arFps', report.fps, v => Number(v).toFixed(2));
+  setReportCell('arFrames', report.frames_processed);
+  setReportCell('arAlerts', report.alerts_total);
+  const traj = report.trajectory || {};
+  setReportCell('arPoints', traj.points_total);
+  setReportCell('arDuration', traj.duration_sec, v => Number(v).toFixed(2));
+  const decisions = report.decisions || {};
+  const decisionEntries = Object.entries(decisions);
+  setReportCell(
+    'arDecisions',
+    decisionEntries.length
+      ? decisionEntries.map(([k, v]) => `${k}: ${v}`).join(', ')
+      : null,
+  );
+  setReportCell('arGeneratedAt', report.generated_at);
+
+  const mid = report.mission_id || AUTO.lastMissionId;
+  if (mid) {
+    const csvLink = document.getElementById('arDownloadCsv');
+    csvLink.href = `/auto-missions/${encodeURIComponent(mid)}/trajectory.csv`;
+    const jsonLink = document.getElementById('arDownloadJson');
+    jsonLink.href = `/auto-missions/${encodeURIComponent(mid)}/report`;
+
+    const img = document.getElementById('arPlotImg');
+    const empty = document.getElementById('arPlotEmpty');
+    img.onload = () => { img.style.display = ''; empty.style.display = 'none'; };
+    img.onerror = () => { img.style.display = 'none'; empty.style.display = ''; };
+    img.src = `/auto-missions/${encodeURIComponent(mid)}/trajectory-plot.png?ts=${Date.now()}`;
+  }
+}
+
+async function loadAutoReport(options = {}) {
+  const mid = AUTO.lastMissionId;
+  if (!mid) {
+    if (!options.silent) autoLog('Нет завершённой миссии для отчёта.');
+    return;
+  }
+  if (!options.silent) autoLog(`Загружаем отчёт миссии ${mid}...`);
+  try {
+    const resp = await fetch(`/auto-missions/${encodeURIComponent(mid)}/report`);
+    if (!resp.ok) {
+      autoLog(`Ошибка загрузки отчёта (${resp.status}).`);
+      return;
+    }
+    const report = await resp.json();
+    renderAutoReport(report);
+    if (!options.silent) autoLog('Отчёт загружен.');
+  } catch (err) {
+    autoLog(`Сетевая ошибка отчёта: ${err}`);
+  }
+}
+
 document.getElementById('autoStartBtn').addEventListener('click', startAutoSession);
 document.getElementById('autoStopBtn').addEventListener('click', stopAutoSession);
+document.getElementById('autoReportBtn').addEventListener('click', () => loadAutoReport());
 </script>
 </body>
 </html>

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from rescue_ai.domain.value_objects import NavMode
@@ -385,3 +385,71 @@ def get_auto_mission_report(mission_id: str) -> dict[str, object]:
         raise HTTPException(
             status_code=502, detail="Storage operation failed"
         ) from error
+
+
+@router.get(
+    "/auto-missions/{mission_id}/trajectory-plot.png",
+    tags=["auto-missions"],
+    summary="Download trajectory plot PNG",
+    responses={
+        404: {"description": "Mission or plot not found"},
+        502: {"description": "Storage operation failed"},
+        503: {"description": "Automatic mode not configured"},
+    },
+)
+def get_auto_mission_trajectory_plot(mission_id: str) -> Response:
+    """Serve the rendered ``plots/trajectory.png`` for an automatic mission."""
+    logger.info("Endpoint get_auto_mission_trajectory_plot: mission_id=%s", mission_id)
+    service = _require_auto_service()
+    try:
+        blob = service.load_trajectory_plot(mission_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        logger.error("Storage error: %s", type(error).__name__)
+        raise HTTPException(
+            status_code=502, detail="Storage operation failed"
+        ) from error
+    if blob is None:
+        raise HTTPException(status_code=404, detail="Trajectory plot not available")
+    return Response(
+        content=blob.content,
+        media_type=blob.media_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{blob.filename}"',
+        },
+    )
+
+
+@router.get(
+    "/auto-missions/{mission_id}/trajectory.csv",
+    tags=["auto-missions"],
+    summary="Download trajectory CSV",
+    responses={
+        404: {"description": "Mission or trajectory CSV not found"},
+        502: {"description": "Storage operation failed"},
+        503: {"description": "Automatic mode not configured"},
+    },
+)
+def get_auto_mission_trajectory_csv(mission_id: str) -> Response:
+    """Serve the persisted ``trajectory.csv`` for an automatic mission."""
+    logger.info("Endpoint get_auto_mission_trajectory_csv: mission_id=%s", mission_id)
+    service = _require_auto_service()
+    try:
+        blob = service.load_trajectory_csv(mission_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        logger.error("Storage error: %s", type(error).__name__)
+        raise HTTPException(
+            status_code=502, detail="Storage operation failed"
+        ) from error
+    if blob is None:
+        raise HTTPException(status_code=404, detail="Trajectory CSV not available")
+    return Response(
+        content=blob.content,
+        media_type=blob.media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{blob.filename}"',
+        },
+    )

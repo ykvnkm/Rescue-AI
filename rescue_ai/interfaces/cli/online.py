@@ -47,6 +47,7 @@ from rescue_ai.infrastructure.contract_loader import load_stream_contract
 from rescue_ai.infrastructure.postgres_connection import wait_for_postgres
 from rescue_ai.infrastructure.rpi_client import RpiClient
 from rescue_ai.interfaces.api.dependencies import ApiRuntime, set_runtime
+from rescue_ai.interfaces.cli.auto_video_source_factory import auto_video_source_factory
 
 logger = logging.getLogger(__name__)
 _URL_RE = re.compile(r"\b(?:https?|rtsp)://[^\s\"')]+", re.IGNORECASE)
@@ -1061,10 +1062,11 @@ def build_api_runtime() -> tuple[
     if auto_mission_service is not None:
         auto_session_manager = AutoSessionManager(
             service=auto_mission_service,
-            source_factory=cast(VideoSourceFactory, _auto_video_source_factory),
+            source_factory=cast(VideoSourceFactory, auto_video_source_factory),
             ws_jpeg_quality=settings.auto_stream.ws_jpeg_quality,
             ws_max_width=settings.auto_stream.ws_max_width,
             ws_emit_max_fps=settings.auto_stream.ws_emit_max_fps,
+            save_video_dir=settings.auto_stream.save_video_dir,
         )
 
     return (
@@ -1076,39 +1078,6 @@ def build_api_runtime() -> tuple[
         auto_mission_service,
         auto_session_manager,
     )
-
-
-def _auto_video_source_factory(
-    source_kind: str,
-    source_value: str,
-    fps: float,
-) -> tuple[object, str]:
-    """Composition-root factory that maps (kind, value) to a video port.
-
-    Used by :class:`AutoSessionManager` to resolve ``/auto-sessions/start``
-    payloads without forcing the API layer to import infrastructure.
-    """
-    from rescue_ai.infrastructure.video import (
-        FileVideoSource,
-        FolderFramesSource,
-        RTSPVideoSource,
-    )
-
-    if source_kind == "video":
-        path = Path(source_value)
-        if not path.is_file():
-            raise FileNotFoundError(f"video file not found: {source_value}")
-        return FileVideoSource(str(path), fps_override=fps), str(path)
-    if source_kind == "frames":
-        path = Path(source_value)
-        if not path.is_dir():
-            raise FileNotFoundError(f"frames directory not found: {source_value}")
-        return FolderFramesSource(str(path), fps=fps), str(path)
-    if source_kind == "rtsp":
-        if not source_value:
-            raise ValueError("rtsp url must be non-empty")
-        return RTSPVideoSource(source_value), source_value
-    raise ValueError(f"unknown source_kind: {source_kind}")
 
 
 def _build_auto_mission_service(

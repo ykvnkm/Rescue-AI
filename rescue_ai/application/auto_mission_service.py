@@ -49,6 +49,7 @@ from rescue_ai.domain.ports import (
 )
 from rescue_ai.domain.value_objects import (
     AlertRuleConfig,
+    ArtifactBlob,
     AutoDecisionKind,
     MissionMode,
     NavMode,
@@ -76,6 +77,7 @@ class AutoMissionServicePort(Protocol):
         ts_sec: float,
         frame_id: int,
         image_uri: str,
+        detect_enabled: bool = True,
     ) -> "AutoFrameOutcome": ...
 
     def complete_auto_mission(
@@ -85,6 +87,10 @@ class AutoMissionServicePort(Protocol):
     ) -> Mission | None: ...
 
     def get_auto_mission_report(self, mission_id: str) -> dict[str, object]: ...
+
+    def load_trajectory_plot(self, mission_id: str) -> ArtifactBlob | None: ...
+
+    def load_trajectory_csv(self, mission_id: str) -> ArtifactBlob | None: ...
 
 
 @dataclass(frozen=True)
@@ -241,6 +247,26 @@ class AutoMissionService:
         )
         return report
 
+    def load_trajectory_plot(self, mission_id: str) -> ArtifactBlob | None:
+        """Load the persisted trajectory PNG for a completed auto mission."""
+        mission = self._deps.mission_repository.get(mission_id)
+        if mission is None:
+            raise ValueError("Mission not found")
+        if mission.mode != MissionMode.AUTOMATIC:
+            raise ValueError("load_trajectory_plot requires an automatic mission")
+        ds = _mission_ds(mission)
+        return self._deps.artifact_storage.load_trajectory_plot(mission_id, ds)
+
+    def load_trajectory_csv(self, mission_id: str) -> ArtifactBlob | None:
+        """Load the persisted trajectory CSV for a completed auto mission."""
+        mission = self._deps.mission_repository.get(mission_id)
+        if mission is None:
+            raise ValueError("Mission not found")
+        if mission.mode != MissionMode.AUTOMATIC:
+            raise ValueError("load_trajectory_csv requires an automatic mission")
+        ds = _mission_ds(mission)
+        return self._deps.artifact_storage.load_trajectory_csv(mission_id, ds)
+
     # ── Frame ingestion ─────────────────────────────────────────
 
     def ingest_frame(
@@ -250,6 +276,7 @@ class AutoMissionService:
         ts_sec: float,
         frame_id: int,
         image_uri: str,
+        detect_enabled: bool = True,
     ) -> AutoFrameOutcome:
         mission = self._deps.mission_repository.get(mission_id)
         if mission is None:
@@ -263,7 +290,10 @@ class AutoMissionService:
 
         runtime = self._runtimes.setdefault(mission_id, AutoMissionService._Runtime())
 
-        detections = list(self._deps.detector.detect(frame_bgr))
+        if detect_enabled:
+            detections = list(self._deps.detector.detect(frame_bgr))
+        else:
+            detections = []
 
         traj_point = self._run_navigation(
             mission_id=mission_id,

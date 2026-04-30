@@ -88,6 +88,10 @@ class AutoStreamSettings(BaseEnvSettings):
     ws_jpeg_quality: int = Field(default=55, alias="AUTO_WS_JPEG_QUALITY")
     ws_max_width: int = Field(default=640, alias="AUTO_WS_MAX_WIDTH")
     ws_emit_max_fps: float = Field(default=8.0, alias="AUTO_WS_EMIT_MAX_FPS")
+    save_video_dir: str = Field(
+        default="artifacts/auto_recordings",
+        alias="AUTO_SAVE_VIDEO_DIR",
+    )
 
 
 class Settings(BaseSettings):

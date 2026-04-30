@@ -19,13 +19,12 @@ import asyncio
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import (
     APIRouter,
-    File,
-    Form,
     HTTPException,
+    Request,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
@@ -89,6 +88,53 @@ class AutoSessionActiveResponse(BaseModel):
     frames_emitted: int = 0
     alerts_total: int = 0
     avg_stream_fps: float = 0.0
+
+
+def _as_bool(value: object, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    return text in {"1", "true", "yes", "on"}
+
+
+def _resolve_source_value(
+    *,
+    source_kind: SourceKind,
+    source_value: str,
+    file: UploadFile | None,
+    nsu_channel: Literal["local", "stream"],
+    rpi_mission_id: str,
+) -> tuple[str, bool, str]:
+    stream_channel = nsu_channel == "stream"
+    mission_id_clean = rpi_mission_id.strip()
+    if stream_channel:
+        if source_kind == "rtsp":
+            raise HTTPException(
+                status_code=400,
+                detail="RTSP source is not available in stream channel",
+            )
+        if not mission_id_clean:
+            raise HTTPException(
+                status_code=400,
+                detail="rpi_mission_id is required when nsu_channel=stream",
+            )
+        return "", True, mission_id_clean
+
+    resolved_value = source_value or ""
+    if source_kind == "video" and file is not None:
+        stored = _persist_upload(file)
+        resolved_value = str(stored)
+    if not resolved_value:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "source_value (or uploaded file for source_kind=video) "
+                "is required in local channel"
+            ),
+        )
+    return resolved_value, False, mission_id_clean
 
 
 def _require_manager() -> AutoSessionManager:
@@ -162,39 +208,46 @@ def _persist_upload(upload: UploadFile) -> Path:
     },
 )
 async def start_auto_session(
-    source_kind: SourceKind = Form(
-        ..., description="Source type: video | rtsp | frames"
-    ),
-    source_value: str | None = Form(
-        default=None,
-        description=(
-            "Source value: rtsp url, local filesystem path, or frames "
-            "directory. Ignored for uploaded video files."
-        ),
-    ),
-    nav_mode: NavMode = Form(default=NavMode.AUTO),
-    detector_name: str = Form(default="yolo"),
-    fps: float = Form(default=6.0, gt=0.0),
-    file: UploadFile | None = File(default=None),
+    request: Request,
 ) -> dict[str, object]:
     """Create an automatic mission and start streaming frames."""
     manager = _require_manager()
 
-    resolved_value = source_value or ""
-    if source_kind == "video" and file is not None:
-        stored = _persist_upload(file)
-        resolved_value = str(stored)
-    if not resolved_value:
-        raise HTTPException(
-            status_code=400,
-            detail="source_value (or uploaded file for source_kind=video) is required",
-        )
+    form = await request.form()
+    source_kind = cast(SourceKind, str(form.get("source_kind", "video")))
+    source_value = str(form.get("source_value", "") or "")
+    nav_mode = NavMode(str(form.get("nav_mode", NavMode.AUTO)))
+    detector_name = str(form.get("detector_name", "yolo"))
+    fps_raw = form.get("fps", 6.0)
+    if isinstance(fps_raw, (str, int, float)):
+        fps = float(fps_raw)
+    else:
+        fps = 6.0
+    nsu_channel = cast(
+        Literal["local", "stream"], str(form.get("nsu_channel", "local"))
+    )
+    rpi_mission_id = str(form.get("rpi_mission_id", ""))
+
+    detect_enabled = _as_bool(form.get("detect_enabled"), True)
+    save_video = _as_bool(form.get("save_video"), False)
+    demo_loop = _as_bool(form.get("demo_loop"), False)
+    file_obj = form.get("file")
+    file = file_obj if isinstance(file_obj, UploadFile) else None
+    resolved_value, stream_channel, mission_id_clean = _resolve_source_value(
+        source_kind=source_kind,
+        source_value=source_value,
+        file=file,
+        nsu_channel=nsu_channel,
+        rpi_mission_id=rpi_mission_id,
+    )
 
     try:
         source, canonical_value = manager.build_source(
             source_kind=source_kind,
             source_value=resolved_value,
             fps=fps,
+            rpi_mission_id=mission_id_clean if stream_channel else "",
+            demo_loop=bool(demo_loop and not stream_channel and source_kind == "video"),
         )
     except FileNotFoundError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -203,13 +256,26 @@ async def start_auto_session(
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     logger.info(
-        "Endpoint start_auto_session: kind=%s value=%s nav=%s detector=%s fps=%.2f",
+        "Endpoint start_auto_session: channel=%s kind=%s value=%s nav=%s "
+        "detector=%s fps=%.2f detect=%s save_video=%s demo_loop=%s",
+        nsu_channel,
         source_kind,
         sanitize_log_text(canonical_value),
         nav_mode,
         detector_name,
         fps,
+        detect_enabled,
+        save_video,
+        demo_loop,
     )
+    config_json: dict[str, object] = {
+        "nsu_channel": nsu_channel,
+        "detect_enabled": bool(detect_enabled),
+        "save_video": bool(save_video),
+        "demo_loop": bool(demo_loop),
+    }
+    if stream_channel:
+        config_json["rpi_mission_id"] = mission_id_clean
     try:
         session = manager.start_session(
             request=StartSessionRequest(
@@ -219,6 +285,9 @@ async def start_auto_session(
                 nav_mode=nav_mode,
                 detector_name=detector_name,
                 fps=fps,
+                config_json=config_json,
+                detect_enabled=bool(detect_enabled),
+                save_video=bool(save_video),
             ),
         )
     except RuntimeError as error:

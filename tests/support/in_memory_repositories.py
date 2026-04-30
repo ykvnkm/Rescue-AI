@@ -194,8 +194,30 @@ class InMemoryArtifactStorage:
         self._reports[f"{ds}:{mission_id}:trajectory_plot"] = {
             "bytes": len(png_bytes),
             "mission_id": mission_id,
+            "raw": png_bytes,
         }
         return f"memory://missions/{ds}/{mission_id}/plots/trajectory.png"
+
+    def load_trajectory_plot(self, mission_id: str, ds: str) -> ArtifactBlob | None:
+        record = self._reports.get(f"{ds}:{mission_id}:trajectory_plot")
+        if record is None:
+            return None
+        raw = record.get("raw") if isinstance(record, dict) else None
+        return ArtifactBlob(
+            content=raw if isinstance(raw, bytes) else b"",
+            media_type="image/png",
+            filename="trajectory.png",
+        )
+
+    def load_trajectory_csv(self, mission_id: str, ds: str) -> ArtifactBlob | None:
+        record = self._reports.get(f"{ds}:{mission_id}:trajectory")
+        if record is None:
+            return None
+        return ArtifactBlob(
+            content=b"",
+            media_type="text/csv",
+            filename="trajectory.csv",
+        )
 
     def save_trajectory_csv(
         self,

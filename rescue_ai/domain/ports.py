@@ -167,6 +167,20 @@ class ArtifactStorage(Protocol):
         operator missions (``report.json`` at the mission root).
         """
 
+    def load_trajectory_plot(self, mission_id: str, ds: str) -> ArtifactBlob | None:
+        """Load the rendered trajectory PNG for an automatic mission.
+
+        Returns ``None`` when the artifact does not exist in S3. Used by
+        the UI to render the plot inline on the report card.
+        """
+
+    def load_trajectory_csv(self, mission_id: str, ds: str) -> ArtifactBlob | None:
+        """Load the persisted trajectory CSV for an automatic mission.
+
+        Returns ``None`` when the artifact does not exist in S3. The UI
+        offers it as a downloadable file.
+        """
+
 
 class DetectorPort(Protocol):
     """Port for ML detector used by both online and batch services."""

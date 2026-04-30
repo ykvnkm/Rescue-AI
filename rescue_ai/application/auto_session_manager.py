@@ -23,7 +23,7 @@ import logging
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
@@ -47,8 +47,13 @@ class VideoFramePort(Protocol):
     def close(self) -> None: ...
 
 
-# (source_kind, source_value, fps) -> (VideoFramePort, resolved_value)
-VideoSourceFactory = Callable[[str, str, float], tuple[VideoFramePort, str]]
+# (source_kind, source_value, fps, rpi_mission_id, demo_loop)
+# -> (VideoFramePort, resolved_value)
+# ``rpi_mission_id`` is non-empty only when the caller wants a remote RPi stream;
+# in that case the factory must wrap ``RpiClient.start_stream`` and ignore
+# ``source_value`` (it stays "" in the stream channel). ``demo_loop`` applies
+# only to local file sources — it asks ``FileVideoSource`` to auto-restart on EOF.
+VideoSourceFactory = Callable[[str, str, float, str, bool], tuple[VideoFramePort, str]]
 
 
 @dataclass
@@ -90,11 +95,21 @@ class AutoSessionInit:
     source_value: str
     nav_mode: NavMode
     detector_name: str
+    detect_enabled: bool = True
+    save_video: bool = False
+    save_video_dir: str | None = None
 
 
 @dataclass(frozen=True)
 class StartSessionRequest:
-    """Input payload for :meth:`AutoSessionManager.start_session`."""
+    """Input payload for :meth:`AutoSessionManager.start_session`.
+
+    Automatic-mode behavior flags (``nsu_channel``, ``rpi_mission_id``,
+    ``demo_loop``) travel inside ``config_json`` so they're persisted on
+    the Mission record. Session-runtime flags (``detect_enabled``,
+    ``save_video``) are passed explicitly to :class:`AutoSession` because
+    they influence per-frame processing in the session thread.
+    """
 
     source: VideoFramePort
     source_kind: str
@@ -104,6 +119,8 @@ class StartSessionRequest:
     fps: float
     total_frames: int = 0
     config_json: Mapping[str, object] | None = None
+    detect_enabled: bool = True
+    save_video: bool = False
 
 
 @dataclass
@@ -178,6 +195,9 @@ class AutoSession:
         self.source_value = init.source_value
         self.nav_mode = init.nav_mode
         self.detector_name = init.detector_name
+        self._detect_enabled = bool(init.detect_enabled)
+        self._save_video = bool(init.save_video)
+        self._save_video_dir = init.save_video_dir
         self._service = service
         self._encoder = encoder
         self._emit_min_dt = 1.0 / emit_max_fps if emit_max_fps > 0 else 0.0
@@ -187,6 +207,14 @@ class AutoSession:
         self._done_event = threading.Event()
         self._subscribers = _SubscribersBundle()
         self._stats = AutoSessionStats()
+        self._video_writer: Any | None = None
+        self._video_writer_path: str | None = None
+        self._stream_stats_cache: dict[str, object] = {}
+        self._last_stream_stats_poll: float = 0.0
+        self._stream_stats_fn: Callable[[], Mapping[str, object]] | None = None
+        stats_fn = getattr(init.source, "session_stats", None)
+        if callable(stats_fn):
+            self._stream_stats_fn = cast(Callable[[], Mapping[str, object]], stats_fn)
         self._thread = threading.Thread(
             target=self._run, name=f"auto-session-{init.session_id}", daemon=True
         )
@@ -295,6 +323,7 @@ class AutoSession:
                         ts_sec=float(ts_sec),
                         frame_id=int(frame_id),
                         image_uri=image_uri,
+                        detect_enabled=self._detect_enabled,
                     )
                 except (RuntimeError, ValueError, TypeError) as error:
                     logger.exception(
@@ -316,6 +345,9 @@ class AutoSession:
                 self._stats.alerts_total += len(outcome.alerts)
                 self._stats.last_frame_at_monotonic = now
 
+                if self._save_video:
+                    self._write_recording_frame(frame_bgr, outcome.detections)
+
                 # Rate-limit emissions to ws_emit_max_fps.
                 if (
                     self._emit_min_dt > 0.0
@@ -324,6 +356,8 @@ class AutoSession:
                 ):
                     self._stats.frames_dropped += 1
                     continue
+
+                self._refresh_stream_stats(now)
 
                 jpeg_b64 = self._encoder.encode(frame_bgr)
                 event = self._build_frame_event(
@@ -352,6 +386,7 @@ class AutoSession:
             self._finalize()
 
     def _finalize(self) -> None:
+        self._close_recording()
         try:
             self._source.close()
         except (RuntimeError, OSError, ValueError):  # pragma: no cover
@@ -449,7 +484,7 @@ class AutoSession:
             for alert in outcome.alerts
         ]
         person_count = sum(1 for d in outcome.detections if d.label == "person")
-        return {
+        event: dict[str, object] = {
             "type": "frame",
             "session_id": self.session_id,
             "mission_id": self.mission.mission_id,
@@ -468,6 +503,116 @@ class AutoSession:
                 "avg_stream_fps": self._stats.avg_stream_fps,
             },
         }
+        if self._stream_stats_cache:
+            event["stream_stats"] = dict(self._stream_stats_cache)
+        return event
+
+    # ── Stream-side stats (RPi potok channel) ─────────────────────
+
+    def _refresh_stream_stats(self, now: float) -> None:
+        """Poll the source's ``session_stats()`` at most every ~2s."""
+        if self._stream_stats_fn is None:
+            return
+        if now - self._last_stream_stats_poll < 2.0:
+            return
+        self._last_stream_stats_poll = now
+        try:
+            payload = self._stream_stats_fn()
+        except (RuntimeError, ValueError, OSError, TypeError):
+            return
+        if isinstance(payload, Mapping):
+            self._stream_stats_cache = dict(payload)
+
+    # ── Recording (save_video toggle) ─────────────────────────────
+
+    def _write_recording_frame(
+        self, frame_bgr: object, detections: Sequence[object]
+    ) -> None:
+        """Overlay bboxes and append frame to the per-session video file."""
+        try:
+            import cv2  # noqa: WPS433
+        except ImportError:  # pragma: no cover
+            return
+        frame = cast(Any, frame_bgr)
+        try:
+            height, width = frame.shape[:2]
+        except (AttributeError, TypeError, ValueError):  # pragma: no cover
+            return
+
+        if self._video_writer is None:
+            import os
+            import tempfile
+
+            out_dir = self._save_video_dir or tempfile.gettempdir()
+            os.makedirs(out_dir, exist_ok=True)
+            filename = f"auto_{self.mission.mission_id}.mp4"
+            path = os.path.join(out_dir, filename)
+            fourcc = int(cv2.VideoWriter.fourcc(*"mp4v"))
+            fps = self.mission.fps if self.mission.fps > 0 else 10.0
+            writer = cv2.VideoWriter(
+                path, fourcc, float(fps), (int(width), int(height))
+            )
+            if not writer.isOpened():
+                logger.warning(
+                    "auto-session %s: cv2.VideoWriter failed to open at %s",
+                    self.session_id,
+                    path,
+                )
+                return
+            self._video_writer = writer
+            self._video_writer_path = path
+            logger.info(
+                "auto-session %s: recording started at %s (%dx%d @ %.1ffps)",
+                self.session_id,
+                path,
+                width,
+                height,
+                fps,
+            )
+
+        annotated = frame
+        if detections:
+            annotated = frame.copy()
+            for det in detections:
+                bbox = getattr(det, "bbox", None)
+                if not bbox or len(bbox) < 4:
+                    continue
+                x1, y1, x2, y2 = (int(float(v)) for v in bbox[:4])
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                label = getattr(det, "label", "") or ""
+                score = float(getattr(det, "score", 0.0))
+                caption = f"{label} {score:.2f}" if label else f"{score:.2f}"
+                cv2.putText(
+                    annotated,
+                    caption,
+                    (x1, max(0, y1 - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 255, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
+
+        try:
+            self._video_writer.write(annotated)
+        except (RuntimeError, ValueError):  # pragma: no cover
+            logger.exception(
+                "auto-session %s: VideoWriter.write failed", self.session_id
+            )
+
+    def _close_recording(self) -> None:
+        if self._video_writer is None:
+            return
+        try:
+            self._video_writer.release()
+        except (RuntimeError, ValueError):  # pragma: no cover
+            pass
+        logger.info(
+            "auto-session %s: recording saved to %s",
+            self.session_id,
+            self._video_writer_path,
+        )
+        self._video_writer = None
 
     def _emit(self, event: Mapping[str, object]) -> None:
         for subscriber in self._subscribers.snapshot():
@@ -488,11 +633,13 @@ class AutoSessionManager:
         ws_jpeg_quality: int = 55,
         ws_max_width: int = 640,
         ws_emit_max_fps: float = 8.0,
+        save_video_dir: str | None = None,
     ) -> None:
         self._service = service
         self._source_factory = source_factory
         self._encoder = _JpegEncoder(max_width=ws_max_width, quality=ws_jpeg_quality)
         self._emit_max_fps = float(ws_emit_max_fps)
+        self._save_video_dir = save_video_dir
         self._lock = threading.Lock()
         self._active: AutoSession | None = None
 
@@ -516,16 +663,22 @@ class AutoSessionManager:
         source_kind: str,
         source_value: str,
         fps: float,
+        rpi_mission_id: str = "",
+        demo_loop: bool = False,
     ) -> tuple[VideoFramePort, str]:
         """Resolve a ``(kind, value)`` pair into a ``VideoFramePort``.
 
-        Uses the injected :class:`VideoSourceFactory`. Callers must inject
-        one at construction time (the composition root wires the concrete
-        implementation living in ``rescue_ai.infrastructure.video``).
+        Uses the injected :class:`VideoSourceFactory`. When
+        ``rpi_mission_id`` is non-empty the factory is expected to build a
+        remote RPi stream source instead of reading ``source_value``.
+        ``demo_loop`` applies only to local video files and asks the
+        source to re-open on EOF.
         """
         if self._source_factory is None:
             raise RuntimeError("AutoSessionManager: no source_factory injected")
-        return self._source_factory(source_kind, source_value, fps)
+        return self._source_factory(
+            source_kind, source_value, fps, rpi_mission_id, demo_loop
+        )
 
     def start_session(
         self,
@@ -556,6 +709,9 @@ class AutoSessionManager:
                     source_value=request.source_value,
                     nav_mode=request.nav_mode,
                     detector_name=request.detector_name,
+                    detect_enabled=request.detect_enabled,
+                    save_video=request.save_video,
+                    save_video_dir=self._save_video_dir,
                 ),
                 service=self._service,
                 encoder=self._encoder,

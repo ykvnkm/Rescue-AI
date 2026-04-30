@@ -12,6 +12,7 @@ import pytest
 from rescue_ai.infrastructure.video import (
     FileVideoSource,
     FolderFramesSource,
+    MjpegHTTPSource,
     RTSPVideoSource,
 )
 
@@ -201,3 +202,120 @@ def test_rtsp_close_stops_iteration() -> None:
 
     assert collected == [0, 1]
     assert not cap.is_opened()
+
+
+# ── MjpegHTTPSource ─────────────────────────────────────────────────
+
+
+def _encode_jpeg(fill: int) -> bytes:
+    frame = _make_frame(fill)
+    ok, buf = cv2.imencode(".jpg", frame)
+    assert ok
+    return buf.tobytes()
+
+
+def _mjpeg_multipart(jpegs: list[bytes], boundary: bytes = b"--frame") -> bytes:
+    """Glue JPEG payloads with MIME multipart framing (parser only scans SOI/EOI)."""
+    parts: list[bytes] = []
+    for jpg in jpegs:
+        parts.append(boundary + b"\r\nContent-Type: image/jpeg\r\n\r\n")
+        parts.append(jpg)
+        parts.append(b"\r\n")
+    parts.append(boundary + b"--\r\n")
+    return b"".join(parts)
+
+
+class _FakeHttpStream:
+    """File-like object returning a fixed byte sequence in slices."""
+
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+        self._offset = 0
+        self.closed = False
+
+    def read(self, amt: int | None = None) -> bytes:
+        if self.closed or self._offset >= len(self._payload):
+            return b""
+        n = len(self._payload) - self._offset if amt is None else int(amt)
+        stop = self._offset + n
+        chunk = self._payload[slice(self._offset, stop)]
+        self._offset += len(chunk)
+        return chunk
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_mjpeg_rejects_empty_url() -> None:
+    with pytest.raises(ValueError):
+        MjpegHTTPSource("")
+
+
+def test_mjpeg_decodes_multipart_stream() -> None:
+    jpegs = [_encode_jpeg(i * 30) for i in range(3)]
+    stream = _FakeHttpStream(_mjpeg_multipart(jpegs))
+
+    src = MjpegHTTPSource(
+        "http://fake/stream.mjpg",
+        max_reconnect_attempts=1,
+        chunk_size=4096,
+        sleep_fn=lambda _s: None,
+        http_opener=lambda _u, _c, _r: stream,
+    )
+
+    frames: list[tuple[np.ndarray, float, int]] = []
+    with pytest.raises(RuntimeError):  # end-of-stream → reconnect budget exhausted
+        for item in src.frames():
+            frames.append(item)
+
+    assert [fid for _, _, fid in frames] == [0, 1, 2]
+    for frame, _ts, _fid in frames:
+        assert frame.shape == (32, 48, 3)
+    assert stream.closed is True
+
+
+def test_mjpeg_close_stops_iteration() -> None:
+    jpegs = [_encode_jpeg(i * 30) for i in range(5)]
+    stream = _FakeHttpStream(_mjpeg_multipart(jpegs))
+
+    src = MjpegHTTPSource(
+        "http://fake/stream.mjpg",
+        max_reconnect_attempts=5,
+        chunk_size=4096,
+        sleep_fn=lambda _s: None,
+        http_opener=lambda _u, _c, _r: stream,
+    )
+
+    collected: list[int] = []
+    for _frame, _ts, fid in src.frames():
+        collected.append(fid)
+        if len(collected) == 2:
+            src.close()
+            break
+
+    assert collected == [0, 1]
+    assert stream.closed is True
+
+
+def test_mjpeg_reconnects_on_connect_failure() -> None:
+    opens: list[int] = []
+    sleeps: list[float] = []
+
+    def _always_fail(_url: str, _c: float, _r: float) -> _FakeHttpStream:
+        opens.append(1)
+        raise OSError("simulated connect failure")
+
+    src = MjpegHTTPSource(
+        "http://fake/stream.mjpg",
+        reconnect_initial_sec=0.01,
+        reconnect_max_sec=0.02,
+        max_reconnect_attempts=3,
+        sleep_fn=sleeps.append,
+        http_opener=_always_fail,
+    )
+
+    with pytest.raises(RuntimeError, match="MJPEG connect failed"):
+        list(src.frames())
+
+    assert len(opens) == 3
+    assert len(sleeps) == 2  # sleep between attempts, not after the last

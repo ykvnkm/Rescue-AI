@@ -240,6 +240,33 @@ class S3ArtifactStorage:
         )
         return f"s3://{self._settings.bucket}/{key}"
 
+    def load_trajectory_plot(self, mission_id: str, ds: str) -> ArtifactBlob | None:
+        key = self._trajectory_plot_key(mission_id, ds)
+        return self._load_object(key, default_media_type="image/png")
+
+    def load_trajectory_csv(self, mission_id: str, ds: str) -> ArtifactBlob | None:
+        key = self._trajectory_key(mission_id, ds)
+        return self._load_object(key, default_media_type="text/csv")
+
+    def _load_object(self, key: str, *, default_media_type: str) -> ArtifactBlob | None:
+        try:
+            response = self._client.get_object(Bucket=self._settings.bucket, Key=key)
+        except S3_OPERATION_ERRORS as error:
+            if _is_missing_s3_object_error(error):
+                return None
+            raise
+        body = response["Body"].read()
+        media_type = (
+            response.get("ContentType")
+            or mimetypes.guess_type(Path(key).name)[0]
+            or default_media_type
+        )
+        return ArtifactBlob(
+            content=body,
+            media_type=media_type,
+            filename=Path(key).name,
+        )
+
     def write_report(self, run_key: str, payload: dict[str, object]) -> str:
         """Write a batch run report to S3."""
         safe_key = run_key.replace(":", "__")
