@@ -1261,10 +1261,59 @@ def _build_repositories(
         logger.warning("Automatic-mode repositories unavailable: %s", err)
         auto_repos = None
 
+    mission_repo: MissionRepository = PostgresMissionRepository(postgres_db)
+    alert_repo: AlertRepository = PostgresAlertRepository(
+        postgres_db, episode_settings=None
+    )
+    frame_event_repo: FrameEventRepository = PostgresFrameEventRepository(
+        postgres_db, episode_settings=None
+    )
+
+    # Hybrid profile (ADR-0007 §3): wrap every write-side repository
+    # in an offline-first decorator that emits a `replication_outbox`
+    # row alongside the local write. The sync-worker drains those
+    # rows into the remote Postgres / S3.
+    if str(getattr(settings.deployment, "mode", "cloud")) == "hybrid":
+        from rescue_ai.infrastructure.sync.offline_first_repositories import (
+            OfflineFirstAlertRepository,
+            OfflineFirstAutoDecisionRepository,
+            OfflineFirstAutoMissionConfigRepository,
+            OfflineFirstFrameEventRepository,
+            OfflineFirstMissionRepository,
+            OfflineFirstTrajectoryRepository,
+        )
+        from rescue_ai.infrastructure.sync.sync_outbox_repository import (
+            PostgresSyncOutboxRepository,
+        )
+
+        outbox = PostgresSyncOutboxRepository(postgres_db)
+        mission_repo = OfflineFirstMissionRepository(mission_repo, outbox)
+        alert_repo = OfflineFirstAlertRepository(alert_repo, outbox)
+        frame_event_repo = OfflineFirstFrameEventRepository(
+            frame_event_repo, outbox
+        )
+        if auto_repos is not None:
+            auto_repos = _AutoRepoBundle(
+                trajectory_repository=OfflineFirstTrajectoryRepository(
+                    auto_repos.trajectory_repository, outbox
+                ),
+                auto_decision_repository=OfflineFirstAutoDecisionRepository(
+                    auto_repos.auto_decision_repository, outbox
+                ),
+                auto_mission_config_repository=(
+                    OfflineFirstAutoMissionConfigRepository(
+                        auto_repos.auto_mission_config_repository, outbox
+                    )
+                ),
+            )
+        logger.info(
+            "Hybrid profile active: outbox-wrapped repositories enabled"
+        )
+
     return (
-        PostgresMissionRepository(postgres_db),
-        PostgresAlertRepository(postgres_db, episode_settings=None),
-        PostgresFrameEventRepository(postgres_db, episode_settings=None),
+        mission_repo,
+        alert_repo,
+        frame_event_repo,
         postgres_db.truncate_all,
         auto_repos,
     )

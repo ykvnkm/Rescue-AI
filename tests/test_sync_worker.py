@@ -4,11 +4,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from rescue_ai.domain.entities import Mission
+from rescue_ai.domain.entities import (
+    Alert,
+    AutoDecision,
+    Detection,
+    FrameEvent,
+    Mission,
+    TrajectoryPoint,
+)
 from rescue_ai.domain.ports import OutboxRecord, OutboxRow
-from rescue_ai.domain.value_objects import MissionMode
+from rescue_ai.domain.value_objects import (
+    AlertStatus,
+    AutoDecisionKind,
+    MissionMode,
+    TrajectorySource,
+)
 from rescue_ai.infrastructure.sync.offline_first_repositories import (
+    OfflineFirstAlertRepository,
+    OfflineFirstAutoDecisionRepository,
+    OfflineFirstFrameEventRepository,
     OfflineFirstMissionRepository,
+    OfflineFirstTrajectoryRepository,
 )
 from rescue_ai.infrastructure.sync.sync_worker import SyncWorker, SyncWorkerConfig
 
@@ -296,3 +312,202 @@ def test_offline_first_repo_skips_outbox_when_inner_returns_none() -> None:
 
     assert result is None
     assert not outbox.rows
+
+
+# ── Alert / FrameEvent / Trajectory / AutoDecision wrappers ───────
+
+
+def _alert(alert_id: str = "a-1") -> Alert:
+    primary = Detection(
+        bbox=(0.0, 0.0, 10.0, 10.0),
+        score=0.9,
+        label="person",
+        model_name="yolo",
+    )
+    return Alert(
+        alert_id=alert_id,
+        mission_id="m-1",
+        frame_id=42,
+        ts_sec=12.5,
+        image_uri="s3://bucket/m-1/42.jpg",
+        people_detected=1,
+        primary_detection=primary,
+        detections=[primary],
+    )
+
+
+class _StubAlertRepo:
+    def __init__(self) -> None:
+        self.added: list[Alert] = []
+        self.review_results: dict[str, Alert] = {}
+
+    def add(self, alert: Alert) -> None:
+        self.added.append(alert)
+
+    def get(self, alert_id: str) -> Alert | None:
+        return next(
+            (a for a in self.added if a.alert_id == alert_id), None
+        )
+
+    def list(
+        self, mission_id: str | None = None, status: str | None = None
+    ) -> list[Alert]:
+        _ = (mission_id, status)
+        return list(self.added)
+
+    def update_status(self, alert_id, updates):
+        if alert_id in self.review_results:
+            return self.review_results[alert_id]
+        existing = self.get(alert_id)
+        if existing is None:
+            return None
+        existing.status = updates["status"]
+        existing.reviewed_by = updates.get("reviewed_by")
+        return existing
+
+
+def test_offline_first_alert_repo_emits_outbox_on_add_and_review() -> None:
+    inner = _StubAlertRepo()
+    outbox = _InMemoryOutbox()
+    repo = OfflineFirstAlertRepository(inner, outbox)
+
+    alert = _alert("a-1")
+    repo.add(alert)
+
+    assert inner.added == [alert]
+    assert len(outbox.rows) == 1
+    assert outbox.rows[0].entity_type == "alert"
+    assert outbox.rows[0].idempotency_key.startswith("alert:a-1:add:")
+    assert outbox.rows[0].payload_json["alert_id"] == "a-1"
+
+    repo.update_status(
+        "a-1",
+        updates={
+            "status": AlertStatus.REVIEWED_CONFIRMED,
+            "reviewed_by": "operator",
+            "reviewed_at_sec": 100.0,
+            "decision_reason": None,
+        },
+    )
+    assert len(outbox.rows) == 2
+    assert outbox.rows[1].idempotency_key == (
+        f"alert:a-1:review:{AlertStatus.REVIEWED_CONFIRMED}:operator"
+    )
+
+
+def test_offline_first_alert_repo_no_outbox_when_review_returns_none() -> None:
+    inner = _StubAlertRepo()
+    outbox = _InMemoryOutbox()
+    repo = OfflineFirstAlertRepository(inner, outbox)
+
+    result = repo.update_status(
+        "missing",
+        updates={
+            "status": AlertStatus.REVIEWED_CONFIRMED,
+            "reviewed_by": "x",
+            "reviewed_at_sec": 0.0,
+            "decision_reason": None,
+        },
+    )
+    assert result is None
+    assert not outbox.rows
+
+
+class _StubFrameEventRepo:
+    def __init__(self) -> None:
+        self.added: list[FrameEvent] = []
+
+    def add(self, frame_event: FrameEvent) -> None:
+        self.added.append(frame_event)
+
+    def list_by_mission(self, mission_id: str) -> list[FrameEvent]:
+        return [fe for fe in self.added if fe.mission_id == mission_id]
+
+
+def test_offline_first_frame_event_repo_uses_natural_key() -> None:
+    inner = _StubFrameEventRepo()
+    outbox = _InMemoryOutbox()
+    repo = OfflineFirstFrameEventRepository(inner, outbox)
+
+    fe = FrameEvent(
+        mission_id="m-1",
+        frame_id=7,
+        ts_sec=1.5,
+        image_uri="s3://bucket/m-1/7.jpg",
+        gt_person_present=False,
+        gt_episode_id=None,
+    )
+    repo.add(fe)
+    repo.add(fe)  # replay — same natural key, outbox dedupes
+
+    assert inner.added == [fe, fe]
+    assert len(outbox.rows) == 1  # dedup by idempotency_key
+    assert outbox.rows[0].idempotency_key == "frame_event:m-1:7"
+
+
+class _StubTrajectoryRepo:
+    def __init__(self) -> None:
+        self.added: list[TrajectoryPoint] = []
+
+    def add(self, point: TrajectoryPoint) -> None:
+        self.added.append(point)
+
+    def list_by_mission(self, mission_id: str) -> list[TrajectoryPoint]:
+        return [p for p in self.added if p.mission_id == mission_id]
+
+
+def test_offline_first_trajectory_repo_uses_seq_in_key() -> None:
+    inner = _StubTrajectoryRepo()
+    outbox = _InMemoryOutbox()
+    repo = OfflineFirstTrajectoryRepository(inner, outbox)
+
+    point = TrajectoryPoint(
+        mission_id="m-1",
+        seq=3,
+        ts_sec=0.5,
+        x=1.0,
+        y=2.0,
+        z=0.5,
+        source=TrajectorySource.MARKER,
+        frame_id=18,
+    )
+    repo.add(point)
+
+    assert inner.added == [point]
+    assert outbox.rows[0].idempotency_key == "trajectory_point:m-1:3"
+    assert outbox.rows[0].payload_json["seq"] == 3
+    assert outbox.rows[0].payload_json["source"] == str(
+        TrajectorySource.MARKER
+    )
+
+
+class _StubAutoDecisionRepo:
+    def __init__(self) -> None:
+        self.added: list[AutoDecision] = []
+
+    def add(self, decision: AutoDecision) -> None:
+        self.added.append(decision)
+
+    def list_by_mission(self, mission_id: str) -> list[AutoDecision]:
+        return [d for d in self.added if d.mission_id == mission_id]
+
+
+def test_offline_first_auto_decision_repo_emits_insert_outbox_row() -> None:
+    inner = _StubAutoDecisionRepo()
+    outbox = _InMemoryOutbox()
+    repo = OfflineFirstAutoDecisionRepository(inner, outbox)
+
+    decision = AutoDecision(
+        decision_id="d-1",
+        mission_id="m-1",
+        ts_sec=0.7,
+        kind=AutoDecisionKind.ALERT_CREATED,
+        reason="person detected",
+        created_at="2026-04-28T00:00:00+00:00",
+    )
+    repo.add(decision)
+
+    assert inner.added == [decision]
+    assert outbox.rows[0].entity_type == "auto_decision"
+    assert outbox.rows[0].operation == "insert"
+    assert outbox.rows[0].idempotency_key == "auto_decision:d-1"
