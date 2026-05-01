@@ -79,22 +79,22 @@ def _build_source(
     scheme = parsed.scheme.lower()
 
     if scheme in {"rtsp", "rtsps"}:
-        source = RTSPVideoSource(uri, fps_hint=fps_override or default_fps)
-        return source.frames(), uri, source.fps
+        rtsp_source = RTSPVideoSource(uri, fps_hint=fps_override or default_fps)
+        return rtsp_source.frames(), uri, rtsp_source.fps
 
     if scheme == "folder":
         path = Path(parsed.path or parsed.netloc).expanduser()
-        source = FolderFramesSource(path, fps=fps_override or default_fps)
-        return source.frames(), path.as_posix(), source.fps
+        folder_source = FolderFramesSource(path, fps=fps_override or default_fps)
+        return folder_source.frames(), path.as_posix(), folder_source.fps
 
     # File path (with or without file:// scheme).
     raw_path = parsed.path if scheme == "file" else uri
     path = Path(raw_path).expanduser()
     if path.is_dir():
-        source = FolderFramesSource(path, fps=fps_override or default_fps)
-        return source.frames(), path.as_posix(), source.fps
-    source = FileVideoSource(path, fps_override=fps_override)
-    return source.frames(), path.as_posix(), source.fps
+        folder_source = FolderFramesSource(path, fps=fps_override or default_fps)
+        return folder_source.frames(), path.as_posix(), folder_source.fps
+    file_source = FileVideoSource(path, fps_override=fps_override)
+    return file_source.frames(), path.as_posix(), file_source.fps
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -5,17 +5,17 @@ from __future__ import annotations
 import pytest
 
 from rescue_ai.config import (
+    ApiSettings,
     AppSettings,
+    AutoStreamSettings,
+    DatabaseSettings,
     DeploymentSettings,
+    DetectionSettings,
+    RpiSettings,
     SecuritySettings,
     Settings,
-    ApiSettings,
-    DatabaseSettings,
     StorageSettings,
-    RpiSettings,
-    DetectionSettings,
     UploadSettings,
-    AutoStreamSettings,
 )
 
 
@@ -77,7 +77,7 @@ def test_offline_profile_in_dev_allows_tls_off() -> None:
         security=SecuritySettings(TLS_MODE="off"),
         env="dev",
     )
-    assert settings.deployment.mode == "offline"
+    assert str(getattr(settings.deployment, "mode", "")) == "offline"
 
 
 def test_offline_profile_outside_dev_rejects_tls_off() -> None:
@@ -97,4 +97,4 @@ def test_cloud_profile_allows_tls_off_anywhere() -> None:
         security=SecuritySettings(TLS_MODE="off"),
         env="prod",
     )
-    assert settings.security.tls_mode == "off"
+    assert str(getattr(settings.security, "tls_mode", "")) == "off"

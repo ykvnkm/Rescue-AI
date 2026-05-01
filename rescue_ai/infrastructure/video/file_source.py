@@ -39,6 +39,16 @@ class FileVideoSource:
         self._fps_override = fps_override
         self._loop = bool(loop)
         self._closed = False
+        # Resolve effective FPS once so callers (auto-mission tuning,
+        # tests) can read it via the ``fps`` property before iterating.
+        # ``_resolve_fps`` falls back to the file's reported FPS, then to
+        # ``_DEFAULT_FPS`` when override / metadata are unavailable.
+        self._fps = self._resolve_fps()
+
+    @property
+    def fps(self) -> float:
+        """Effective source FPS used for timestamps and navigation tuning."""
+        return self._fps
 
     def frames(self) -> Iterator[tuple[np.ndarray, float, int]]:
         """Open the file, iterate decoded BGR frames, close on exhaustion."""

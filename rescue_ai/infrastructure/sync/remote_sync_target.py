@@ -43,19 +43,13 @@ class RemoteSyncTargetAdapter:
         if row.s3_bucket and row.s3_key and row.local_path:
             local = Path(row.local_path)
             if not local.exists():
-                raise FileNotFoundError(
-                    f"outbox local_path missing: {row.local_path}"
-                )
-            self._s3_client.upload_file(
-                str(local), row.s3_bucket, row.s3_key
-            )
+                raise FileNotFoundError(f"outbox local_path missing: {row.local_path}")
+            self._s3_client.upload_file(str(local), row.s3_bucket, row.s3_key)
             return
 
         handler = self._handlers.get(row.entity_type)
         if handler is None:
-            raise ValueError(
-                f"no remote handler for entity_type={row.entity_type}"
-            )
+            raise ValueError(f"no remote handler for entity_type={row.entity_type}")
         with self._remote_db.connect() as conn:
             handler(conn, row)
             conn.commit()

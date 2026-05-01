@@ -162,7 +162,10 @@ def test_marker_init_replays_buffer_tail_before_next_external_frame(
     steps: list[int | None] = []
 
     class FakeMarkerEngine:
+        """Minimal marker-engine stub used to track replayed frame ids."""
+
         def __init__(self, mission_id: str, config: NavigationTuning) -> None:
+            _ = config
             self._mission_id = mission_id
             self._seq = 0
 

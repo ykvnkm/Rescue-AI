@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import pytest
-
 from rescue_ai.domain.entities import Mission
 from rescue_ai.domain.ports import OutboxRecord, OutboxRow
 from rescue_ai.domain.value_objects import MissionMode
@@ -13,7 +11,6 @@ from rescue_ai.infrastructure.sync.offline_first_repositories import (
     OfflineFirstMissionRepository,
 )
 from rescue_ai.infrastructure.sync.sync_worker import SyncWorker, SyncWorkerConfig
-
 
 # ── In-memory fakes ─────────────────────────────────────────────────
 
@@ -28,6 +25,7 @@ class _InMemoryOutbox:
     _next_id: int = 1
 
     def enqueue(self, record: OutboxRecord, *, conn: object | None = None) -> None:
+        _ = conn
         if record.idempotency_key in self._seen_keys:
             return  # mirror ON CONFLICT DO NOTHING
         self._seen_keys.add(record.idempotency_key)
@@ -216,7 +214,7 @@ def test_sync_worker_stops_retrying_after_max_attempts() -> None:
     worker = SyncWorker(outbox, target, SyncWorkerConfig(max_attempts=10))
     worker.run_once()
 
-    assert target.delivered == []
+    assert not target.delivered
     assert outbox.failures and outbox.failures[0][0] == 42
 
 
@@ -224,6 +222,8 @@ def test_sync_worker_stops_retrying_after_max_attempts() -> None:
 
 
 class _StubMissionRepo:
+    """Minimal mission repository stub for offline-first adapter tests."""
+
     def __init__(self) -> None:
         self.created: list[Mission] = []
         self.status_updates: list[tuple[str, str, int | None]] = []
@@ -232,14 +232,16 @@ class _StubMissionRepo:
         self.created.append(mission)
 
     def get(self, mission_id: str) -> Mission | None:
-        return next(
-            (m for m in self.created if m.mission_id == mission_id), None
-        )
+        return next((m for m in self.created if m.mission_id == mission_id), None)
 
     def list(self, status: str | None = None) -> list[Mission]:
+        _ = status
         return list(self.created)
 
-    def update_details(self, mission_id, *, source_name=None, total_frames=None, fps=None):
+    def update_details(
+        self, mission_id, *, source_name=None, total_frames=None, fps=None
+    ):
+        _ = (source_name, total_frames, fps)
         return self.get(mission_id)
 
     def update_status(self, mission_id, status, completed_frame_id=None):
@@ -293,4 +295,4 @@ def test_offline_first_repo_skips_outbox_when_inner_returns_none() -> None:
     result = repo.update_status("missing", status="completed")
 
     assert result is None
-    assert outbox.rows == []
+    assert not outbox.rows

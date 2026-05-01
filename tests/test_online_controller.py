@@ -7,8 +7,13 @@ from rescue_ai.interfaces.cli.online import DetectionStreamController
 
 
 class _FakeRpiClient:
-    def __init__(self, _settings) -> None:
+    def __init__(self, _settings, security=None) -> None:
+        # Accept the optional ``security`` kwarg the production callers
+        # now pass (composition root forwards SecuritySettings so mTLS
+        # material reaches httpx). Tests don't exercise mTLS so it stays
+        # ignored — the kwarg is just absorbed.
         self._settings = _settings
+        self._security = security
 
     def start_stream(self, mission_id: str, target_fps: float, timeout_sec: float):
         _ = (target_fps, timeout_sec)

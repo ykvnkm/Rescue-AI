@@ -32,8 +32,6 @@ import numpy as np
 
 from rescue_ai.domain.entities import TrajectoryPoint
 from rescue_ai.domain.value_objects import NavMode, TrajectorySource
-
-logger = logging.getLogger(__name__)
 from rescue_ai.navigation.altitude import (
     AltitudeUpdate,
     compute_scale_from_samples,
@@ -58,6 +56,8 @@ from rescue_ai.navigation.tracking import (
     project_to_ground_plane,
 )
 from rescue_ai.navigation.tuning import NavigationTuning
+
+logger = logging.getLogger(__name__)
 
 _DST_MARKER_NAV_M = np.array(
     [
@@ -794,7 +794,8 @@ class NavigationEngine:
         self._seq = 0
 
         engine.step(best_fm, ts_sec=float(best_ts), frame_id=best_fid)
-        for fid, ts, orig in self._init.buffer[best_idx + 1 :]:
+        start_idx = best_idx + 1
+        for fid, ts, orig in self._init.buffer[start_idx:]:
             fm = cv2.resize(orig, (config.marker_resize_w, config.marker_resize_h))
             engine.step(fm, ts_sec=float(ts), frame_id=fid)
         engine.reset_sequence()

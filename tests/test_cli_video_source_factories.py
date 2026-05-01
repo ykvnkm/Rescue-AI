@@ -72,8 +72,12 @@ def test_plain_factory_validation_errors(tmp_path: Path) -> None:
 
 def test_auto_factory_rpi_stream_success(monkeypatch: pytest.MonkeyPatch) -> None:
     class _FakeRpiClient:
-        def __init__(self, settings) -> None:
+        def __init__(self, settings, security=None) -> None:
+            # Composition root forwards SecuritySettings so the RPi
+            # client can flip httpx into mTLS mode (ADR-0007 §4). The
+            # fake just absorbs the kwarg.
             self.settings = settings
+            self.security = security
 
     class _FakeRemoteSource:
         def __init__(self, *, rpi_client, mission_id: str, target_fps: float) -> None:
@@ -87,14 +91,18 @@ def test_auto_factory_rpi_stream_success(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         auto_factory_mod,
         "get_settings",
-        lambda: SimpleNamespace(rpi=SimpleNamespace(base_url="http://rpi")),
+        lambda: SimpleNamespace(
+            rpi=SimpleNamespace(base_url="http://rpi"),
+            security=SimpleNamespace(tls_mode="off"),
+        ),
     )
 
-    src, resolved = auto_factory_mod.auto_video_source_factory(
+    src, resolved, fps = auto_factory_mod.auto_video_source_factory(
         "video", "", 4.0, rpi_mission_id="m-1"
     )
     assert isinstance(src, _FakeRemoteSource)
     assert resolved == "rpi:m-1:sess-1"
+    assert fps == 4.0
 
 
 def test_auto_factory_rpi_stream_validation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -104,7 +112,10 @@ def test_auto_factory_rpi_stream_validation(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(
         auto_factory_mod,
         "get_settings",
-        lambda: SimpleNamespace(rpi=SimpleNamespace(base_url="")),
+        lambda: SimpleNamespace(
+            rpi=SimpleNamespace(base_url=""),
+            security=SimpleNamespace(tls_mode="off"),
+        ),
     )
     with pytest.raises(RuntimeError):
         auto_factory_mod.auto_video_source_factory("video", "", 1.0, rpi_mission_id="m")
@@ -116,8 +127,11 @@ def test_auto_factory_local_modes(
     calls: dict[str, tuple[object, ...]] = {}
 
     class _FakeFileSource:
-        def __init__(self, path: str, fps_override: float, loop: bool) -> None:
+        def __init__(self, path: str, fps_override: float | None, loop: bool) -> None:
             calls["file"] = (path, fps_override, loop)
+            # Surface the override (or a stable fallback) so the factory
+            # can return the effective FPS in its 3-tuple contract.
+            self.fps = float(fps_override) if fps_override else 24.0
 
     class _FakeFolderSource:
         def __init__(self, path: str, fps: float) -> None:
@@ -136,23 +150,28 @@ def test_auto_factory_local_modes(
     frames_dir = tmp_path / "frames"
     frames_dir.mkdir()
 
-    src, resolved = auto_factory_mod.auto_video_source_factory(
+    src, resolved, fps = auto_factory_mod.auto_video_source_factory(
         "video", str(video_path), 8.0, demo_loop=True
     )
     assert isinstance(src, _FakeFileSource)
     assert resolved == str(video_path)
     assert calls["file"] == (str(video_path), 8.0, True)
+    assert fps == 8.0
 
-    src, resolved = auto_factory_mod.auto_video_source_factory(
+    src, resolved, fps = auto_factory_mod.auto_video_source_factory(
         "frames", str(frames_dir), 5.0
     )
     assert isinstance(src, _FakeFolderSource)
     assert resolved == str(frames_dir)
     assert calls["frames"] == (str(frames_dir), 5.0)
+    assert fps == 5.0
 
-    src, resolved = auto_factory_mod.auto_video_source_factory("rtsp", "rtsp://x", 2.0)
+    src, resolved, fps = auto_factory_mod.auto_video_source_factory(
+        "rtsp", "rtsp://x", 2.0
+    )
     assert isinstance(src, _FakeRtspSource)
     assert resolved == "rtsp://x"
+    assert fps == 2.0
 
 
 def test_auto_factory_local_validation_errors(tmp_path: Path) -> None:

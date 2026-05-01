@@ -90,6 +90,7 @@ helm dependency update infra/k8s/charts/rescue-ai
 
 ```powershell
 kubectl create namespace rescue-ai
+kubectl -n rescue-ai create configmap pg-init --from-file=infra/postgres/init/
 helm install rescue-ai infra/k8s/charts/rescue-ai -n rescue-ai -f infra/k8s/values/dev.yaml
 kubectl -n rescue-ai get pods -w
 ```

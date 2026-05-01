@@ -8,10 +8,10 @@ don't drag in psycopg / boto3.
 from __future__ import annotations
 
 from rescue_ai.config import (
+    DatabaseSettings,
     DeploymentSettings,
     SecuritySettings,
     StorageSettings,
-    DatabaseSettings,
 )
 
 
@@ -30,13 +30,13 @@ def test_cloud_profile_uses_remote_dsn_and_remote_s3() -> None:
     assert deployment.outbox_enabled is False
     # The cloud profile reads straight from the legacy fields — no
     # additional remote_* values are required.
-    assert db.dsn.startswith("postgresql://prod-host")
-    assert s3.s3_endpoint.endswith("yandexcloud.net")
+    assert str(getattr(db, "dsn", "")).startswith("postgresql://prod-host")
+    assert str(getattr(s3, "s3_endpoint", "")).endswith("yandexcloud.net")
 
 
 def test_offline_profile_points_to_local_postgres_and_minio() -> None:
     deployment = DeploymentSettings(DEPLOYMENT_MODE="offline")
-    db = DatabaseSettings(DB_DSN="postgresql://postgres:5432/rescue_ai")
+    _ = DatabaseSettings(DB_DSN="postgresql://postgres:5432/rescue_ai")
     s3 = StorageSettings(
         ARTIFACTS_S3_ENDPOINT="http://minio:9000",
         ARTIFACTS_S3_BUCKET="rescue-artifacts",
@@ -64,7 +64,9 @@ def test_hybrid_profile_enables_outbox_and_keeps_remote_targets() -> None:
     assert deployment.is_offline_first is True
     assert deployment.outbox_enabled is True
     # Sync-worker has explicit remote targets to drain into.
-    assert deployment.remote_db_dsn.startswith("postgresql://cloud-host")
+    assert str(getattr(deployment, "remote_db_dsn", "")).startswith(
+        "postgresql://cloud-host"
+    )
     assert deployment.remote_s3_bucket == "rescue-prod"
 
 

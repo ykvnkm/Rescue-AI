@@ -8,7 +8,6 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 DeploymentMode = Literal["cloud", "offline", "hybrid"]
 TlsMode = Literal["off", "mtls"]
 
@@ -113,9 +112,7 @@ class DeploymentSettings(BaseEnvSettings):
     # Remote (cloud) targets — used directly in `cloud`, used as the
     # sync target by the sync-worker in `hybrid`.
     remote_db_dsn: str = Field(default="", alias="DEPLOYMENT_REMOTE_DB_DSN")
-    remote_s3_endpoint: str = Field(
-        default="", alias="DEPLOYMENT_REMOTE_S3_ENDPOINT"
-    )
+    remote_s3_endpoint: str = Field(default="", alias="DEPLOYMENT_REMOTE_S3_ENDPOINT")
     remote_s3_region: str = Field(
         default="ru-central1", alias="DEPLOYMENT_REMOTE_S3_REGION"
     )
@@ -129,12 +126,8 @@ class DeploymentSettings(BaseEnvSettings):
 
     # Sync-worker tuning (hybrid only).
     sync_batch_size: int = Field(default=50, alias="DEPLOYMENT_SYNC_BATCH_SIZE")
-    sync_interval_sec: float = Field(
-        default=10.0, alias="DEPLOYMENT_SYNC_INTERVAL_SEC"
-    )
-    sync_max_attempts: int = Field(
-        default=10, alias="DEPLOYMENT_SYNC_MAX_ATTEMPTS"
-    )
+    sync_interval_sec: float = Field(default=10.0, alias="DEPLOYMENT_SYNC_INTERVAL_SEC")
+    sync_max_attempts: int = Field(default=10, alias="DEPLOYMENT_SYNC_MAX_ATTEMPTS")
     sync_processing_timeout_sec: float = Field(
         default=120.0, alias="DEPLOYMENT_SYNC_PROCESSING_TIMEOUT_SEC"
     )
@@ -176,9 +169,7 @@ class SecuritySettings(BaseEnvSettings):
                 if not value
             ]
             if missing:
-                raise ValueError(
-                    "TLS_MODE=mtls requires: " + ", ".join(missing)
-                )
+                raise ValueError("TLS_MODE=mtls requires: " + ", ".join(missing))
         return self
 
 
@@ -201,16 +192,19 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_profile(self) -> "Settings":
+        deployment_mode = str(getattr(self.deployment, "mode", "cloud"))
+        tls_mode = str(getattr(self.security, "tls_mode", "off"))
+        app_env = str(getattr(self.app, "env", "dev"))
         # ADR-0007 §4: non-cloud profiles must run mTLS — the RPi link
         # in the field is not protected by a public tunnel.
         if (
-            self.deployment.mode in ("offline", "hybrid")
-            and self.security.tls_mode == "off"
-            and self.app.env != "dev"
+            deployment_mode in ("offline", "hybrid")
+            and tls_mode == "off"
+            and app_env != "dev"
         ):
             raise ValueError(
                 "TLS_MODE=off is not allowed when DEPLOYMENT_MODE="
-                f"{self.deployment.mode} outside dev"
+                f"{deployment_mode} outside dev"
             )
         return self
 

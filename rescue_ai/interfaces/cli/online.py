@@ -300,6 +300,11 @@ class DetectionStreamController:
         detector: DomainDetectorPort | None = None,
     ) -> None:
         self._rpi_settings = settings.rpi
+        # Security/TLS settings travel separately from RpiSettings so a
+        # single mTLS material can protect every outbound RPi call. The
+        # RpiClient wraps httpx with verify=ca + cert=(crt,key) when
+        # tls_mode=mtls (ADR-0007 §4); off → plain HTTP, kept for dev.
+        self._security_settings = settings.security
         self._sessions: dict[str, RpiStreamState] = {}
         self._stop_events: dict[str, threading.Event] = {}
         self._threads: dict[str, threading.Thread] = {}
@@ -448,7 +453,7 @@ class DetectionStreamController:
         ]
 
     def _client(self) -> RpiClient:
-        return RpiClient(self._rpi_settings)
+        return RpiClient(self._rpi_settings, security=self._security_settings)
 
     # ── Background RTSP → YOLO → ingest pipeline ──────────────────
 

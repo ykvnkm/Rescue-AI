@@ -13,16 +13,11 @@ from rescue_ai.infrastructure.postgres_connection import (
     PostgresDatabase,
     wait_for_postgres,
 )
-from rescue_ai.infrastructure.sync.remote_sync_target import (
-    RemoteSyncTargetAdapter,
-)
+from rescue_ai.infrastructure.sync.remote_sync_target import RemoteSyncTargetAdapter
 from rescue_ai.infrastructure.sync.sync_outbox_repository import (
     PostgresSyncOutboxRepository,
 )
-from rescue_ai.infrastructure.sync.sync_worker import (
-    SyncWorker,
-    SyncWorkerConfig,
-)
+from rescue_ai.infrastructure.sync.sync_worker import SyncWorker, SyncWorkerConfig
 
 
 def _build_s3_client(deployment) -> object:
@@ -40,17 +35,18 @@ def _build_s3_client(deployment) -> object:
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
-    if settings.deployment.mode != "hybrid":
+    deployment = settings.deployment
+    deployment_mode = str(getattr(deployment, "mode", "cloud"))
+    if deployment_mode != "hybrid":
         raise SystemExit(
-            "sync-worker requires DEPLOYMENT_MODE=hybrid; got "
-            f"{settings.deployment.mode}"
+            "sync-worker requires DEPLOYMENT_MODE=hybrid; got " f"{deployment_mode}"
         )
 
     local_db = PostgresDatabase(settings.database.dsn)
     wait_for_postgres(settings.database.dsn, timeout_sec=60.0)
 
-    remote_db = PostgresDatabase(settings.deployment.remote_db_dsn)
-    s3_client = _build_s3_client(settings.deployment)
+    remote_db = PostgresDatabase(str(getattr(deployment, "remote_db_dsn", "")))
+    s3_client = _build_s3_client(deployment)
 
     outbox = PostgresSyncOutboxRepository(local_db)
     target = RemoteSyncTargetAdapter(remote_db, s3_client)
@@ -58,10 +54,12 @@ def main() -> None:
         outbox=outbox,
         target=target,
         config=SyncWorkerConfig(
-            batch_size=settings.deployment.sync_batch_size,
-            interval_sec=settings.deployment.sync_interval_sec,
-            max_attempts=settings.deployment.sync_max_attempts,
-            processing_timeout_sec=settings.deployment.sync_processing_timeout_sec,
+            batch_size=int(getattr(deployment, "sync_batch_size", 50)),
+            interval_sec=float(getattr(deployment, "sync_interval_sec", 10.0)),
+            max_attempts=int(getattr(deployment, "sync_max_attempts", 10)),
+            processing_timeout_sec=float(
+                getattr(deployment, "sync_processing_timeout_sec", 120.0)
+            ),
         ),
     )
     worker.run_forever()

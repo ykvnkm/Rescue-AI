@@ -106,12 +106,11 @@ class RecordingNavigationEngine(FakeNavigationEngine):
         frame_bgr: object,
         ts_sec: float,
         frame_id: int | None = None,
-    ) -> TrajectoryPoint | None:
+    ) -> None:
         _ = (ts_sec, frame_id)
         assert isinstance(frame_bgr, np.ndarray)
         self.seen_shape = frame_bgr.shape
         self.seen_first_pixel = int(frame_bgr[0, 0, 0])
-        return None
 
 
 class MutatingDetector(FakeDetector):
@@ -124,6 +123,8 @@ class MutatingDetector(FakeDetector):
 
 
 class RecordingFrameEventRepository(InMemoryFrameEventRepository):
+    """Frame-event repository test double that records insert ordering."""
+
     def __init__(self, db: InMemoryDatabase, calls: list[str]) -> None:
         super().__init__(db)
         self._calls = calls
@@ -134,6 +135,8 @@ class RecordingFrameEventRepository(InMemoryFrameEventRepository):
 
 
 class ForeignKeyCheckingAlertRepository(InMemoryAlertRepository):
+    """Alert repository double that validates frame event precondition."""
+
     def __init__(self, db: InMemoryDatabase, calls: list[str]) -> None:
         super().__init__(db)
         self._db = db

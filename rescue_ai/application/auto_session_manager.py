@@ -53,7 +53,10 @@ class VideoFramePort(Protocol):
 # in that case the factory must wrap ``RpiClient.start_stream`` and ignore
 # ``source_value`` (it stays "" in the stream channel). ``demo_loop`` applies
 # only to local file sources — it asks ``FileVideoSource`` to auto-restart on EOF.
-VideoSourceFactory = Callable[[str, str, float, str, bool], tuple[VideoFramePort, str]]
+VideoSourceFactory = Callable[
+    [str, str, float | None, str, bool],
+    tuple[VideoFramePort, str, float],
+]
 
 
 @dataclass
@@ -662,17 +665,16 @@ class AutoSessionManager:
         *,
         source_kind: str,
         source_value: str,
-        fps: float,
+        fps: float | None,
         rpi_mission_id: str = "",
         demo_loop: bool = False,
-    ) -> tuple[VideoFramePort, str]:
+    ) -> tuple[VideoFramePort, str, float]:
         """Resolve a ``(kind, value)`` pair into a ``VideoFramePort``.
 
-        Uses the injected :class:`VideoSourceFactory`. When
-        ``rpi_mission_id`` is non-empty the factory is expected to build a
-        remote RPi stream source instead of reading ``source_value``.
-        ``demo_loop`` applies only to local video files and asks the
-        source to re-open on EOF.
+        Returns ``(port, canonical_value, effective_fps)``. When the
+        caller passes ``fps=None`` for a local video file, the source
+        reports the container's native FPS — used both for navigation
+        tuning and as the mission's recorded FPS.
         """
         if self._source_factory is None:
             raise RuntimeError("AutoSessionManager: no source_factory injected")

@@ -51,8 +51,7 @@ def _ensure_dependencies() -> None:
     result = _run(["helm", "dependency", "update", str(UMBRELLA)])
     if result.returncode != 0:
         pytest.skip(
-            "helm dependency update failed (no internet access?): "
-            f"{result.stderr}"
+            "helm dependency update failed (no internet access?): " f"{result.stderr}"
         )
 
 
@@ -66,9 +65,9 @@ def _ensure_dependencies() -> None:
 )
 def test_helm_lint(chart: str) -> None:
     result = _run(["helm", "lint", str(CHARTS_DIR / chart)])
-    assert result.returncode == 0, (
-        f"helm lint for {chart} failed:\n{result.stdout}\n{result.stderr}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"helm lint for {chart} failed:\n{result.stdout}\n{result.stderr}"
 
 
 @pytest.mark.parametrize(
@@ -77,12 +76,10 @@ def test_helm_lint(chart: str) -> None:
 )
 def test_helm_template_renders(profile: str) -> None:
     values = VALUES_DIR / f"{profile}.yaml"
-    result = _run(
-        ["helm", "template", "rescue-ai", str(UMBRELLA), "-f", str(values)]
-    )
-    assert result.returncode == 0, (
-        f"helm template for {profile} failed:\n{result.stderr}"
-    )
+    result = _run(["helm", "template", "rescue-ai", str(UMBRELLA), "-f", str(values)])
+    assert (
+        result.returncode == 0
+    ), f"helm template for {profile} failed:\n{result.stderr}"
     assert result.stdout.strip(), "rendered template is empty"
 
 

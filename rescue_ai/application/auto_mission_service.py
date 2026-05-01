@@ -27,8 +27,6 @@ from datetime import datetime, timezone
 from typing import Protocol
 from uuid import NAMESPACE_URL, uuid5
 
-logger = logging.getLogger(__name__)
-
 from rescue_ai.domain.alert_policy import MissionAlertState, evaluate_alert
 from rescue_ai.domain.entities import (
     Alert,
@@ -58,6 +56,8 @@ from rescue_ai.domain.value_objects import (
     NavMode,
     TrajectorySource,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AutoMissionServicePort(Protocol):
@@ -166,8 +166,6 @@ class AutoMissionService:
             mode=MissionMode.AUTOMATIC,
         )
         self._deps.mission_repository.create(mission)
-        if mission.slug and hasattr(self._deps.artifact_storage, "register_slug"):
-            self._deps.artifact_storage.register_slug(mission.mission_id, mission.slug)
 
         self._deps.auto_mission_config_repository.save(
             mission_id=mission.mission_id,
@@ -306,11 +304,11 @@ class AutoMissionService:
 
         runtime = self._runtimes.setdefault(mission_id, AutoMissionService._Runtime())
 
-        if detect_enabled:
-            detections = list(self._deps.detector.detect(frame_bgr))
-        else:
-            detections = []
-
+        # Navigation MUST see the raw frame before any detector mutates
+        # it (some detectors draw bboxes / overlays in-place). Keep this
+        # order: navigation → detection. The detector is gated by
+        # ``detect_enabled`` so the operator can disable inference (UI
+        # toggle) without breaking trajectory computation.
         traj_point = self._run_navigation(
             mission_id=mission_id,
             runtime=runtime,
@@ -319,7 +317,10 @@ class AutoMissionService:
             frame_id=frame_id,
         )
 
-        detections = list(self._deps.detector.detect(frame_bgr))
+        if detect_enabled:
+            detections = list(self._deps.detector.detect(frame_bgr))
+        else:
+            detections = []
 
         frame_event = FrameEvent(
             mission_id=mission_id,

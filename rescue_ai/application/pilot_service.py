@@ -113,9 +113,6 @@ class PilotService:
             fps=fps,
         )
         self._deps.mission_repository.create(mission)
-        # Register slug in artifact storage so S3 paths use it
-        if mission.slug and hasattr(self._deps.artifact_storage, "register_slug"):
-            self._deps.artifact_storage.register_slug(mission.mission_id, mission.slug)
         return mission
 
     def get_mission(self, mission_id: str) -> Mission | None:

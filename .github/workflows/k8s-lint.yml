@@ -113,10 +113,19 @@ jobs:
         run: |
           helm dependency update infra/k8s/charts/rescue-ai
           kubectl create namespace rescue-ai
+          kubectl -n rescue-ai create configmap pg-init --from-file=infra/postgres/init/
           helm install rescue-ai infra/k8s/charts/rescue-ai \
             -n rescue-ai \
             -f infra/k8s/values/dev.yaml \
-            --wait --timeout 5m
+            --wait --timeout 10m
+
+      - name: Dump Kubernetes diagnostics
+        if: failure()
+        run: |
+          kubectl -n rescue-ai get all || true
+          kubectl -n rescue-ai describe pods || true
+          kubectl -n rescue-ai logs -l app.kubernetes.io/name=rescue-ai-api --tail=200 || true
+          kubectl -n rescue-ai logs -l app.kubernetes.io/name=postgresql --tail=200 || true
 
       - name: API health check
         run: |

@@ -13,11 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from rescue_ai.domain.entities import Mission
-from rescue_ai.domain.ports import (
-    MissionRepository,
-    OutboxRecord,
-    SyncOutbox,
-)
+from rescue_ai.domain.ports import MissionRepository, OutboxRecord, SyncOutbox
 
 
 class OfflineFirstMissionRepository:

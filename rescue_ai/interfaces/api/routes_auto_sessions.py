@@ -19,7 +19,7 @@ import asyncio
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -97,6 +97,44 @@ def _as_bool(value: object, default: bool) -> bool:
         return value
     text = str(value).strip().lower()
     return text in {"1", "true", "yes", "on"}
+
+
+def _parse_source_kind(raw_value: object) -> SourceKind:
+    value = str(raw_value or "").strip()
+    if value == "video":
+        return "video"
+    if value == "rtsp":
+        return "rtsp"
+    if value == "frames":
+        return "frames"
+    raise HTTPException(
+        status_code=400,
+        detail="source_kind must be one of: video, rtsp, frames",
+    )
+
+
+def _parse_positive_fps(raw_value: object) -> float:
+    if not isinstance(raw_value, (str, int, float)):
+        raise HTTPException(status_code=400, detail="fps must be a positive float")
+    try:
+        fps = float(raw_value)
+    except (TypeError, ValueError) as error:
+        raise HTTPException(
+            status_code=400,
+            detail="fps must be a positive float",
+        ) from error
+    if fps <= 0.0:
+        raise HTTPException(status_code=400, detail="fps must be a positive float")
+    return fps
+
+
+def _parse_channel(raw_value: object) -> Literal["local", "stream"]:
+    value = str(raw_value or "local")
+    if value == "local":
+        return "local"
+    if value == "stream":
+        return "stream"
+    raise HTTPException(status_code=400, detail="nsu_channel must be local or stream")
 
 
 def _resolve_source_value(
@@ -212,27 +250,21 @@ async def start_auto_session(
 ) -> dict[str, object]:
     """Create an automatic mission and start streaming frames."""
     manager = _require_manager()
-
     form = await request.form()
-    source_kind = cast(SourceKind, str(form.get("source_kind", "video")))
-    source_value = str(form.get("source_value", "") or "")
-    nav_mode = NavMode(str(form.get("nav_mode", NavMode.AUTO)))
-    detector_name = str(form.get("detector_name", "yolo"))
-    fps_raw = form.get("fps", 6.0)
-    if isinstance(fps_raw, (str, int, float)):
-        fps = float(fps_raw)
-    else:
-        fps = 6.0
-    nsu_channel = cast(
-        Literal["local", "stream"], str(form.get("nsu_channel", "local"))
-    )
-    rpi_mission_id = str(form.get("rpi_mission_id", ""))
 
+    source_kind = _parse_source_kind(form.get("source_kind"))
+    source_value = str(form.get("source_value", "") or "")
+    nav_mode = NavMode(str(form.get("nav_mode", NavMode.AUTO.value)))
+    detector_name = str(form.get("detector_name", "yolo"))
+    fps = _parse_positive_fps(form.get("fps", 6.0))
+    nsu_channel = _parse_channel(form.get("nsu_channel", "local"))
+    rpi_mission_id = str(form.get("rpi_mission_id", "") or "")
     detect_enabled = _as_bool(form.get("detect_enabled"), True)
     save_video = _as_bool(form.get("save_video"), False)
     demo_loop = _as_bool(form.get("demo_loop"), False)
-    file_obj = form.get("file")
-    file = file_obj if isinstance(file_obj, UploadFile) else None
+    form_file = form.get("file")
+    file: UploadFile | None = form_file if isinstance(form_file, UploadFile) else None
+
     resolved_value, stream_channel, mission_id_clean = _resolve_source_value(
         source_kind=source_kind,
         source_value=source_value,
@@ -241,11 +273,19 @@ async def start_auto_session(
         rpi_mission_id=rpi_mission_id,
     )
 
+    # For local video files we let the source report its own FPS so the
+    # mission record matches the file's native frame rate (avoids the
+    # operator's UI default of 6.0 silently overriding 30fps footage).
+    # Streams (rtsp / frames / RPi-stream) keep using the form value.
+    factory_fps: float | None = (
+        None if source_kind == "video" and not stream_channel else fps
+    )
+
     try:
         source, canonical_value, source_fps = manager.build_source(
             source_kind=source_kind,
             source_value=resolved_value,
-            fps=fps,
+            fps=factory_fps,
             rpi_mission_id=mission_id_clean if stream_channel else "",
             demo_loop=bool(demo_loop and not stream_channel and source_kind == "video"),
         )
@@ -255,6 +295,8 @@ async def start_auto_session(
         raise HTTPException(status_code=400, detail=str(error)) from error
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+    effective_fps = float(source_fps)
     logger.info(
         "Endpoint start_auto_session: channel=%s kind=%s value=%s nav=%s "
         "detector=%s fps=%.2f detect=%s save_video=%s demo_loop=%s",
@@ -263,7 +305,7 @@ async def start_auto_session(
         sanitize_log_text(canonical_value),
         nav_mode,
         detector_name,
-        fps,
+        effective_fps,
         detect_enabled,
         save_video,
         demo_loop,
@@ -284,7 +326,7 @@ async def start_auto_session(
                 source_value=canonical_value,
                 nav_mode=nav_mode,
                 detector_name=detector_name,
-                fps=fps,
+                fps=effective_fps,
                 config_json=config_json,
                 detect_enabled=bool(detect_enabled),
                 save_video=bool(save_video),

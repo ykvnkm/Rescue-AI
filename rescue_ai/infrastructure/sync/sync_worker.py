@@ -56,14 +56,12 @@ class SyncWorker:
                 synced += 1
         return synced
 
-    def run_forever(
-        self, *, sleep: Callable[[float], None] | None = None
-    ) -> None:
+    def run_forever(self, *, sleep: Callable[[float], None] | None = None) -> None:
         sleep_fn = sleep or time.sleep
         while True:
             try:
                 self.run_once()
-            except Exception:  # pragma: no cover - log and keep going
+            except RuntimeError:  # pragma: no cover - log and keep going
                 logger.exception("sync-worker iteration failed")
             sleep_fn(self._config.interval_sec)
 
@@ -80,7 +78,7 @@ class SyncWorker:
             return False
         try:
             self._target.deliver(row)
-        except Exception as error:  # noqa: BLE001 — we record and retry
+        except RuntimeError as error:
             logger.warning(
                 "outbox row %s delivery failed: %s",
                 row.id,
