@@ -975,11 +975,38 @@ class DetectionStreamController:
 
 
 def _build_detector() -> DomainDetectorPort | None:
-    """Create detector from stream contract config (lazy, optional)."""
+    """Create detector from stream contract config (lazy, optional).
+
+    Если задан ``DETECTOR_URL``, API использует HTTP-адаптер
+    :class:`HttpDetector` к отдельному сервису ``rescue-ai-detection``
+    (ADR-0008 §1). Без переменной — поведение прежнее, локальный
+    YOLO-детектор в этом же процессе.
+    """
+    settings = get_settings()
+    detector_url = str(getattr(settings.detection, "service_url", "")).strip()
+    if detector_url:
+        try:
+            from rescue_ai.infrastructure.http_detector import HttpDetector
+
+            timeout = float(getattr(settings.detection, "service_timeout_sec", 5.0))
+            detector = HttpDetector(base_url=detector_url, timeout_sec=timeout)
+            detector.warmup()
+            logger.info(
+                "Detector initialized (remote): url=%s runtime=%s",
+                detector_url,
+                detector.runtime_name(),
+            )
+            return detector
+        except (ImportError, RuntimeError, OSError) as error:
+            logger.warning(
+                "HttpDetector unavailable, falling back to local: %s: %s",
+                type(error).__name__,
+                error,
+            )
+
     try:
         from rescue_ai.infrastructure.detectors import build_detector
 
-        settings = get_settings()
         contract = load_stream_contract(
             service_version=settings.app.service_version,
         )
@@ -1053,6 +1080,7 @@ def build_api_runtime() -> tuple[
     )
 
     auto_mission_service = _build_auto_mission_service(
+        settings=settings,
         contract_dataset_fps=contract.dataset_fps,
         alert_rules=alert_rules,
         mission_repository=mission_repository,
@@ -1087,6 +1115,7 @@ def build_api_runtime() -> tuple[
 
 def _build_auto_mission_service(
     *,
+    settings: Settings,
     contract_dataset_fps: float,
     alert_rules: AlertRuleConfig,
     mission_repository: MissionRepository,
@@ -1126,8 +1155,29 @@ def _build_auto_mission_service(
     # :meth:`AutoMissionService.start_auto_mission`, so the engine's
     # marker speed gate operates on the actual frame rate of the
     # source — not the dataset's prior.
-    nav_tuning = NavigationTuning(fps=contract_dataset_fps)
-    nav_engine = NavigationEngine(mission_id="api-auto", config=nav_tuning)
+    nav_engine_url = str(
+        getattr(getattr(settings, "navigation_service", None), "service_url", "")
+    ).strip()
+    if nav_engine_url:
+        # ADR-0008 §1: вне-процессный nav-engine. Адаптер реализует тот
+        # же ``NavigationEnginePort``, остальной код не меняется.
+        from rescue_ai.infrastructure.http_navigation_engine import (
+            HttpNavigationEngine,
+        )
+
+        nav_timeout = float(
+            getattr(settings.navigation_service, "service_timeout_sec", 5.0)
+        )
+        nav_engine = HttpNavigationEngine(
+            base_url=nav_engine_url,
+            mission_id="api-auto",
+            timeout_sec=nav_timeout,
+        )
+        logger.info("NavigationEngine initialized (remote): url=%s", nav_engine_url)
+    else:
+        nav_tuning = NavigationTuning(fps=contract_dataset_fps)
+        nav_engine = NavigationEngine(mission_id="api-auto", config=nav_tuning)
+        logger.info("NavigationEngine initialized (in-process)")
 
     return AutoMissionService(
         dependencies=AutoMissionService.Dependencies(
@@ -1289,9 +1339,7 @@ def _build_repositories(
         outbox = PostgresSyncOutboxRepository(postgres_db)
         mission_repo = OfflineFirstMissionRepository(mission_repo, outbox)
         alert_repo = OfflineFirstAlertRepository(alert_repo, outbox)
-        frame_event_repo = OfflineFirstFrameEventRepository(
-            frame_event_repo, outbox
-        )
+        frame_event_repo = OfflineFirstFrameEventRepository(frame_event_repo, outbox)
         if auto_repos is not None:
             auto_repos = _AutoRepoBundle(
                 trajectory_repository=OfflineFirstTrajectoryRepository(
@@ -1306,9 +1354,7 @@ def _build_repositories(
                     )
                 ),
             )
-        logger.info(
-            "Hybrid profile active: outbox-wrapped repositories enabled"
-        )
+        logger.info("Hybrid profile active: outbox-wrapped repositories enabled")
 
     return (
         mission_repo,

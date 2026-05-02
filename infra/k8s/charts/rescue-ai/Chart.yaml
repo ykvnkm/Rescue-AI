@@ -26,6 +26,19 @@ dependencies:
     repository: file://../rescue-ai-sync-worker
     condition: rescue-ai-sync-worker.enabled
 
+  # ADR-0008 §1: out-of-process navigation engine + detector. Опционально:
+  # включаются только если в values стоит `<chart>.enabled: true`. По
+  # умолчанию монолит (api тащит навигацию и yolo сам).
+  - name: rescue-ai-nav-engine
+    version: 0.1.0
+    repository: file://../rescue-ai-nav-engine
+    condition: rescue-ai-nav-engine.enabled
+
+  - name: rescue-ai-detection
+    version: 0.1.0
+    repository: file://../rescue-ai-detection
+    condition: rescue-ai-detection.enabled
+
   # Инфра-зависимости — стандартные bitnami-чарты. Включаются только
   # для offline/hybrid профилей (см. values/offline.yaml + hybrid.yaml).
   - name: postgresql

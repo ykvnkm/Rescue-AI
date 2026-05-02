@@ -1,0 +1,70 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rescue-ai-detection.fullname" . }}
+  labels:
+    {{- include "rescue-ai-detection.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "rescue-ai-detection.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rescue-ai-detection.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: detection
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command:
+            ["python", "-m", "rescue_ai.services.detection.run_service"]
+          ports:
+            - name: http
+              containerPort: 8002
+              protocol: TCP
+          env:
+            - name: APP_ENV
+              value: {{ .Values.deployment.appEnv | quote }}
+            - name: APP_LOG_LEVEL
+              value: {{ .Values.deployment.logLevel | quote }}
+            - name: DETECTION_HOST
+              value: "0.0.0.0"
+            - name: DETECTION_PORT
+              value: "8002"
+          {{- if .Values.modelCache.enabled }}
+          volumeMounts:
+            - name: model-cache
+              mountPath: /app/runtime/models
+          {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- if .Values.modelCache.enabled }}
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: {{ include "rescue-ai-detection.fullname" . }}-models
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

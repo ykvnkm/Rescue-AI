@@ -1,0 +1,9 @@
+apiVersion: v2
+name: rescue-ai-detection
+description: |
+  Standalone detection service (ADR-0008 §1).
+  FastAPI-обёртка над YoloDetector / DetectorPort,
+  HTTP-API: POST /detect, GET /runtime, GET /health.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

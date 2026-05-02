@@ -1,0 +1,61 @@
+enabled: false  # включается в profile values при разделении сервисов
+
+replicaCount: 1
+
+image:
+  repository: rescue-ai/online
+  pullPolicy: IfNotPresent
+  tag: "local"
+
+deployment:
+  logLevel: INFO
+  appEnv: dev
+
+service:
+  type: ClusterIP
+  port: 8002
+
+# Модели подгружаются с того же URL/cache, что и в монолитном API.
+# В offline-сценарии runtime/models должен быть запечён в образ
+# (см. infra/offline/README.md).
+modelCache:
+  # Если хочется отделить кеш — смонтировать persistent volume.
+  enabled: false
+  size: 5Gi
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+probes:
+  liveness:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 30
+  readiness:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

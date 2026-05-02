@@ -42,6 +42,12 @@ jobs:
       - name: helm lint (sync-worker)
         run: helm lint infra/k8s/charts/rescue-ai-sync-worker
 
+      - name: helm lint (nav-engine)
+        run: helm lint infra/k8s/charts/rescue-ai-nav-engine
+
+      - name: helm lint (detection)
+        run: helm lint infra/k8s/charts/rescue-ai-detection
+
       - name: helm lint (umbrella)
         run: helm lint infra/k8s/charts/rescue-ai
 
@@ -76,6 +82,20 @@ jobs:
           ! grep -q "rescue-ai-sync-worker" /tmp/dev.yaml
           ! grep -q "rescue-ai-sync-worker" /tmp/cloud.yaml
           ! grep -q "rescue-ai-sync-worker" /tmp/offline.yaml
+
+      - name: helm template — microservices profile (ADR-0008 §1)
+        run: |
+          helm template rescue-ai infra/k8s/charts/rescue-ai \
+            -f infra/k8s/values/microservices.yaml > /tmp/microservices.yaml
+          test -s /tmp/microservices.yaml
+          # nav-engine + detection появляются ТОЛЬКО в microservices
+          grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/microservices.yaml
+          grep -q "rescue-ai-rescue-ai-detection" /tmp/microservices.yaml
+          ! grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/dev.yaml
+          ! grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/cloud.yaml
+          ! grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/offline.yaml
+          ! grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/hybrid.yaml
+          ! grep -q "rescue-ai-rescue-ai-detection" /tmp/dev.yaml
 
       - name: cloud has Vault Agent Injector annotations
         run: |

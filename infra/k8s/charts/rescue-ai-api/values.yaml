@@ -35,6 +35,13 @@ config:
   detection:
     httpTimeoutSec: 1.0
 
+  # ADR-0008 §1: если развёрнуты сервисы rescue-ai-nav-engine /
+  # rescue-ai-detection, проставь сюда их Service-URL — API
+  # переключится на HTTP-адаптеры портов. Пустые строки = монолит.
+  services:
+    navEngineUrl: ""
+    detectorUrl: ""
+
 # Канал до Raspberry Pi. mTLS управляется на уровне самого пода
 # (см. ADR-0007 §4). Для cloud-профиля можно ставить tlsMode: off.
 security:

@@ -16,6 +16,8 @@ data:
   RPI_RTSP_PATH_PREFIX: {{ .Values.config.rpi.rtspPathPrefix | quote }}
   RPI_TIMEOUT_SEC: {{ .Values.config.rpi.timeoutSec | quote }}
   DETECTION_HTTP_TIMEOUT_SEC: {{ .Values.config.detection.httpTimeoutSec | quote }}
+  NAV_ENGINE_URL: {{ .Values.config.services.navEngineUrl | default "" | quote }}
+  DETECTOR_URL: {{ .Values.config.services.detectorUrl | default "" | quote }}
   TLS_MODE: {{ .Values.security.tlsMode | toString | quote }}
   {{- if eq (.Values.security.tlsMode | toString) "mtls" }}
   TLS_CA_CERT_PATH: "/app/certs/station-root-ca.crt"

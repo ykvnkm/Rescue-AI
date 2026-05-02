@@ -5,6 +5,12 @@ dependencies:
 - name: rescue-ai-sync-worker
   repository: file://../rescue-ai-sync-worker
   version: 0.1.0
+- name: rescue-ai-nav-engine
+  repository: file://../rescue-ai-nav-engine
+  version: 0.1.0
+- name: rescue-ai-detection
+  repository: file://../rescue-ai-detection
+  version: 0.1.0
 - name: postgresql
   repository: https://charts.bitnami.com/bitnami
   version: 15.5.38
@@ -14,5 +20,5 @@ dependencies:
 - name: vault
   repository: https://helm.releases.hashicorp.com
   version: 0.30.0
-digest: sha256:c32aa29d52e9e295c0b235cc3f1e945f6ce439b4a05732f29deb9725def9b1f4
-generated: "2026-04-28T22:01:08.838916+03:00"
+digest: sha256:bddc7e3738a32e4a9fd1e8867a36f9a3ef78c5c066a2d56bebfd4014c519661b
+generated: "2026-05-02T02:24:19.8583375+03:00"

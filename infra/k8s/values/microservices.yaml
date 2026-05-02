@@ -1,0 +1,89 @@
+# Профиль `microservices` — демонстрационный split (ADR-0008 §1).
+#
+# Те же три услуги (api / nav-engine / detection) живут в трёх
+# отдельных Deployment'ах. API ходит к ним через ClusterIP-сервисы.
+# Postgres + MinIO здесь те же subcharts, что в dev (для самодостаточного
+# kind/k3d-демо).
+#
+# Использование:
+#   kind load docker-image rescue-ai/online:local --name rescue-ai
+#   kubectl create namespace rescue-ai
+#   kubectl -n rescue-ai create configmap pg-init --from-file=infra/postgres/init/
+#   helm install rescue-ai infra/k8s/charts/rescue-ai \
+#     -n rescue-ai -f infra/k8s/values/microservices.yaml
+
+rescue-ai-api:
+  enabled: true
+  image:
+    repository: rescue-ai/online
+    tag: "local"
+    pullPolicy: IfNotPresent
+  deployment:
+    deploymentMode: offline
+    appEnv: dev
+    logLevel: DEBUG
+  config:
+    storage:
+      s3Endpoint: "http://rescue-ai-minio.rescue-ai.svc.cluster.local:9000"
+      s3Bucket: rescue-artifacts
+    services:
+      # ADR-0008 §1: HTTP-адаптеры включаются здесь. Хосты — это
+      # ClusterIP-сервисы соответствующих чартов; порты — из их values.
+      navEngineUrl: "http://rescue-ai-rescue-ai-nav-engine.rescue-ai.svc.cluster.local:8001"
+      detectorUrl:  "http://rescue-ai-rescue-ai-detection.rescue-ai.svc.cluster.local:8002"
+  security:
+    tlsMode: "off"
+  secrets:
+    source: kube
+    kube:
+      inline:
+        DB_DSN: "postgresql://rescue:rescue@rescue-ai-postgresql.rescue-ai.svc.cluster.local:5432/rescue_ai"
+        ARTIFACTS_S3_ACCESS_KEY_ID: "rescueadmin"
+        ARTIFACTS_S3_SECRET_ACCESS_KEY: "rescueadmin"
+
+rescue-ai-sync-worker:
+  enabled: false
+
+rescue-ai-nav-engine:
+  enabled: true
+  image:
+    repository: rescue-ai/online
+    tag: local
+  deployment:
+    appEnv: dev
+    logLevel: INFO
+
+rescue-ai-detection:
+  enabled: true
+  image:
+    repository: rescue-ai/online
+    tag: local
+  deployment:
+    appEnv: dev
+    logLevel: INFO
+
+postgresql:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/postgresql
+  auth:
+    username: rescue
+    password: rescue
+    database: rescue_ai
+  primary:
+    initdb:
+      scriptsConfigMap: pg-init
+
+minio:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/minio
+  auth:
+    rootUser: rescueadmin
+    rootPassword: rescueadmin
+  defaultBuckets: "rescue-artifacts"
+
+vault:
+  enabled: false

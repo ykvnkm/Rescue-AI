@@ -219,6 +219,35 @@ k3d cluster delete rescue-ai
 7. `kubectl exec ...api... -- cat /vault/secrets/app.env` —
    показать, что секреты пришли как файл, а не env-vars.
 
+## Профиль `microservices` — ADR-0008 §1 в действии
+
+Демонстрация, что api / nav-engine / detection — три отдельных пода
+с тем же образом и одним и тем же кодом, переключаемые env-флагом.
+
+```powershell
+kubectl create namespace rescue-ai
+kubectl -n rescue-ai create configmap pg-init --from-file=infra/postgres/init/
+helm install rescue-ai infra/k8s/charts/rescue-ai -n rescue-ai -f infra/k8s/values/microservices.yaml
+kubectl -n rescue-ai get pods
+```
+
+Должны появиться:
+- `rescue-ai-rescue-ai-api-*`
+- `rescue-ai-rescue-ai-nav-engine-*`
+- `rescue-ai-rescue-ai-detection-*`
+- `rescue-ai-postgresql-0`, `rescue-ai-minio-0`
+
+API-pod видит сервисы через ClusterIP-имена:
+```powershell
+kubectl -n rescue-ai exec deploy/rescue-ai-rescue-ai-api -- env | Select-String "NAV_ENGINE_URL|DETECTOR_URL"
+```
+Должны быть проставлены `http://...nav-engine...:8001` и `http://...detection...:8002`.
+
+Демо-точки для защиты:
+- `kubectl -n rescue-ai logs -l app.kubernetes.io/component=nav-engine -f` — видны логи "session created" и "step".
+- `kubectl -n rescue-ai logs -l app.kubernetes.io/component=detection -f` — видны логи "/detect" вызовов.
+- `kubectl -n rescue-ai exec deploy/rescue-ai-rescue-ai-api -- python -c "from rescue_ai.config import get_settings; print(get_settings().detection.service_url, get_settings().navigation_service.service_url)"` — показывает, что api действительно ходит по сети, не локально.
+
 ## Связь с полевым деплоем (k3s)
 
 На полевой станции (Linux) ставится **тот же** k3s, что k3d

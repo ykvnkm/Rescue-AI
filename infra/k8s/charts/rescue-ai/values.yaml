@@ -10,6 +10,15 @@ rescue-ai-api:
 rescue-ai-sync-worker:
   enabled: false  # включается только в hybrid
 
+# Микросервисное разделение (ADR-0008 §1). По умолчанию выключены —
+# монолит. В values/<profile>.yaml можно включить и проставить URL'ы
+# в rescue-ai-api.config (DETECTOR_URL / NAV_ENGINE_URL).
+rescue-ai-nav-engine:
+  enabled: false
+
+rescue-ai-detection:
+  enabled: false
+
 # Внешние managed зависимости — не разворачиваем поды.
 postgresql:
   enabled: false

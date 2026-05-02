@@ -71,9 +71,32 @@ class RpiSettings(BaseEnvSettings):
 
 
 class DetectionSettings(BaseEnvSettings):
-    """Detection inference timeout settings."""
+    """Detection inference timeout settings.
+
+    ``service_url`` — опциональный URL отдельного rescue-ai-detection
+    сервиса (ADR-0008 §1). Если задан, API использует HTTP-адаптер
+    ``HttpDetector``; если пуст — тот же in-process YoloDetector
+    (поведение до P3.A).
+    """
 
     http_timeout_sec: float = Field(default=1.0, alias="DETECTION_HTTP_TIMEOUT_SEC")
+    service_url: str = Field(default="", alias="DETECTOR_URL")
+    service_timeout_sec: float = Field(
+        default=5.0, alias="DETECTOR_TIMEOUT_SEC"
+    )
+
+
+class NavigationServiceSettings(BaseEnvSettings):
+    """Optional out-of-process navigation engine (ADR-0008 §1).
+
+    Когда ``service_url`` задан, API подключает ``HttpNavigationEngine``
+    вместо локального ``NavigationEngine``; иначе монолит как раньше.
+    """
+
+    service_url: str = Field(default="", alias="NAV_ENGINE_URL")
+    service_timeout_sec: float = Field(
+        default=5.0, alias="NAV_ENGINE_TIMEOUT_SEC"
+    )
 
 
 class UploadSettings(BaseEnvSettings):
@@ -189,6 +212,9 @@ class Settings(BaseSettings):
     # sub-settings (legacy tests, scripts).
     deployment: DeploymentSettings = Field(default_factory=DeploymentSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+    navigation_service: NavigationServiceSettings = Field(
+        default_factory=NavigationServiceSettings
+    )
 
     @model_validator(mode="after")
     def _validate_profile(self) -> "Settings":
@@ -222,4 +248,5 @@ def get_settings() -> Settings:
         auto_stream=AutoStreamSettings(),
         deployment=DeploymentSettings(),
         security=SecuritySettings(),
+        navigation_service=NavigationServiceSettings(),
     )

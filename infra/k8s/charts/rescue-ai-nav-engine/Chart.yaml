@@ -1,0 +1,9 @@
+apiVersion: v2
+name: rescue-ai-nav-engine
+description: |
+  Standalone navigation engine service (ADR-0008 §1).
+  FastAPI-обёртка над rescue_ai.navigation.engine.NavigationEngine,
+  HTTP-API: POST /sessions, POST /sessions/{id}/step, DELETE /sessions/{id}.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
