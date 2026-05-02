@@ -17,7 +17,9 @@ data:
   RPI_TIMEOUT_SEC: {{ .Values.config.rpi.timeoutSec | quote }}
   DETECTION_HTTP_TIMEOUT_SEC: {{ .Values.config.detection.httpTimeoutSec | quote }}
   NAV_ENGINE_URL: {{ .Values.config.services.navEngineUrl | default "" | quote }}
+  NAV_ENGINE_TIMEOUT_SEC: {{ .Values.config.services.navEngineTimeoutSec | quote }}
   DETECTOR_URL: {{ .Values.config.services.detectorUrl | default "" | quote }}
+  DETECTOR_TIMEOUT_SEC: {{ .Values.config.services.detectorTimeoutSec | quote }}
   TLS_MODE: {{ .Values.security.tlsMode | toString | quote }}
   {{- if eq (.Values.security.tlsMode | toString) "mtls" }}
   TLS_CA_CERT_PATH: "/app/certs/station-root-ca.crt"

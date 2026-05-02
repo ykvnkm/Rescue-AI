@@ -25,11 +25,11 @@ from fastapi import (
     APIRouter,
     HTTPException,
     Request,
-    UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
 from pydantic import BaseModel
+from starlette.datastructures import UploadFile
 
 from rescue_ai.application.auto_session_manager import (
     AutoSession,

@@ -124,7 +124,7 @@ jobs:
           cluster_name: rescue-ai
 
       - name: Build online image
-        run: docker build -t rescue-ai/online:local -f Dockerfile .
+        run: docker build --target online -t rescue-ai/online:local -f Dockerfile .
 
       - name: Load image into kind
         run: kind load docker-image rescue-ai/online:local --name rescue-ai
@@ -136,14 +136,20 @@ jobs:
           kubectl -n rescue-ai create configmap pg-init --from-file=infra/postgres/init/
           helm install rescue-ai infra/k8s/charts/rescue-ai \
             -n rescue-ai \
-            -f infra/k8s/values/dev.yaml \
-            --wait --timeout 10m
+            -f infra/k8s/values/dev.yaml
+
+      - name: Wait for dev workload
+        run: |
+          kubectl -n rescue-ai rollout status statefulset/rescue-ai-postgresql --timeout=10m
+          kubectl -n rescue-ai rollout status deployment/rescue-ai-minio --timeout=10m
+          kubectl -n rescue-ai rollout status deployment/rescue-ai-rescue-ai-api --timeout=10m
 
       - name: Dump Kubernetes diagnostics
         if: failure()
         run: |
           kubectl -n rescue-ai get all || true
           kubectl -n rescue-ai describe pods || true
+          kubectl -n rescue-ai get events --sort-by=.lastTimestamp || true
           kubectl -n rescue-ai logs -l app.kubernetes.io/name=rescue-ai-api --tail=200 || true
           kubectl -n rescue-ai logs -l app.kubernetes.io/name=postgresql --tail=200 || true
 

@@ -40,7 +40,9 @@ config:
   # переключится на HTTP-адаптеры портов. Пустые строки = монолит.
   services:
     navEngineUrl: ""
+    navEngineTimeoutSec: 30.0
     detectorUrl: ""
+    detectorTimeoutSec: 30.0
 
 # Канал до Raspberry Pi. mTLS управляется на уровне самого пода
 # (см. ADR-0007 §4). Для cloud-профиля можно ставить tlsMode: off.

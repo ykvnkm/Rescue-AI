@@ -30,7 +30,9 @@ rescue-ai-api:
       # ADR-0008 §1: HTTP-адаптеры включаются здесь. Хосты — это
       # ClusterIP-сервисы соответствующих чартов; порты — из их values.
       navEngineUrl: "http://rescue-ai-rescue-ai-nav-engine.rescue-ai.svc.cluster.local:8001"
+      navEngineTimeoutSec: 60.0
       detectorUrl:  "http://rescue-ai-rescue-ai-detection.rescue-ai.svc.cluster.local:8002"
+      detectorTimeoutSec: 30.0
   security:
     tlsMode: "off"
   secrets:
