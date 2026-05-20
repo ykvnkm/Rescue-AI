@@ -1,9 +1,8 @@
 name: k8s-lint
 
-# Помимо стандартного CI, проверяем Helm-чарты на синтаксис и
-# рендерится ли каждый профиль (dev / cloud / offline / hybrid)
-# без ошибок.  Это даёт нам быструю обратную связь до того,
-# как чарт попадёт в реальный кластер.
+# Проверка Helm-чартов и values-профилей на синтаксис, рендеринг
+# и характерные инварианты. Запускается в дополнение к ci.yml только
+# на изменения в каталогах infra/k8s/** или в самом этом workflow.
 #
 # ADR-0008 §5.
 
@@ -27,26 +26,28 @@ jobs:
         with:
           version: v3.14.0
 
-      - name: Add chart repos
-        run: |
-          helm repo add bitnami https://charts.bitnami.com/bitnami
-          helm repo add hashicorp https://helm.releases.hashicorp.com
-          helm repo update
-
       - name: Update umbrella dependencies
-        run: helm dependency update infra/k8s/charts/rescue-ai
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami --force-update
+          helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
+          helm repo add apache-airflow https://airflow.apache.org --force-update
+          helm repo update
+          helm dependency update infra/k8s/charts/rescue-ai
 
-      - name: helm lint (api)
+      - name: helm lint (rescue-ai-api)
         run: helm lint infra/k8s/charts/rescue-ai-api
 
-      - name: helm lint (sync-worker)
-        run: helm lint infra/k8s/charts/rescue-ai-sync-worker
+      - name: helm lint (rescue-ai-detection)
+        run: helm lint infra/k8s/charts/rescue-ai-detection
 
-      - name: helm lint (nav-engine)
+      - name: helm lint (rescue-ai-nav-engine)
         run: helm lint infra/k8s/charts/rescue-ai-nav-engine
 
-      - name: helm lint (detection)
-        run: helm lint infra/k8s/charts/rescue-ai-detection
+      - name: helm lint (rescue-ai-sync-worker)
+        run: helm lint infra/k8s/charts/rescue-ai-sync-worker
+
+      - name: helm lint (rescue-ai-batch-exporter)
+        run: helm lint infra/k8s/charts/rescue-ai-batch-exporter
 
       - name: helm lint (umbrella)
         run: helm lint infra/k8s/charts/rescue-ai
@@ -57,58 +58,60 @@ jobs:
             -f infra/k8s/values/dev.yaml > /tmp/dev.yaml
           test -s /tmp/dev.yaml
 
-      - name: helm template — cloud profile
-        run: |
-          helm template rescue-ai infra/k8s/charts/rescue-ai \
-            -f infra/k8s/values/cloud.yaml > /tmp/cloud.yaml
-          test -s /tmp/cloud.yaml
-
       - name: helm template — offline profile
         run: |
           helm template rescue-ai infra/k8s/charts/rescue-ai \
             -f infra/k8s/values/offline.yaml > /tmp/offline.yaml
           test -s /tmp/offline.yaml
 
-      - name: helm template — hybrid profile
+      - name: helm template — cloud profile
         run: |
           helm template rescue-ai infra/k8s/charts/rescue-ai \
-            -f infra/k8s/values/hybrid.yaml > /tmp/hybrid.yaml
-          test -s /tmp/hybrid.yaml
-          # В hybrid должен появиться sync-worker Deployment.
-          grep -q "rescue-ai-sync-worker" /tmp/hybrid.yaml
+            -f infra/k8s/values/cloud.yaml > /tmp/cloud.yaml
+          test -s /tmp/cloud.yaml
 
-      - name: hybrid contains sync-worker, dev/cloud/offline — нет
+      - name: Profile invariants — sync-worker
+        # sync-worker — это offline-only компонент (станция отправляет
+        # данные в центр при наличии связи). В cloud-профиле принимающая
+        # сторона, sync-worker отсутствует. В dev — smoke без репликации.
         run: |
-          ! grep -q "rescue-ai-sync-worker" /tmp/dev.yaml
-          ! grep -q "rescue-ai-sync-worker" /tmp/cloud.yaml
-          ! grep -q "rescue-ai-sync-worker" /tmp/offline.yaml
+          grep -q "rescue-ai-rescue-ai-sync-worker" /tmp/offline.yaml
+          ! grep -q "rescue-ai-rescue-ai-sync-worker" /tmp/cloud.yaml
+          ! grep -q "rescue-ai-rescue-ai-sync-worker" /tmp/dev.yaml
 
-      - name: helm template — microservices profile (ADR-0008 §1)
+      - name: Profile invariants — detection and nav-engine
+        # Оба сервиса обрабатывают живые миссии и присутствуют там, где
+        # миссии реально идут — на станции и в центральном кластере
+        # (центр тоже выполняет миссии: стенд / потоковые / демо).
         run: |
-          helm template rescue-ai infra/k8s/charts/rescue-ai \
-            -f infra/k8s/values/microservices.yaml > /tmp/microservices.yaml
-          test -s /tmp/microservices.yaml
-          # nav-engine + detection появляются ТОЛЬКО в microservices
-          grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/microservices.yaml
-          grep -q "rescue-ai-rescue-ai-detection" /tmp/microservices.yaml
-          ! grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/dev.yaml
-          ! grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/cloud.yaml
-          ! grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/offline.yaml
-          ! grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/hybrid.yaml
-          ! grep -q "rescue-ai-rescue-ai-detection" /tmp/dev.yaml
+          grep -q "rescue-ai-rescue-ai-detection" /tmp/offline.yaml
+          grep -q "rescue-ai-rescue-ai-detection" /tmp/cloud.yaml
+          grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/offline.yaml
+          grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/cloud.yaml
 
-      - name: cloud has Vault Agent Injector annotations
+      - name: Profile invariants — batch-exporter and Airflow only in cloud
+        # batch-exporter и Apache Airflow живут только в центральном
+        # кластере. Локальная станция не выполняет ежедневный
+        # batch-пересчёт качества модели — он осмыслен только над
+        # аккумулированным набором миссий со всех станций.
         run: |
+          grep -q "rescue-ai-rescue-ai-batch-exporter" /tmp/cloud.yaml
+          ! grep -q "rescue-ai-rescue-ai-batch-exporter" /tmp/offline.yaml
+          ! grep -q "rescue-ai-rescue-ai-batch-exporter" /tmp/dev.yaml
+
+      - name: Profile invariants — Vault Agent Injector annotations
+        # Vault-аннотация присутствует во всех production-like профилях,
+        # где secrets.source=vault. dev — единственный профиль с
+        # обычными kube Secret'ами.
+        run: |
+          grep -q "vault.hashicorp.com/agent-inject" /tmp/offline.yaml
           grep -q "vault.hashicorp.com/agent-inject" /tmp/cloud.yaml
-
-      - name: dev has plain kube Secret (no Vault)
-        run: |
           ! grep -q "vault.hashicorp.com/agent-inject" /tmp/dev.yaml
 
   kind-smoke:
     # Лёгкий smoke: поднимаем kind, ставим чарт в dev-режиме,
     # ждём readiness API. Без интернета внешним секретам неоткуда
-    # взяться, поэтому на CI используем dev (inline secrets).
+    # взяться, поэтому на CI используем dev (inline kube secrets).
     needs: helm-lint
     runs-on: ubuntu-latest
     steps:
@@ -124,13 +127,17 @@ jobs:
           cluster_name: rescue-ai
 
       - name: Build online image
-        run: docker build --target online -t rescue-ai/online:local -f Dockerfile .
+        run: docker build --target app -t rescue-ai-online:local -f Dockerfile .
 
       - name: Load image into kind
-        run: kind load docker-image rescue-ai/online:local --name rescue-ai
+        run: kind load docker-image rescue-ai-online:local --name rescue-ai
 
       - name: Helm install (dev profile)
         run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami --force-update
+          helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
+          helm repo add apache-airflow https://airflow.apache.org --force-update
+          helm repo update
           helm dependency update infra/k8s/charts/rescue-ai
           kubectl create namespace rescue-ai
           kubectl -n rescue-ai create configmap pg-init --from-file=infra/postgres/init/

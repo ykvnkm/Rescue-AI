@@ -1,4 +1,4 @@
--- Transactional outbox for the hybrid deployment profile (ADR-0007 §3).
+-- Transactional outbox for the offline deployment profile (ADR-0007 §3).
 --
 -- Local-first writes append a row here in the same transaction that
 -- writes to the local domain tables. A separate `sync-worker` process

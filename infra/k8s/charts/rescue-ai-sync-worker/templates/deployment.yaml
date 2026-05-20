@@ -46,9 +46,9 @@ spec:
                 . /vault/secrets/app.env
                 set +a
               fi
-              exec python -m rescue_ai.infrastructure.sync.run_worker
+              exec python -m rescue_ai.interfaces.sync_worker.run_service
           {{- else }}
-          command: ["python", "-m", "rescue_ai.infrastructure.sync.run_worker"]
+          command: ["python", "-m", "rescue_ai.interfaces.sync_worker.run_service"]
           {{- end }}
           envFrom:
             - configMapRef:
@@ -65,7 +65,7 @@ spec:
             - name: SERVICE_VERSION
               value: {{ .Values.deployment.serviceVersion | quote }}
             - name: DEPLOYMENT_MODE
-              value: "hybrid"
+              value: "offline"
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
 {{- end }}

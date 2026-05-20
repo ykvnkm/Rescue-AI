@@ -2,22 +2,22 @@
 
 Currently shipped:
 
-* ``YoloDetector`` — YOLOv8 via Ultralytics (default).
-* ``NanoDetDetector`` — NanoDet-Plus via vendored inference core (P1.4, D2).
+* ``PtYoloDetector`` — YOLOv8 via PyTorch weights for stand processing.
+* ``NcnnYoloDetector`` — YOLOv8 via NCNN export for local streaming.
 
 Both satisfy ``rescue_ai.domain.ports.DetectorPort``.
 """
 
 from rescue_ai.infrastructure.detectors.factory import build_detector
-from rescue_ai.infrastructure.detectors.nanodet_detector import (
-    NanoDetDetector,
-    NanoDetSettings,
+from rescue_ai.infrastructure.detectors.yolo_detector import (
+    NcnnYoloDetector,
+    PtYoloDetector,
+    YoloDetector,
 )
-from rescue_ai.infrastructure.detectors.yolo_detector import YoloDetector
 
 __all__ = [
-    "NanoDetDetector",
-    "NanoDetSettings",
+    "NcnnYoloDetector",
+    "PtYoloDetector",
     "YoloDetector",
     "build_detector",
 ]

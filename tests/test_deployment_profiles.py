@@ -1,4 +1,4 @@
-"""Profile-level tests: cloud stays plain, offline/hybrid wire up correctly.
+"""Profile-level tests: cloud stays plain, offline wires up correctly.
 
 The real wiring lives in `interfaces/api/dependencies.py` and is built
 from `Settings`. These tests stay at the configuration boundary so they
@@ -34,9 +34,22 @@ def test_cloud_profile_uses_remote_dsn_and_remote_s3() -> None:
     assert str(getattr(s3, "s3_endpoint", "")).endswith("yandexcloud.net")
 
 
-def test_offline_profile_points_to_local_postgres_and_minio() -> None:
-    deployment = DeploymentSettings(DEPLOYMENT_MODE="offline")
-    _ = DatabaseSettings(DB_DSN="postgresql://postgres:5432/rescue_ai")
+def test_offline_profile_enables_outbox_and_local_storage() -> None:
+    """Offline profile is the unified ground-station profile.
+
+    Local Postgres and MinIO are the primary store; the sync-worker
+    drains the outbox to the remote contour when connectivity is
+    available. If connectivity never appears, the outbox simply keeps
+    growing — the station stays fully functional in either case.
+    """
+    deployment = DeploymentSettings(
+        DEPLOYMENT_MODE="offline",
+        DEPLOYMENT_REMOTE_DB_DSN="postgresql://cloud-host/rescue_ai",
+        DEPLOYMENT_REMOTE_S3_ENDPOINT="https://storage.yandexcloud.net",
+        DEPLOYMENT_REMOTE_S3_BUCKET="rescue-prod",
+        DEPLOYMENT_REMOTE_S3_ACCESS_KEY_ID="key",
+        DEPLOYMENT_REMOTE_S3_SECRET_ACCESS_KEY="secret",
+    )
     s3 = StorageSettings(
         ARTIFACTS_S3_ENDPOINT="http://minio:9000",
         ARTIFACTS_S3_BUCKET="rescue-artifacts",
@@ -45,25 +58,11 @@ def test_offline_profile_points_to_local_postgres_and_minio() -> None:
     )
 
     assert deployment.is_offline_first is True
-    assert deployment.outbox_enabled is False  # offline never syncs out
+    assert deployment.outbox_enabled is True
     # Local endpoints are addressed via container hostnames, not Yandex.
     assert "minio" in s3.s3_endpoint
     assert "yandexcloud" not in s3.s3_endpoint
-
-
-def test_hybrid_profile_enables_outbox_and_keeps_remote_targets() -> None:
-    deployment = DeploymentSettings(
-        DEPLOYMENT_MODE="hybrid",
-        DEPLOYMENT_REMOTE_DB_DSN="postgresql://cloud-host/rescue_ai",
-        DEPLOYMENT_REMOTE_S3_ENDPOINT="https://storage.yandexcloud.net",
-        DEPLOYMENT_REMOTE_S3_BUCKET="rescue-prod",
-        DEPLOYMENT_REMOTE_S3_ACCESS_KEY_ID="key",
-        DEPLOYMENT_REMOTE_S3_SECRET_ACCESS_KEY="secret",
-    )
-
-    assert deployment.is_offline_first is True
-    assert deployment.outbox_enabled is True
-    # Sync-worker has explicit remote targets to drain into.
+    # Remote sync targets are configured.
     assert str(getattr(deployment, "remote_db_dsn", "")).startswith(
         "postgresql://cloud-host"
     )

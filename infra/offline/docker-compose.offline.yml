@@ -53,7 +53,7 @@ services:
     restart: "no"
 
   api:
-    image: ${ONLINE_IMAGE:-rescue-ai/online:local}
+    image: ${ONLINE_IMAGE:-rescue-ai-online:local}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -82,7 +82,7 @@ services:
   # connectivity returns. Disabled by default — start it with
   # `--profile hybrid` once DEPLOYMENT_MODE=hybrid is set in .env.offline.
   sync-worker:
-    image: ${ONLINE_IMAGE:-rescue-ai/online:local}
+    image: ${ONLINE_IMAGE:-rescue-ai-online:local}
     restart: unless-stopped
     profiles: ["hybrid"]
     depends_on:
@@ -95,7 +95,7 @@ services:
       # .env.offline стоит DEPLOYMENT_MODE=hybrid, иначе контейнер
       # умышленно завершится с SystemExit (см. run_worker.main).
       DB_DSN: "postgresql://${OFFLINE_DB_USER:-rescue}:${OFFLINE_DB_PASSWORD:-rescue}@postgres:5432/${OFFLINE_DB_NAME:-rescue_ai}"
-    command: ["python", "-m", "rescue_ai.infrastructure.sync.run_worker"]
+    command: ["python", "-m", "rescue_ai.interfaces.sync_worker.run_service"]
 
 volumes:
   offline_pg_data:

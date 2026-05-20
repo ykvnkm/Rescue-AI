@@ -110,11 +110,18 @@ class RpiClient:
 
     def health(self, timeout_sec: float = 5.0) -> dict[str, object]:
         """Check RPi service health. Raises on connection failure."""
-        response = self._http_get(
-            f"{self._base_url}/health",
-            timeout_sec=timeout_sec,
-        )
-        response.raise_for_status()
+        from rescue_ai.application.metrics import RPI_CONNECTIVITY_UP
+
+        try:
+            response = self._http_get(
+                f"{self._base_url}/health",
+                timeout_sec=timeout_sec,
+            )
+            response.raise_for_status()
+        except Exception:
+            RPI_CONNECTIVITY_UP.set(0)
+            raise
+        RPI_CONNECTIVITY_UP.set(1)
         return response.json()
 
     def catalog(self, timeout_sec: float = 10.0) -> RpiCatalog:

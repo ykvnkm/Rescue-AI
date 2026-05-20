@@ -26,8 +26,8 @@ from rescue_ai.domain.entities import Detection, TrajectoryPoint
 from rescue_ai.domain.value_objects import NavMode, TrajectorySource
 from rescue_ai.infrastructure.http_detector import HttpDetector
 from rescue_ai.infrastructure.http_navigation_engine import HttpNavigationEngine
-from rescue_ai.services.detection.app import build_app as build_detection_app
-from rescue_ai.services.nav_engine.app import build_app as build_nav_engine_app
+from rescue_ai.interfaces.detection.app import build_app as build_detection_app
+from rescue_ai.interfaces.nav_engine.app import build_app as build_nav_engine_app
 
 
 def _client_for(app) -> httpx.Client:
@@ -111,9 +111,7 @@ def test_nav_engine_service_returns_404_for_unknown_session() -> None:
 def test_nav_engine_service_rejects_invalid_base64() -> None:
     app = build_nav_engine_app()
     with TestClient(app) as client:
-        sid = client.post(
-            "/sessions", json={"mission_id": "m-1"}
-        ).json()["session_id"]
+        sid = client.post("/sessions", json={"mission_id": "m-1"}).json()["session_id"]
         rsp = client.post(
             f"/sessions/{sid}/step",
             json={"frame_jpeg_b64": "not_b64!@#", "ts_sec": 0.0},
@@ -131,6 +129,7 @@ class _FakeDetector:
         self.calls = 0
 
     def detect(self, image_uri: object) -> list[Detection]:
+        _ = image_uri
         self.calls += 1
         return [
             Detection(
@@ -172,7 +171,7 @@ def test_detection_service_returns_detector_output() -> None:
 
 
 def test_detection_service_rejects_invalid_base64() -> None:
-    app = build_detection_app(detector_factory=lambda: _FakeDetector())
+    app = build_detection_app(detector_factory=_FakeDetector)
     with TestClient(app) as client:
         rsp = client.post("/detect", json={"frame_jpeg_b64": "###"})
         assert rsp.status_code == 400
@@ -259,9 +258,9 @@ def test_http_navigation_engine_drops_old_session_on_reset() -> None:
         base_url="http://testserver", mission_id="m-1", client=client
     )
     engine.reset(nav_mode=NavMode.NO_MARKER, fps=6.0)
-    first_id = engine._session_id  # type: ignore[attr-defined]
+    first_id = engine._session_id
     engine.reset(nav_mode=NavMode.NO_MARKER, fps=6.0)
-    second_id = engine._session_id  # type: ignore[attr-defined]
+    second_id = engine._session_id
     assert first_id != second_id
 
     # Старая сессия больше не должна отвечать.

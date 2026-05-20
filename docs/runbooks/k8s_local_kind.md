@@ -80,8 +80,9 @@ k3d image import rescue-ai/online:local -c rescue-ai
 ## Шаг 3. Обновить зависимости umbrella-чарта
 
 ```powershell
-helm repo add bitnami https://charts.bitnami.com/bitnami
-helm repo add hashicorp https://helm.releases.hashicorp.com
+helm repo add bitnami https://charts.bitnami.com/bitnami --force-update
+helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
+helm repo add apache-airflow https://airflow.apache.org --force-update
 helm repo update
 helm dependency update infra/k8s/charts/rescue-ai
 ```
@@ -143,7 +144,7 @@ kubectl -n rescue-ai port-forward svc/rescue-ai-vault 8200:8200
 В другом терминале:
 ```powershell
 $env:VAULT_ADDR="http://localhost:8200"
-$env:VAULT_TOKEN="root-dev-token"
+$env:VAULT_TOKEN="<vault-token>"
 $env:NAMESPACE="rescue-ai"
 $env:VAULT_NAMESPACE="rescue-ai"
 $env:VAULT_SERVICE_ACCOUNT="rescue-ai-vault"
@@ -153,7 +154,7 @@ bash scripts/security/vault_bootstrap.sh
 Если запускаете этот шаг из Git Bash, используйте bash-синтаксис:
 ```bash
 export VAULT_ADDR="http://localhost:8200"
-export VAULT_TOKEN="root-dev-token"
+export VAULT_TOKEN="<vault-token>"
 export NAMESPACE="rescue-ai"
 export VAULT_NAMESPACE="rescue-ai"
 export VAULT_SERVICE_ACCOUNT="rescue-ai-vault"
@@ -212,7 +213,7 @@ k3d cluster delete rescue-ai
 3. `kubectl get pods` — pod `Running`.
 4. `helm upgrade rescue-ai ... -f values/offline.yaml` — тот же
    чарт, другой values: подтягиваются Postgres + MinIO + Vault.
-5. Vault UI на `localhost:8200` (`root-dev-token`) — показать KV
+5. Vault UI на `localhost:8200` — показать KV
    secrets и policies.
 6. `kubectl describe pod ...api... | grep vault.hashicorp.com` —
    видны annotation'ы Vault Agent Injector.

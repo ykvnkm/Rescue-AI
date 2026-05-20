@@ -14,7 +14,9 @@ path "secret/data/rescue-ai/sync-worker" {
   capabilities = ["read"]
 }
 
-# ── rescue-ai-batch (P4) ───────────────────────────────────────────
-# path "secret/data/rescue-ai/batch" {
-#   capabilities = ["read"]
-# }
+# ── rescue-ai-batch-exporter ──────────────────────────────────────
+# Микросервис, читающий таблицу batch_pipeline_metrics. Нужен только
+# DSN базы данных.
+path "secret/data/rescue-ai/batch-exporter" {
+  capabilities = ["read"]
+}

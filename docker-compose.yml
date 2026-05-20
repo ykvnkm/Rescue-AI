@@ -1,16 +1,319 @@
+name: rescue-ai-local
+
+# Локальная сборка решения по микросервисной схеме.
+#
+# Использование:
+#   docker compose build          # один раз: сборка локальных образов
+#   docker compose up             # старт всех процессов
+#   docker compose down -v        # остановка и очистка томов
+#
+# После старта доступны:
+#   API наземной станции   http://localhost:8000
+#   Детекция (внутренний)  http://localhost:8002
+#   Навигация (внутренний) http://localhost:8001
+#   MinIO консоль          http://localhost:9001
+#   PostgreSQL             localhost:5432
+#
+# Секреты не задаются в compose-файле. Перед запуском экспортируйте
+# переменные окружения или положите их в локальный, некоммитящийся
+# `.env.local` / `infra/platform.env`.
+
+x-rescue-ai-app: &rescue-ai-app
+  build:
+    context: .
+    target: app
+  image: rescue-ai:dev
+
 services:
-  api:
-    image: ${ONLINE_IMAGE}
+  postgres:
+    image: postgres:16
     restart: unless-stopped
-    ports:
-      - "${APP_PORT:-8000}:8000"
-    env_file:
-      - .env
     environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rescue_ai}
+      POSTGRES_USER: ${POSTGRES_USER:-rescue_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc mb --ignore-existing "local/$${ARTIFACTS_S3_BUCKET}"
+        echo "MinIO bucket ready"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+      ARTIFACTS_S3_BUCKET: ${ARTIFACTS_S3_BUCKET:-rescue-ai-artifacts}
+    restart: "no"
+
+  detection:
+    <<: *rescue-ai-app
+    restart: unless-stopped
+    command: ["python", "-m", "rescue_ai.interfaces.detection.run_service"]
+    networks:
+      default:
+        aliases:
+          - rescue-ai-detection
+    environment:
+      APP_ENV: local
+      APP_LOG_LEVEL: INFO
+      DETECTION_HOST: "0.0.0.0"
+      DETECTION_PORT: "8002"
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./runtime/models:/app/runtime/models:ro
+
+  nav-engine:
+    <<: *rescue-ai-app
+    restart: unless-stopped
+    command: ["python", "-m", "rescue_ai.interfaces.nav_engine.run_service"]
+    networks:
+      default:
+        aliases:
+          - rescue-ai-nav-engine
+    environment:
+      APP_ENV: local
+      APP_LOG_LEVEL: INFO
+      NAV_ENGINE_HOST: "0.0.0.0"
+      NAV_ENGINE_PORT: "8001"
+    ports:
+      - "8001:8001"
+    depends_on:
+      detection:
+        condition: service_started
+
+  api:
+    <<: *rescue-ai-app
+    restart: unless-stopped
+    command: ["python", "-m", "rescue_ai.interfaces.cli.online"]
+    networks:
+      default:
+        aliases:
+          - rescue-ai-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      detection:
+        condition: service_started
+      nav-engine:
+        condition: service_started
+    env_file:
+      - .env.local
+    environment:
+      APP_ENV: local
+      APP_LOG_LEVEL: INFO
       APP_HOST: "0.0.0.0"
       APP_PORT: "8000"
+      SERVICE_VERSION: local-dev
+
+      DB_DSN: postgresql://${POSTGRES_USER:-rescue_ai}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-rescue_ai}
+
+      ARTIFACTS_S3_ENDPOINT: http://minio:9000
+      ARTIFACTS_S3_REGION: ${ARTIFACTS_S3_REGION:-us-east-1}
+      ARTIFACTS_S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      ARTIFACTS_S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+      ARTIFACTS_S3_BUCKET: ${ARTIFACTS_S3_BUCKET:-rescue-ai-artifacts}
+      ARTIFACTS_S3_PREFIX: ${ARTIFACTS_S3_PREFIX:-missions}
+
+      DETECTOR_URL: http://detection:8002
+      NAV_ENGINE_URL: http://nav-engine:8001
+
+      DEPLOYMENT_MODE: offline
     volumes:
-      - model_cache:/app/runtime/models
+      - ./scripts/security/out:/app/certs:ro
+    ports:
+      - "8000:8000"
+
+  batch-exporter:
+    <<: *rescue-ai-app
+    restart: unless-stopped
+    command: ["python", "-m", "rescue_ai.interfaces.batch_exporter.run_service"]
+    networks:
+      default:
+        aliases:
+          - rescue-ai-batch-exporter
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: local
+      APP_LOG_LEVEL: INFO
+      DB_DSN: postgresql://${POSTGRES_USER:-rescue_ai}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-rescue_ai}
+      BATCH_EXPORTER_HOST: "0.0.0.0"
+      BATCH_EXPORTER_PORT: "8003"
+      BATCH_EXPORTER_SCRAPE_INTERVAL_SEC: "300"
+    ports:
+      - "8003:8003"
+
+  x-airflow-common: &airflow-common
+    build:
+      context: .
+      target: batch
+    image: rescue-ai-batch:dev
+    user: "10001:0"
+    environment: &airflow-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-rescue_ai}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+      AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
+      BATCH_OPERATOR_MODE: "k8s"
+      BATCH_IMAGE: ${BATCH_IMAGE:?set BATCH_IMAGE}
+      AIRFLOW_CONN_RESCUE_APP_DB: postgresql://${POSTGRES_USER:-rescue_ai}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-rescue_ai}
+      AIRFLOW_CONN_RESCUE_S3: '{"conn_type":"aws","login":"${MINIO_ROOT_USER:?set MINIO_ROOT_USER}","password":"${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}","extra":{"endpoint_url":"http://minio:9000","region_name":"${ARTIFACTS_S3_REGION:-us-east-1}","bucket":"${ARTIFACTS_S3_BUCKET:-rescue-ai-artifacts}","prefix":"${ARTIFACTS_S3_PREFIX:-missions}"}}'
+    volumes:
+      - ./infra/airflow/dags:/opt/airflow/dags:ro
+      - ./infra/airflow/logs:/opt/airflow/logs
+      - ./infra/airflow/plugins:/opt/airflow/plugins:ro
+      - airflow_data:/opt/airflow/airflow_home
+
+  airflow-init:
+    <<: *airflow-common
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: /bin/bash
+    command: >-
+      -c "airflow db migrate
+      && airflow users create
+      --username "$${AIRFLOW_ADMIN_USER}"
+      --firstname Rescue
+      --lastname Admin
+      --role Admin
+      --email "$${AIRFLOW_ADMIN_EMAIL}"
+      --password "$${AIRFLOW_ADMIN_PASSWORD}" || true"
+    environment:
+      <<: *airflow-env
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
+      AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-admin@rescue-ai.local}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?set AIRFLOW_ADMIN_PASSWORD}
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    command: airflow webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  airflow-scheduler:
+    <<: *airflow-common
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    command: airflow scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$${HOSTNAME}\""]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./infra/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/observability/prometheus/rules-station.yml:/etc/prometheus/rules-station.yml:ro
+      - ./infra/observability/prometheus/rules-central.yml:/etc/prometheus/rules-central.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      api:
+        condition: service_started
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+    volumes:
+      - ./infra/observability/alertmanager/alertmanager.local.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "9093:9093"
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
 
 volumes:
-  model_cache:
+  postgres_data:
+  minio_data:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:
+  airflow_data:

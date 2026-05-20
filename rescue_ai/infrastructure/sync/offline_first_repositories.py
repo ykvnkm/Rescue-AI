@@ -1,8 +1,11 @@
 """Offline-first repository wrappers (ADR-0007 §3).
 
-Hybrid mode (`DEPLOYMENT_MODE=hybrid`) writes to the **local** Postgres
+Offline mode (`DEPLOYMENT_MODE=offline`) writes to the **local** Postgres
 and, atomically with that write, appends a row to ``replication_outbox``
-that the :class:`SyncWorker` later drains to the remote Postgres.
+that the :class:`SyncWorker` later drains to the remote Postgres when
+connectivity to the central contour is available. If connectivity never
+appears, the outbox simply keeps growing without affecting application
+behaviour — the station is fully functional in either case.
 
 The wrappers in this module are **thin decorators** around the existing
 postgres repositories: they delegate every domain write to the inner
@@ -48,7 +51,6 @@ from rescue_ai.domain.ports import (
     TrajectoryRepository,
 )
 from rescue_ai.domain.value_objects import NavMode
-
 
 # ── Mission ────────────────────────────────────────────────────────
 
@@ -213,9 +215,7 @@ class OfflineFirstAlertRepository:
 class OfflineFirstFrameEventRepository:
     """FrameEvent repository emitting outbox rows on add."""
 
-    def __init__(
-        self, inner: FrameEventRepository, outbox: SyncOutbox
-    ) -> None:
+    def __init__(self, inner: FrameEventRepository, outbox: SyncOutbox) -> None:
         self._inner = inner
         self._outbox = outbox
 
@@ -245,11 +245,9 @@ class OfflineFirstFrameEventRepository:
 
 
 class OfflineFirstTrajectoryRepository:
-    """TrajectoryRepository wrapper for hybrid replication."""
+    """TrajectoryRepository wrapper for offline-profile replication."""
 
-    def __init__(
-        self, inner: TrajectoryRepository, outbox: SyncOutbox
-    ) -> None:
+    def __init__(self, inner: TrajectoryRepository, outbox: SyncOutbox) -> None:
         self._inner = inner
         self._outbox = outbox
 
@@ -277,11 +275,9 @@ class OfflineFirstTrajectoryRepository:
 
 
 class OfflineFirstAutoDecisionRepository:
-    """AutoDecisionRepository wrapper for hybrid replication."""
+    """AutoDecisionRepository wrapper for offline-profile replication."""
 
-    def __init__(
-        self, inner: AutoDecisionRepository, outbox: SyncOutbox
-    ) -> None:
+    def __init__(self, inner: AutoDecisionRepository, outbox: SyncOutbox) -> None:
         self._inner = inner
         self._outbox = outbox
 
@@ -310,9 +306,7 @@ class OfflineFirstAutoDecisionRepository:
 class OfflineFirstAutoMissionConfigRepository:
     """One outbox row per mission start; replays are idempotent."""
 
-    def __init__(
-        self, inner: AutoMissionConfigRepository, outbox: SyncOutbox
-    ) -> None:
+    def __init__(self, inner: AutoMissionConfigRepository, outbox: SyncOutbox) -> None:
         self._inner = inner
         self._outbox = outbox
 

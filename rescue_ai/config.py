@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-DeploymentMode = Literal["cloud", "offline", "hybrid"]
+DeploymentMode = Literal["cloud", "offline"]
 TlsMode = Literal["off", "mtls"]
 
 
@@ -81,22 +81,14 @@ class DetectionSettings(BaseEnvSettings):
 
     http_timeout_sec: float = Field(default=1.0, alias="DETECTION_HTTP_TIMEOUT_SEC")
     service_url: str = Field(default="", alias="DETECTOR_URL")
-    service_timeout_sec: float = Field(
-        default=5.0, alias="DETECTOR_TIMEOUT_SEC"
-    )
+    service_timeout_sec: float = Field(default=5.0, alias="DETECTOR_TIMEOUT_SEC")
 
 
 class NavigationServiceSettings(BaseEnvSettings):
-    """Optional out-of-process navigation engine (ADR-0008 §1).
-
-    Когда ``service_url`` задан, API подключает ``HttpNavigationEngine``
-    вместо локального ``NavigationEngine``; иначе монолит как раньше.
-    """
+    """Optional out-of-process navigation engine."""
 
     service_url: str = Field(default="", alias="NAV_ENGINE_URL")
-    service_timeout_sec: float = Field(
-        default=5.0, alias="NAV_ENGINE_TIMEOUT_SEC"
-    )
+    service_timeout_sec: float = Field(default=5.0, alias="NAV_ENGINE_TIMEOUT_SEC")
 
 
 class UploadSettings(BaseEnvSettings):
@@ -122,18 +114,27 @@ class AutoStreamSettings(BaseEnvSettings):
 
 
 class DeploymentSettings(BaseEnvSettings):
-    """Deployment profile (cloud / offline / hybrid).
+    """Deployment profile (offline / cloud).
 
     See ADR-0007. Selects which Postgres/S3 endpoints are authoritative
     and whether the transactional outbox + sync-worker are enabled.
     The application code is identical across modes; only DSNs and the
     enable flag differ.
+
+    * ``offline``: ground station deployment. Local Postgres + MinIO +
+      Vault, sync-worker drains the transactional outbox to the remote
+      contour whenever connectivity is available. The same profile is
+      used both for fully air-gapped stations (sync-worker idles
+      indefinitely) and for stations with intermittent connectivity.
+    * ``cloud``: central managed contour that *receives* synchronised
+      data. No local infra subcharts, no sync-worker.
     """
 
     mode: DeploymentMode = Field(default="cloud", alias="DEPLOYMENT_MODE")
 
-    # Remote (cloud) targets — used directly in `cloud`, used as the
-    # sync target by the sync-worker in `hybrid`.
+    # Remote (cloud) targets — used directly in `cloud` profile, and
+    # as the sync target by the sync-worker in `offline` profile when
+    # connectivity is available.
     remote_db_dsn: str = Field(default="", alias="DEPLOYMENT_REMOTE_DB_DSN")
     remote_s3_endpoint: str = Field(default="", alias="DEPLOYMENT_REMOTE_S3_ENDPOINT")
     remote_s3_region: str = Field(
@@ -147,7 +148,7 @@ class DeploymentSettings(BaseEnvSettings):
     )
     remote_s3_bucket: str = Field(default="", alias="DEPLOYMENT_REMOTE_S3_BUCKET")
 
-    # Sync-worker tuning (hybrid only).
+    # Sync-worker tuning (offline profile only).
     sync_batch_size: int = Field(default=50, alias="DEPLOYMENT_SYNC_BATCH_SIZE")
     sync_interval_sec: float = Field(default=10.0, alias="DEPLOYMENT_SYNC_INTERVAL_SEC")
     sync_max_attempts: int = Field(default=10, alias="DEPLOYMENT_SYNC_MAX_ATTEMPTS")
@@ -157,19 +158,19 @@ class DeploymentSettings(BaseEnvSettings):
 
     @property
     def is_offline_first(self) -> bool:
-        """Local Postgres/MinIO is the primary store (offline or hybrid)."""
-        return self.mode in ("offline", "hybrid")
+        """Local Postgres/MinIO is the primary store."""
+        return self.mode == "offline"
 
     @property
     def outbox_enabled(self) -> bool:
-        """Hybrid is the only mode that produces outbox rows."""
-        return self.mode == "hybrid"
+        """Offline profile produces outbox rows; sync-worker drains them."""
+        return self.mode == "offline"
 
 
 class SecuritySettings(BaseEnvSettings):
     """Transport security (mTLS for the RPi link).
 
-    See ADR-0007. ``off`` is dev-only; offline/hybrid profiles must run
+    See ADR-0007. ``off`` is dev-only; the offline profile must run
     with ``mtls`` because the RPi link traverses an untrusted local
     network with no public tunnel in front of it.
     """
@@ -221,13 +222,9 @@ class Settings(BaseSettings):
         deployment_mode = str(getattr(self.deployment, "mode", "cloud"))
         tls_mode = str(getattr(self.security, "tls_mode", "off"))
         app_env = str(getattr(self.app, "env", "dev"))
-        # ADR-0007 §4: non-cloud profiles must run mTLS — the RPi link
+        # ADR-0007 §4: the offline profile must run mTLS — the RPi link
         # in the field is not protected by a public tunnel.
-        if (
-            deployment_mode in ("offline", "hybrid")
-            and tls_mode == "off"
-            and app_env != "dev"
-        ):
+        if deployment_mode == "offline" and tls_mode == "off" and app_env != "dev":
             raise ValueError(
                 "TLS_MODE=off is not allowed when DEPLOYMENT_MODE="
                 f"{deployment_mode} outside dev"

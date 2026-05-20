@@ -1,6 +1,6 @@
 """Default RemoteSyncTarget: remote Postgres for DB rows + S3 for artifacts.
 
-Used by `sync-worker` in hybrid mode (ADR-0007 §3). Concrete delivery
+Used by `sync-worker` in offline mode (ADR-0007 §3). Concrete delivery
 is split into per-entity-type handlers behind a single dict so adding
 a new entity (alert, frame_event, trajectory_point, …) is a one-line
 change instead of a new branch.

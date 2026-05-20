@@ -1,10 +1,10 @@
-# Дефолты под dev-кластер (kind / minikube). Cloud / offline / hybrid
+# Дефолты под dev-кластер (kind / minikube). Профили cloud и offline
 # переопределяют то, что отличается, через umbrella values-файлы.
 
 replicaCount: 1
 
 image:
-  repository: rescue-ai/online
+  repository: rescue-ai-online
   pullPolicy: IfNotPresent
   tag: "local"
 

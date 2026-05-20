@@ -9,6 +9,7 @@ from typing import Protocol, cast
 from urllib.parse import urlparse
 from uuid import NAMESPACE_URL, uuid5
 
+from rescue_ai.application.metrics import ALERTS_CREATED_TOTAL
 from rescue_ai.domain.alert_policy import MissionAlertState, evaluate_alert
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
 from rescue_ai.domain.mission_metrics import (
@@ -226,6 +227,7 @@ class PilotService:
         for alert in alerts:
             alert.image_uri = stored_image_uri
             self._deps.alert_repository.add(alert)
+            ALERTS_CREATED_TOTAL.labels(mission_mode="manual").inc()
         return alerts
 
     def list_alerts(

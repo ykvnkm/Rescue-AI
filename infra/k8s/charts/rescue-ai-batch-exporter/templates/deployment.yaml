@@ -1,0 +1,112 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rescue-ai-batch-exporter.fullname" . }}
+  labels:
+    {{- include "rescue-ai-batch-exporter.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "rescue-ai-batch-exporter.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rescue-ai-batch-exporter.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # Эндпоинт /metrics опрашивается Prometheus напрямую (см.
+        # infra/observability/prometheus/prometheus.yml).
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.exporter.port | quote }}
+        prometheus.io/path: "/metrics"
+        {{- if eq .Values.secrets.source "vault" }}
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.secrets.vault.role | quote }}
+        vault.hashicorp.com/agent-inject-secret-app.env: {{ printf "secret/data/%s" .Values.secrets.vault.secretPath | quote }}
+        vault.hashicorp.com/agent-inject-template-app.env: |
+          {{`{{- with secret "`}}{{ printf "secret/data/%s" .Values.secrets.vault.secretPath }}{{`" -}}`}}
+          {{`{{- range $k, $v := .Data.data }}`}}
+          {{`{{ $k }}={{ $v }}`}}
+          {{`{{- end }}`}}
+          {{`{{- end }}`}}
+        {{- end }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: batch-exporter
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- if eq .Values.secrets.source "vault" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              if [ -f /vault/secrets/app.env ]; then
+                set -a
+                . /vault/secrets/app.env
+                set +a
+              fi
+              exec python -m rescue_ai.interfaces.batch_exporter.run_service
+          {{- else }}
+          command: ["python", "-m", "rescue_ai.interfaces.batch_exporter.run_service"]
+          {{- end }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.exporter.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "rescue-ai-batch-exporter.fullname" . }}-config
+            {{- if eq .Values.secrets.source "kube" }}
+            - secretRef:
+                name: {{ include "rescue-ai-batch-exporter.kubeSecretName" . }}
+            {{- end }}
+          env:
+            - name: APP_ENV
+              value: {{ .Values.deployment.appEnv | quote }}
+            - name: APP_LOG_LEVEL
+              value: {{ .Values.deployment.logLevel | quote }}
+            - name: SERVICE_VERSION
+              value: {{ .Values.deployment.serviceVersion | quote }}
+            - name: BATCH_EXPORTER_HOST
+              value: "0.0.0.0"
+            - name: BATCH_EXPORTER_PORT
+              value: {{ .Values.exporter.port | quote }}
+            - name: BATCH_EXPORTER_SCRAPE_INTERVAL_SEC
+              value: {{ .Values.exporter.scrapeIntervalSec | quote }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rescue-ai-batch-exporter.fullname" . }}
+  labels:
+    {{- include "rescue-ai-batch-exporter.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: metrics
+      port: {{ .Values.service.port }}
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    {{- include "rescue-ai-batch-exporter.selectorLabels" . | nindent 4 }}
+{{- end }}

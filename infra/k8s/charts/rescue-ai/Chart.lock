@@ -11,6 +11,9 @@ dependencies:
 - name: rescue-ai-detection
   repository: file://../rescue-ai-detection
   version: 0.1.0
+- name: rescue-ai-batch-exporter
+  repository: file://../rescue-ai-batch-exporter
+  version: 0.1.0
 - name: postgresql
   repository: https://charts.bitnami.com/bitnami
   version: 15.5.38
@@ -20,5 +23,8 @@ dependencies:
 - name: vault
   repository: https://helm.releases.hashicorp.com
   version: 0.30.0
-digest: sha256:bddc7e3738a32e4a9fd1e8867a36f9a3ef78c5c066a2d56bebfd4014c519661b
-generated: "2026-05-02T02:24:19.8583375+03:00"
+- name: airflow
+  repository: https://airflow.apache.org
+  version: 1.15.0
+digest: sha256:024ec4f5ea66c6bab2d22ba2185bbba7d709fa9b8714963116f5daa61544ea41
+generated: "2026-05-20T19:24:34.748747+03:00"

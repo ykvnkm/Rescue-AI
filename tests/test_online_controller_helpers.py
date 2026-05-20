@@ -22,8 +22,8 @@ from rescue_ai.config import (
     StorageSettings,
     UploadSettings,
 )
-from rescue_ai.domain.entities import Detection
-from rescue_ai.domain.value_objects import AlertRuleConfig
+from rescue_ai.domain.entities import Detection, TrajectoryPoint
+from rescue_ai.domain.value_objects import AlertRuleConfig, TrajectorySource
 from rescue_ai.interfaces.cli import online as online_main
 from tests.support.in_memory_repositories import (
     InMemoryAlertRepository,
@@ -31,6 +31,7 @@ from tests.support.in_memory_repositories import (
     InMemoryDatabase,
     InMemoryFrameEventRepository,
     InMemoryMissionRepository,
+    InMemoryTrajectoryRepository,
 )
 
 
@@ -72,6 +73,31 @@ class _FakeDetector:
 
     def runtime_name(self) -> str:
         return "fake"
+
+
+class _FakeNavigationEngine:
+    def __init__(self) -> None:
+        self.reset_calls: list[tuple[object, object]] = []
+        self.closed = False
+
+    def reset(self, *, nav_mode=None, fps=None) -> None:
+        self.reset_calls.append((nav_mode, fps))
+
+    def step(self, frame_bgr, ts_sec: float, frame_id: int | None = None):
+        _ = frame_bgr
+        return TrajectoryPoint(
+            mission_id="nav-session",
+            seq=99,
+            ts_sec=ts_sec,
+            x=1.0,
+            y=2.0,
+            z=3.0,
+            source=TrajectorySource.OPTICAL_FLOW,
+            frame_id=frame_id,
+        )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class _TypeErrorDetector:
@@ -249,6 +275,44 @@ def test_process_frame_updates_counters(monkeypatch, tmp_path) -> None:
     assert ctx.frame_id == 1
     assert state.processed_frames == 1
     assert state.alerts_created == 1
+
+
+def test_process_frame_persists_operator_trajectory(monkeypatch, tmp_path) -> None:
+    nav = _FakeNavigationEngine()
+    trajectory_repo = InMemoryTrajectoryRepository()
+    controller = online_main.DetectionStreamController(
+        _settings(),
+        pilot_service=_pilot_service(),
+        detector=_FakeDetector(),
+        navigation_factory=lambda _mission_id: nav,
+        trajectory_repository=trajectory_repo,
+    )
+    state = _state()
+    ctx = online_main._LoopContext(
+        mission_id="m1",
+        state=state,
+        stop_event=threading.Event(),
+        target_fps=2.0,
+        frame_interval=0.5,
+        gt_tracker=online_main._GtTracker(sequence=[False]),
+        source_filenames=None,
+        capture=_FakeCapture([np.zeros((2, 2, 3), dtype=np.uint8)]),
+        tmp_dir=tmp_path,
+        navigation_engine=nav,
+        trajectory_repository=trajectory_repo,
+    )
+    monkeypatch.setattr(controller, "_detect_frame_or_empty", lambda **kwargs: [])
+    monkeypatch.setattr(controller, "_ingest_event", lambda **kwargs: None)
+
+    controller._process_frame(ctx, np.zeros((2, 2, 3), dtype=np.uint8))
+
+    stored = trajectory_repo.list_by_mission("m1")
+    assert len(stored) == 1
+    assert stored[0].mission_id == "m1"
+    assert stored[0].seq == 1
+    assert stored[0].frame_id == 0
+    assert state.trajectory_points == 1
+    assert controller.list_trajectory("m1") == stored
 
 
 def test_ingest_event_updates_error_on_failure() -> None:

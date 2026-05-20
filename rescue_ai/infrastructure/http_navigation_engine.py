@@ -84,9 +84,7 @@ class HttpNavigationEngine:
         frame_id: int | None = None,
     ) -> TrajectoryPoint | None:
         if self._session_id is None:
-            raise RuntimeError(
-                "HttpNavigationEngine.step called before reset()"
-            )
+            raise RuntimeError("HttpNavigationEngine.step called before reset()")
         b64 = _encode_jpeg_b64(frame_bgr, self._jpeg_quality)
         response = self._client.post(
             f"{self._base_url}/sessions/{self._session_id}/step",
@@ -151,9 +149,7 @@ def _trajectory_point_from_payload(payload: dict[str, Any]) -> TrajectoryPoint:
         z=float(payload["z"]),
         source=source,
         frame_id=(
-            None
-            if payload.get("frame_id") is None
-            else int(payload["frame_id"])
+            None if payload.get("frame_id") is None else int(payload["frame_id"])
         ),
     )
 

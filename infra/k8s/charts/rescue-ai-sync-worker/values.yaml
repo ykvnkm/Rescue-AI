@@ -1,11 +1,11 @@
 replicaCount: 1
 
-# Чарт включается только в hybrid-профиле. Umbrella-чарт ставит
-# enabled=true только в hybrid.yaml.
+# Чарт включается только в offline-профиле (наземная станция).
+# Umbrella-чарт ставит enabled=true только в offline.yaml.
 enabled: false
 
 image:
-  repository: rescue-ai/online
+  repository: rescue-ai-online
   pullPolicy: IfNotPresent
   tag: "local"
 

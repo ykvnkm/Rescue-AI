@@ -1,94 +1,24 @@
-name: rescue-platform
+# ── АРХИВНЫЙ ФАЙЛ ─────────────────────────────────────────────────
+#
+# Этот compose-файл был отдельным «платформенным» стеком, поднимавшим
+# Airflow рядом с прикладным стеком. После рефакторинга P1 контур
+# Airflow интегрирован в корневой docker-compose.yml (сервисы
+# airflow-init, airflow-webserver, airflow-scheduler).
+#
+# Файл оставлен на случай, если в проде понадобится разделить
+# жизненные циклы платформы и приложения. Для локальной разработки
+# и для дипломного стенда использовать его не нужно — всё запускается
+# одной командой `docker compose up -d` из корня репозитория.
+#
+# Чтобы поднять платформу отдельно (исторический сценарий):
+#   cd infra
+#   cp platform.env.example platform.env
+#   docker compose -f docker-compose.platform.yml --env-file platform.env up -d
 
-x-airflow-common: &airflow-common
-  environment: &airflow-env
-    AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/airflow
-    AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+name: rescue-platform-archive
 
 services:
-  airflow-db:
-    image: postgres:16
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${AIRFLOW_DB_USER}
-      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
-      POSTGRES_DB: airflow
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${AIRFLOW_DB_USER} -d airflow"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    volumes:
-      - airflow_db_data:/var/lib/postgresql/data
-
-  airflow-init:
-    image: ${BATCH_IMAGE}
-    depends_on:
-      airflow-db:
-        condition: service_healthy
-    <<: *airflow-common
-    env_file:
-      - platform.env
-    command: >-
-      bash -c "airflow db migrate
-      && airflow users create
-      --username $${AIRFLOW_ADMIN_USER}
-      --firstname Platform
-      --lastname Admin
-      --role Admin
-      --email $${AIRFLOW_ADMIN_EMAIL}
-      --password $${AIRFLOW_ADMIN_PASSWORD}"
+  noop:
+    image: alpine:3
+    command: ["sh", "-c", "echo 'this file is archived; use root docker-compose.yml'"]
     restart: "no"
-
-  airflow-webserver:
-    image: ${BATCH_IMAGE}
-    restart: unless-stopped
-    depends_on:
-      airflow-db:
-        condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
-    <<: *airflow-common
-    environment:
-      <<: *airflow-env
-      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
-      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      BATCH_IMAGE: ${BATCH_IMAGE}
-    env_file:
-      - platform.env
-    volumes:
-      - airflow_logs:/opt/airflow/logs
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./airflow/dags:/opt/airflow/dags
-    group_add:
-      - "${DOCKER_GID}"
-    ports:
-      - "8080:8080"
-    command: airflow webserver
-
-  airflow-scheduler:
-    image: ${BATCH_IMAGE}
-    restart: unless-stopped
-    depends_on:
-      airflow-db:
-        condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
-    <<: *airflow-common
-    environment:
-      <<: *airflow-env
-      BATCH_IMAGE: ${BATCH_IMAGE}
-    env_file:
-      - platform.env
-    volumes:
-      - airflow_logs:/opt/airflow/logs
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./airflow/dags:/opt/airflow/dags
-    group_add:
-      - "${DOCKER_GID}"
-    command: airflow scheduler
-
-volumes:
-  airflow_db_data:
-  airflow_logs:

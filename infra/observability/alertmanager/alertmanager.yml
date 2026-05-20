@@ -1,0 +1,55 @@
+# Конфигурация Prometheus Alertmanager для контура сопровождения
+# Rescue-AI. Группировка похожих событий, подавление дублирующихся
+# уведомлений, маршрутизация по severity и контуру.
+#
+# Маршруты:
+#   * critical → дежурный email с интервалом повтора 30 минут;
+#   * warning  → общий email сопровождения с интервалом 4 часа.
+#
+# Значения чувствительных параметров (smtp-логин, пароль, адреса
+# получателей) подставляются в pod через Vault Agent Injector
+# или через Kubernetes Secret в зависимости от профиля развёртывания
+# (см. раздел 3.5 и ADR-0008).
+
+global:
+  resolve_timeout: 5m
+  smtp_from: '${ALERT_EMAIL_FROM}'
+  smtp_smarthost: '${ALERT_EMAIL_SMARTHOST}'
+  smtp_auth_username: '${ALERT_EMAIL_USERNAME}'
+  smtp_auth_password: '${ALERT_EMAIL_PASSWORD}'
+  smtp_require_tls: true
+
+route:
+  receiver: rescue-ai-warning
+  group_by: ['alertname', 'contour']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity = "critical"
+      receiver: rescue-ai-critical
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 30m
+
+receivers:
+  - name: rescue-ai-warning
+    email_configs:
+      - to: '${ALERT_EMAIL_WARNING}'
+        send_resolved: true
+  - name: rescue-ai-critical
+    email_configs:
+      - to: '${ALERT_EMAIL_CRITICAL}'
+        send_resolved: true
+
+inhibit_rules:
+  # Критическая деградация полноты «гасит» обычное предупреждение
+  # о том же показателе, чтобы оператор получал одно сообщение.
+  - source_matchers:
+      - alertname = "BatchRecallCriticallyLow"
+      - severity = "critical"
+    target_matchers:
+      - alertname = "BatchRecallBelowTarget"
+      - severity = "warning"
+    equal: ['cluster', 'contour']

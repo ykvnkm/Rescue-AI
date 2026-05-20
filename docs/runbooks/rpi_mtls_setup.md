@@ -38,9 +38,9 @@ TLS-аутентификация.
 Со станции:
 
 ```bash
-scp scripts/security/out/station-root-ca.crt pi@192.168.0.118:/tmp/
-scp scripts/security/out/rpi-server.crt      pi@192.168.0.118:/tmp/
-scp scripts/security/out/rpi-server.key      pi@192.168.0.118:/tmp/
+scp scripts/security/out/station-root-ca.crt pi@<rpi-host>:/tmp/
+scp scripts/security/out/rpi-server.crt      pi@<rpi-host>:/tmp/
+scp scripts/security/out/rpi-server.key      pi@<rpi-host>:/tmp/
 ```
 
 ## Шаг 2. Разложить и закрыть права
@@ -117,11 +117,11 @@ openssl s_client -connect 127.0.0.1:9100 -servername rpi.local </dev/null
 curl --cacert scripts/security/out/station-root-ca.crt \
      --cert   scripts/security/out/gcs-client.crt \
      --key    scripts/security/out/gcs-client.key \
-     https://192.168.0.118:9100/health
+     https://<rpi-host>:9100/health
 
 # Без клиентского серта — должно отказать
 curl --cacert scripts/security/out/station-root-ca.crt \
-     https://192.168.0.118:9100/health
+     https://<rpi-host>:9100/health
 # → curl: (35) ... alert handshake failure
 ```
 
@@ -131,7 +131,7 @@ curl --cacert scripts/security/out/station-root-ca.crt \
 ## Открыть порт на Pi (если firewall активен)
 
 ```bash
-sudo ufw allow from 192.168.0.0/24 to any port 9100 proto tcp
+sudo ufw allow from <station-subnet-cidr> to any port 9100 proto tcp
 ```
 
 ## Ротация сертификатов

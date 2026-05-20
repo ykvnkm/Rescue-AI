@@ -29,7 +29,7 @@ class AutoMissionStartRequest(BaseModel):
     )
     detector_name: str = Field(
         default="yolo",
-        description="Detector identifier (yolo|nanodet)",
+        description="Detector identifier",
     )
     total_frames: int = Field(
         default=0,

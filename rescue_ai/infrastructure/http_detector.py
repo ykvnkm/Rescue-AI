@@ -54,8 +54,7 @@ class HttpDetector:
         response.raise_for_status()
         body = response.json()
         detections = [
-            _detection_from_payload(item)
-            for item in body.get("detections", [])
+            _detection_from_payload(item) for item in body.get("detections", [])
         ]
         runtime_name = body.get("runtime_name")
         if isinstance(runtime_name, str) and runtime_name:
@@ -133,9 +132,7 @@ def _detection_from_payload(item: dict[str, Any]) -> Detection:
         label=str(item.get("label", "person")),
         model_name=str(item.get("model_name", "remote")),
         explanation=(
-            None
-            if item.get("explanation") is None
-            else str(item.get("explanation"))
+            None if item.get("explanation") is None else str(item.get("explanation"))
         ),
     )
 

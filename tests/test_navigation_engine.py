@@ -7,9 +7,9 @@ import pytest
 
 from rescue_ai.domain.entities import TrajectoryPoint
 from rescue_ai.domain.value_objects import NavMode, TrajectorySource
-from rescue_ai.navigation import engine as engine_module
-from rescue_ai.navigation.engine import NavigationEngine
-from rescue_ai.navigation.tuning import NavigationTuning
+from rescue_ai.infrastructure.navigation import engine as engine_module
+from rescue_ai.infrastructure.navigation.engine import NavigationEngine
+from rescue_ai.infrastructure.navigation.tuning import NavigationTuning
 
 
 def _blank_frame(config: NavigationTuning) -> np.ndarray:

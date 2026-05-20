@@ -3,7 +3,7 @@ enabled: false  # включается в profile values при разделен
 replicaCount: 1
 
 image:
-  repository: rescue-ai/online
+  repository: rescue-ai-online
   pullPolicy: IfNotPresent
   tag: "local"
 

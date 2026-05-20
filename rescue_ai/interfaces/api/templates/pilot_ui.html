@@ -380,6 +380,18 @@
       grid-template-columns: repeat(3, 1fr);
       gap: 8px;
     }
+    .operator-plots {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .operator-plot-3d {
+      grid-column: 1 / span 2;
+      min-height: 300px;
+    }
+    .operator-plot {
+      min-height: 230px;
+    }
     .meta-item {
       background:
         linear-gradient(135deg, rgba(14,22,40,0.84), rgba(9,14,26,0.84));
@@ -490,6 +502,8 @@
     @media (max-width: 1100px) {
       .layout { grid-template-columns: 1fr; }
       .meta-row { grid-template-columns: 1fr 1fr; }
+      .operator-plots { grid-template-columns: 1fr; }
+      .operator-plot-3d { grid-column: auto; }
     }
 
     /* ── Mode switcher (Operator / Auto) + Auto-mode UI ───────── */
@@ -553,6 +567,51 @@
       font-size: 13px;
     }
     .auto-form input[type="file"] { color: var(--muted); font-size: 12px; }
+    .auto-file-input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .auto-form .auto-file-dropzone {
+      min-height: 108px;
+      border: 1px dashed rgba(249,115,22,0.68);
+      border-radius: 20px;
+      background:
+        radial-gradient(circle at 50% 0%, rgba(249,115,22,0.16), transparent 52%),
+        rgba(6,14,28,0.82);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 24px 20px;
+      cursor: pointer;
+      text-align: center;
+      margin-bottom: 0;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.025);
+      transition: border-color 0.16s ease, background 0.16s ease;
+    }
+    .auto-form .auto-file-dropzone:hover,
+    .auto-form .auto-file-dropzone.drag-over {
+      border-color: rgba(251,146,60,0.92);
+      background:
+        radial-gradient(circle at 50% 0%, rgba(249,115,22,0.22), transparent 54%),
+        rgba(7,16,32,0.9);
+    }
+    .auto-form .auto-file-drop-title {
+      font-size: 20px;
+      line-height: 1.2;
+      font-weight: 600;
+      color: #e5edf8;
+    }
+    .auto-form .auto-file-drop-hint {
+      font-size: 15px;
+      line-height: 1.2;
+      color: var(--muted);
+    }
     .auto-toggle-row {
       display: flex; align-items: center; gap: 10px; margin: 10px 0;
     }
@@ -599,6 +658,14 @@
       color: var(--muted);
     }
     .auto-chip strong { display: block; color: var(--text); font-size: 15px; font-family: 'JetBrains Mono', monospace; }
+    .auto-workspace-grid {
+      display: grid;
+      grid-template-columns: minmax(320px, 0.92fr) minmax(380px, 1.08fr);
+      grid-template-rows: minmax(300px, 0.95fr) minmax(250px, 0.8fr);
+      gap: 12px;
+      flex: 1;
+      min-height: 670px;
+    }
     .auto-video-wrap {
       position: relative;
       background: rgba(4,8,16,0.8);
@@ -613,22 +680,18 @@
     .auto-video-wrap img { width: 100%; height: 100%; object-fit: contain; display: none; }
     .auto-video-wrap img.active { display: block; }
     .auto-video-placeholder { color: var(--muted); font-size: 13px; }
-    .auto-plots {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      grid-template-rows: auto auto;
-      gap: 12px;
-      margin-top: 14px;
-    }
     .auto-plot {
       background: rgba(12,18,34,0.9);
       border: 1px solid rgba(148,163,184,0.14);
       border-radius: 14px;
       padding: 10px;
       min-height: 240px;
+      display: flex;
+      flex-direction: column;
     }
-    .auto-plot.wide { grid-column: 1 / span 2; min-height: 320px; }
     .auto-plot h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .auto-plot-body { flex: 1; min-height: 0; }
+    .auto-video-panel .auto-video-wrap { height: 100%; aspect-ratio: auto; }
     .auto-alert-log {
       margin-top: 12px;
       max-height: 160px;
@@ -640,6 +703,13 @@
       padding: 8px;
       color: var(--muted);
       white-space: pre-wrap;
+    }
+    @media (max-width: 1200px) {
+      .auto-workspace-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: repeat(4, minmax(260px, auto));
+        min-height: 0;
+      }
     }
   </style>
 </head>
@@ -695,6 +765,21 @@
       <div id="zoomContent" class="zoom-content">
         <img id="alertFrame" alt="кадр алерта" />
         <div id="bboxLayer"></div>
+      </div>
+    </div>
+
+    <div class="operator-plots">
+      <div class="auto-plot operator-plot-3d">
+        <h4>Траектория 3D</h4>
+        <div id="operatorPlot3d" class="auto-plot-body" style="width:100%;height:100%;"></div>
+      </div>
+      <div class="auto-plot operator-plot">
+        <h4>Плоскость XY</h4>
+        <div id="operatorPlotXY" class="auto-plot-body" style="width:100%;height:100%;"></div>
+      </div>
+      <div class="auto-plot operator-plot">
+        <h4>Высота Z(t)</h4>
+        <div id="operatorPlotZ" class="auto-plot-body" style="width:100%;height:100%;"></div>
       </div>
     </div>
 
@@ -776,7 +861,11 @@
           <!-- VIDEO source: local = file upload, stream = mission select from RPi -->
           <div class="field" data-src-field="video" data-channel="local">
             <label class="form-label" for="autoVideoFile">Видео файл</label>
-            <input type="file" id="autoVideoFile" accept="video/*" class="file-strong" />
+            <input type="file" id="autoVideoFile" accept="video/mp4,video/quicktime,video/x-msvideo,.mp4,.mov,.avi" class="auto-file-input" />
+            <label class="auto-file-dropzone" id="autoVideoDropzone" for="autoVideoFile">
+              <span class="auto-file-drop-title" id="autoVideoDropTitle">Перетащите или выберите видео</span>
+              <span class="auto-file-drop-hint" id="autoVideoDropHint">Поддерживаются mp4/mov/avi</span>
+            </label>
           </div>
           <div class="field" data-src-field="video" data-channel="stream" style="display:none;">
             <label class="form-label" for="autoVideoMission">Миссия RaspberryPi</label>
@@ -806,7 +895,6 @@
             <label class="form-label" for="autoDetector">Детектор</label>
             <select id="autoDetector" class="select-strong">
               <option value="yolo" selected>YOLOv8n multi-scale</option>
-              <option value="nanodet">NanoDet Plus</option>
             </select>
           </div>
           <div class="field">
@@ -872,24 +960,25 @@
     </aside>
 
     <section class="card console" style="padding:16px;">
-      <span class="hud-label">Живой поток</span>
-      <div class="auto-video-wrap">
-        <div class="auto-video-placeholder" id="autoVideoEmpty">Поток не запущен</div>
-        <img id="autoVideoImg" alt="живой кадр авто-сессии" />
-      </div>
-
-      <div class="auto-plots">
-        <div class="auto-plot wide">
+      <div class="auto-workspace-grid">
+        <div class="auto-plot auto-video-panel">
+          <h4>Видео + боксы</h4>
+          <div class="auto-video-wrap auto-plot-body">
+            <div class="auto-video-placeholder" id="autoVideoEmpty">Поток не запущен</div>
+            <img id="autoVideoImg" alt="живой кадр авто-сессии" />
+          </div>
+        </div>
+        <div class="auto-plot">
           <h4>Траектория 3D</h4>
-          <div id="autoPlot3d" style="width:100%;height:290px;"></div>
+          <div id="autoPlot3d" class="auto-plot-body" style="width:100%;height:100%;"></div>
         </div>
         <div class="auto-plot">
           <h4>Плоскость XY</h4>
-          <div id="autoPlotXY" style="width:100%;height:230px;"></div>
+          <div id="autoPlotXY" class="auto-plot-body" style="width:100%;height:100%;"></div>
         </div>
         <div class="auto-plot">
           <h4>Высота Z(t)</h4>
-          <div id="autoPlotZ" style="width:100%;height:230px;"></div>
+          <div id="autoPlotZ" class="auto-plot-body" style="width:100%;height:100%;"></div>
         </div>
       </div>
 
@@ -931,6 +1020,7 @@ let currentAlert = null;
 let currentMissionId = '';
 let streamPollTimer = null;
 let alertsPollTimer = null;
+let operatorTrajectoryPollTimer = null;
 let reportLoadedMissionId = '';
 let missionClosed = false;
 let reviewInFlight = false;
@@ -940,6 +1030,13 @@ let dragStartX = 0, dragStartY = 0;
 let dragActive = false;
 let lastRenderedAlertId = '';
 let lastStreamStatus = null;
+const OP_TRAJ = {
+  initialized: false,
+  x: [],
+  y: [],
+  z: [],
+  ts: [],
+};
 
 function nowSec() { return Date.now() / 1000; }
 function missionId() { return currentMissionId; }
@@ -1083,6 +1180,101 @@ async function loadMissionCatalog(showStatus) {
   renderMissionOptions(Array.isArray(data.missions) ? data.missions : []);
 }
 
+/* ---- Operator trajectory plots ---- */
+function operatorFlatLayout(xTitle, yTitle) {
+  return {
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(12,18,34,0.6)',
+    margin: { l: 40, r: 10, t: 8, b: 32 },
+    xaxis: { title: xTitle, color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.12)' },
+    yaxis: { title: yTitle, color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.12)' },
+    showlegend: false,
+  };
+}
+
+function initOperatorPlots() {
+  if (OP_TRAJ.initialized || !window.Plotly) return;
+  const layout3d = {
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    margin: { l: 0, r: 0, t: 0, b: 0 },
+    scene: {
+      xaxis: { title: 'X', color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.15)' },
+      yaxis: { title: 'Y', color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.15)' },
+      zaxis: { title: 'Z', color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.15)' },
+      bgcolor: 'rgba(12,18,34,0.6)',
+    },
+    showlegend: false,
+  };
+  Plotly.newPlot('operatorPlot3d', [{
+    x: [], y: [], z: [],
+    type: 'scatter3d', mode: 'lines+markers',
+    line: { color: '#f97316', width: 4 },
+    marker: { size: 3, color: '#fb923c' },
+  }], layout3d, { displayModeBar: false, responsive: true });
+  Plotly.newPlot('operatorPlotXY', [{
+    x: [], y: [], mode: 'lines+markers',
+    line: { color: '#22d3ee', width: 2 },
+    marker: { size: 4, color: '#38bdf8' },
+  }], operatorFlatLayout('X', 'Y'), { displayModeBar: false, responsive: true });
+  Plotly.newPlot('operatorPlotZ', [{
+    x: [], y: [], mode: 'lines',
+    line: { color: '#f97316', width: 2 },
+  }], operatorFlatLayout('t, сек', 'Z'), { displayModeBar: false, responsive: true });
+  OP_TRAJ.initialized = true;
+}
+
+function resizeOperatorPlots() {
+  if (!OP_TRAJ.initialized || !window.Plotly) return;
+  ['operatorPlot3d', 'operatorPlotXY', 'operatorPlotZ'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) Plotly.Plots.resize(el);
+  });
+}
+
+function resetOperatorPlots() {
+  OP_TRAJ.x = [];
+  OP_TRAJ.y = [];
+  OP_TRAJ.z = [];
+  OP_TRAJ.ts = [];
+  if (!OP_TRAJ.initialized) return;
+  Plotly.restyle('operatorPlot3d', { x: [[]], y: [[]], z: [[]] });
+  Plotly.restyle('operatorPlotXY', { x: [[]], y: [[]] });
+  Plotly.restyle('operatorPlotZ', { x: [[]], y: [[]] });
+}
+
+function renderOperatorTrajectory(points) {
+  initOperatorPlots();
+  OP_TRAJ.x = points.map((p) => Number(p.x));
+  OP_TRAJ.y = points.map((p) => Number(p.y));
+  OP_TRAJ.z = points.map((p) => Number(p.z));
+  OP_TRAJ.ts = points.map((p) => Number(p.ts_sec));
+  Plotly.restyle('operatorPlot3d', { x: [OP_TRAJ.x], y: [OP_TRAJ.y], z: [OP_TRAJ.z] });
+  Plotly.restyle('operatorPlotXY', { x: [OP_TRAJ.x], y: [OP_TRAJ.y] });
+  Plotly.restyle('operatorPlotZ', { x: [OP_TRAJ.ts], y: [OP_TRAJ.z] });
+}
+
+async function refreshOperatorTrajectory() {
+  if (!missionId()) return;
+  const resp = await fetch(`/missions/${encodeURIComponent(missionId())}/trajectory`);
+  if (!resp.ok) return;
+  const data = await resp.json().catch(() => ({ points: [] }));
+  renderOperatorTrajectory(Array.isArray(data.points) ? data.points : []);
+}
+
+function stopOperatorTrajectoryPolling() {
+  if (operatorTrajectoryPollTimer) {
+    clearInterval(operatorTrajectoryPollTimer);
+    operatorTrajectoryPollTimer = null;
+  }
+}
+
+function startOperatorTrajectoryPolling() {
+  stopOperatorTrajectoryPolling();
+  refreshOperatorTrajectory();
+  operatorTrajectoryPollTimer = setInterval(refreshOperatorTrajectory, 1500);
+}
+
 /* ---- Mission lifecycle ---- */
 async function startMission() {
   const rpiMissionId = missionSelect.value.trim();
@@ -1103,8 +1295,10 @@ async function startMission() {
   lastStreamStatus = null;
   setMissionStatus(`Миссия запущена: ${data.mission_id}`);
   resetAlertView('Поток запущен. Ожидаем первые алерты в очереди...');
+  resetOperatorPlots();
   startAlertsPolling();
   startStreamPolling();
+  startOperatorTrajectoryPolling();
   await refreshAlerts();
 }
 
@@ -1117,6 +1311,8 @@ async function stopStream() {
     return;
   }
   stopStreamPolling();
+  stopOperatorTrajectoryPolling();
+  await refreshOperatorTrajectory();
   const queued = data.queued_alerts || 0;
   if (queued > 0) {
     setMissionStatus(`Поток остановлен. Обработано кадров: ${data.processed_frames ?? '\u2014'}
@@ -1151,6 +1347,8 @@ async function completeMission() {
   if (data.report) fillReport(data.report); else await loadReport();
   stopAlertsPolling();
   stopStreamPolling();
+  stopOperatorTrajectoryPolling();
+  await refreshOperatorTrajectory();
   resetAlertView(`Миссия завершена. Причина: ${reason}`);
 }
 
@@ -1188,6 +1386,8 @@ async function forceCompleteMission() {
   if (data.report) fillReport(data.report); else await loadReport();
   stopAlertsPolling();
   stopStreamPolling();
+  stopOperatorTrajectoryPolling();
+  await refreshOperatorTrajectory();
   resetAlertView(`Миссия завершена в аварийном режиме. Причина: ${reason}`);
 }
 
@@ -1316,7 +1516,7 @@ async function fetchStreamStatus() {
   if (!missionId()) return null;
   const resp = await fetch(`/missions/${missionId()}/stream/status`);
   if (resp.status === 404) {
-    missionClosed = true; stopStreamPolling();
+    missionClosed = true; stopStreamPolling(); stopOperatorTrajectoryPolling();
     currentMissionId = ''; resetAlertView();
     setMissionStatus('Сессия недоступна. Запустите новую миссию.');
     return null;
@@ -1373,6 +1573,8 @@ function startStreamPolling() {
     setMissionStatus(buildStreamStatusText(s));
     if (!s.running) {
       stopStreamPolling();
+      stopOperatorTrajectoryPolling();
+      refreshOperatorTrajectory();
       if (s.end_reason === 'source_finished_pending_alert_review') {
         setEmptyState('Поток завершен. Обработайте оставшиеся алерты для завершения миссии.');
       } else {
@@ -1449,6 +1651,8 @@ document.getElementById('checkRpiBtn').addEventListener('click', () => loadMissi
 
 /* ---- Boot ---- */
 setupMouseZoomAndPan();
+initOperatorPlots();
+requestAnimationFrame(resizeOperatorPlots);
 loadMissionCatalog(false);
 
 /* ================================================================
@@ -1480,7 +1684,10 @@ function setActiveMode(mode) {
     initAutoPlots();
   }
   if (isAuto) {
+    requestAnimationFrame(resizeAutoPlots);
     refreshActiveAutoSession();
+  } else {
+    requestAnimationFrame(resizeOperatorPlots);
   }
 }
 
@@ -1615,6 +1822,43 @@ if (autoRpiCheckBtn) {
   autoRpiCheckBtn.addEventListener('click', () => autoCheckRpi(true));
 }
 
+const autoVideoFileInput = document.getElementById('autoVideoFile');
+const autoVideoDropzone = document.getElementById('autoVideoDropzone');
+const autoVideoDropTitle = document.getElementById('autoVideoDropTitle');
+const autoVideoDropHint = document.getElementById('autoVideoDropHint');
+
+function syncAutoVideoDropzone() {
+  const file = autoVideoFileInput && autoVideoFileInput.files ? autoVideoFileInput.files[0] : null;
+  if (!autoVideoDropTitle || !autoVideoDropHint) return;
+  autoVideoDropTitle.textContent = file ? file.name : 'Перетащите или выберите видео';
+  autoVideoDropHint.textContent = file ? 'Готово к запуску' : 'Поддерживаются mp4/mov/avi';
+}
+
+if (autoVideoFileInput && autoVideoDropzone) {
+  autoVideoFileInput.addEventListener('change', syncAutoVideoDropzone);
+  ['dragenter', 'dragover'].forEach((eventName) => {
+    autoVideoDropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      autoVideoDropzone.classList.add('drag-over');
+    });
+  });
+  ['dragleave', 'drop'].forEach((eventName) => {
+    autoVideoDropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      autoVideoDropzone.classList.remove('drag-over');
+    });
+  });
+  autoVideoDropzone.addEventListener('drop', (event) => {
+    const file = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files[0] : null;
+    if (!file) return;
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    autoVideoFileInput.files = transfer.files;
+    syncAutoVideoDropzone();
+  });
+  syncAutoVideoDropzone();
+}
+
 applyAutoChannelAndTab();
 
 /* ---- Plotly initialization ---- */
@@ -1656,6 +1900,14 @@ function initAutoPlots() {
     line: { color: '#f97316', width: 2 },
   }], flatLayout('t, сек', 'Z'), { displayModeBar: false, responsive: true });
   AUTO.plots.initialized = true;
+}
+
+function resizeAutoPlots() {
+  if (!AUTO.plots.initialized || !window.Plotly) return;
+  ['autoPlot3d', 'autoPlotXY', 'autoPlotZ'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) Plotly.Plots.resize(el);
+  });
 }
 
 function resetAutoPlots() {

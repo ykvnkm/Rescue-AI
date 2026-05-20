@@ -1,0 +1,27 @@
+apiVersion: 1
+providers:
+  # Дашборды наземной станции. Подмонтированы из
+  # infra/observability/grafana/dashboards/station/. На реальной
+  # станции подключается только эта папка — операционная Grafana.
+  - name: rescue-ai-station
+    type: file
+    folder: Rescue-AI · Станция
+    disableDeletion: false
+    editable: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/station
+
+  # Дашборды центрального кластера: realtime + качество ML-модели +
+  # дрейф данных. В центральном Kubernetes-кластере подключается
+  # только эта папка. На дипломном стенде через docker-compose обе
+  # папки монтируются одновременно, чтобы можно было снять скрины
+  # обоих контуров на одной машине.
+  - name: rescue-ai-central
+    type: file
+    folder: Rescue-AI · Центр
+    disableDeletion: false
+    editable: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/central

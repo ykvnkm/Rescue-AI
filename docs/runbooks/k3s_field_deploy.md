@@ -42,7 +42,7 @@ kubectl get nodes
 
 ### Вариант A — собран на станции
 ```bash
-docker build -t rescue-ai/online:local -f Dockerfile .
+docker build --target app -t rescue-ai/online:local -f Dockerfile .
 # k3s использует containerd, нужно импортировать в его image store:
 docker save rescue-ai/online:local -o /tmp/rescue-ai.tar
 sudo k3s ctr images import /tmp/rescue-ai.tar
@@ -96,15 +96,16 @@ kubectl -n rescue-ai create secret generic rpi-mtls \
 Если на станции есть интернет (хотя бы один раз для скачивания
 chart tarball'ов):
 ```bash
-helm repo add bitnami https://charts.bitnami.com/bitnami
-helm repo add hashicorp https://helm.releases.hashicorp.com
+helm repo add bitnami https://charts.bitnami.com/bitnami --force-update
+helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
+helm repo add apache-airflow https://airflow.apache.org --force-update
 helm repo update
 helm dependency update infra/k8s/charts/rescue-ai
 ```
 
-Если интернета нет — заранее с другого ноута выполни ту же команду,
-скопируй директорию `infra/k8s/charts/rescue-ai/charts/` целиком
-(там уже tgz зависимостей) на станцию.
+Если интернета нет — используй внутренний Helm/OCI registry или
+предзаполненный Helm cache на станции. Не коммить `charts/*.tgz` в Git:
+это сгенерированные dependency artifacts, а не исходники проекта.
 
 ## Шаг 6. Развернуть offline-профиль
 
@@ -128,7 +129,7 @@ kubectl -n rescue-ai get pods -w
 ```bash
 kubectl -n rescue-ai port-forward svc/rescue-ai-vault 8200:8200 &
 export VAULT_ADDR="http://localhost:8200"
-export VAULT_TOKEN="root-dev-token"
+export VAULT_TOKEN="<vault-token>"
 export NAMESPACE="rescue-ai"
 export VAULT_NAMESPACE="rescue-ai"
 export VAULT_SERVICE_ACCOUNT="rescue-ai-vault"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Vault bootstrap для kind / k3s в dev-режиме (ADR-0008 §3).
+# Vault bootstrap для kind / k3s (ADR-0008 §3).
 #
 # Что делает:
 #  1. Включает KV v2 на пути `secret/`.
@@ -7,10 +7,10 @@
 #  3. Загружает политики per-service.
 #  4. Создаёт role'и `rescue-ai-api` и `rescue-ai-sync-worker`,
 #     привязанные к ServiceAccount'ам этих подов.
-#  5. Пишет в KV v2 примеры секретов из локальной .env.offline.
+#  5. Пишет в KV v2 реальные значения из переменных окружения.
 #
 # Запуск:
-#   VAULT_ADDR=http://localhost:8200 VAULT_TOKEN=root-dev-token \
+#   VAULT_ADDR=http://localhost:8200 VAULT_TOKEN=<vault-token> \
 #   ./scripts/security/vault_bootstrap.sh
 #
 # Для production-кластера значения VAULT_TOKEN и пути берутся из
@@ -19,10 +19,13 @@
 set -euo pipefail
 
 : "${VAULT_ADDR:=http://localhost:8200}"
-: "${VAULT_TOKEN:=root-dev-token}"
+: "${VAULT_TOKEN:?set VAULT_TOKEN}"
 : "${NAMESPACE:=rescue-ai}"
 : "${VAULT_NAMESPACE:=$NAMESPACE}"
 : "${VAULT_SERVICE_ACCOUNT:=rescue-ai-vault}"
+: "${DB_DSN:?set DB_DSN}"
+: "${ARTIFACTS_S3_ACCESS_KEY_ID:?set ARTIFACTS_S3_ACCESS_KEY_ID}"
+: "${ARTIFACTS_S3_SECRET_ACCESS_KEY:?set ARTIFACTS_S3_SECRET_ACCESS_KEY}"
 
 export VAULT_ADDR VAULT_TOKEN
 
@@ -67,20 +70,26 @@ vault write auth/kubernetes/role/rescue-ai-sync-worker \
     policies=rescue-ai-base \
     ttl=24h
 
-echo "==> Seed example secrets (KV v2)"
-# Значения берутся из .env.offline / .env. Пользователь должен заранее
-# проставить переменные в shell перед запуском, либо отредактировать
-# тут вручную.
+vault write auth/kubernetes/role/rescue-ai-batch-exporter \
+    bound_service_account_names=rescue-ai-rescue-ai-batch-exporter \
+    bound_service_account_namespaces="$NAMESPACE" \
+    policies=rescue-ai-base \
+    ttl=24h
+
+echo "==> Write application secrets (KV v2)"
 vault kv put secret/rescue-ai/api \
-    DB_DSN="${DB_DSN:-postgresql://rescue:rescue-offline-dev@rescue-ai-postgresql:5432/rescue_ai}" \
-    ARTIFACTS_S3_ACCESS_KEY_ID="${ARTIFACTS_S3_ACCESS_KEY_ID:-rescueadmin}" \
-    ARTIFACTS_S3_SECRET_ACCESS_KEY="${ARTIFACTS_S3_SECRET_ACCESS_KEY:-rescueadmin}"
+    DB_DSN="$DB_DSN" \
+    ARTIFACTS_S3_ACCESS_KEY_ID="$ARTIFACTS_S3_ACCESS_KEY_ID" \
+    ARTIFACTS_S3_SECRET_ACCESS_KEY="$ARTIFACTS_S3_SECRET_ACCESS_KEY"
 
 vault kv put secret/rescue-ai/sync-worker \
-    DB_DSN="${DB_DSN:-postgresql://rescue:rescue-offline-dev@rescue-ai-postgresql:5432/rescue_ai}" \
+    DB_DSN="$DB_DSN" \
     DEPLOYMENT_REMOTE_DB_DSN="${DEPLOYMENT_REMOTE_DB_DSN:-}" \
     DEPLOYMENT_REMOTE_S3_ACCESS_KEY_ID="${DEPLOYMENT_REMOTE_S3_ACCESS_KEY_ID:-}" \
     DEPLOYMENT_REMOTE_S3_SECRET_ACCESS_KEY="${DEPLOYMENT_REMOTE_S3_SECRET_ACCESS_KEY:-}"
+
+vault kv put secret/rescue-ai/batch-exporter \
+    DB_DSN="$DB_DSN"
 
 echo
 echo "Vault bootstrap done."

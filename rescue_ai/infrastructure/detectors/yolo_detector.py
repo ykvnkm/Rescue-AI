@@ -1,20 +1,17 @@
-"""YOLOv8 detector wrapper with model download and caching."""
+"""YOLOv8 detector wrappers for PT and NCNN runtimes."""
 
 from __future__ import annotations
 
-import hashlib
 import importlib
 import logging
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
-from urllib.request import urlretrieve
 
 from rescue_ai.application.inference_config import InferenceConfig
 from rescue_ai.domain.entities import Detection
+from rescue_ai.infrastructure.model_cache import ModelCache
 
-MODEL_CACHE_DIR = Path("runtime/models")
 logger = logging.getLogger(__name__)
 
 
@@ -22,12 +19,19 @@ def _load_yolo_class():
     return getattr(importlib.import_module("ultralytics"), "YOLO")
 
 
-class YoloDetector:
-    """YOLO detector with lazy model loading from public model URL."""
+class _BaseYoloDetector:
+    """Shared Ultralytics-backed detector implementation."""
 
-    def __init__(self, config: InferenceConfig, model_version: str = "yolo8n") -> None:
+    def __init__(
+        self,
+        config: InferenceConfig,
+        *,
+        model_version: str,
+        cache: ModelCache | None = None,
+    ) -> None:
         self._config = config
         self._model_version = model_version
+        self._cache = cache or ModelCache()
         self._model: Any | None = None
 
     def detect(self, image_uri: object) -> list[Detection]:
@@ -56,7 +60,7 @@ class YoloDetector:
 
     def runtime_name(self) -> str:
         """Return human-readable runtime name."""
-        return "yolo"
+        return self._config.runtime
 
     def _predict_raw(self, image_source: object):
         model = self._ensure_model()
@@ -116,47 +120,45 @@ class YoloDetector:
                 "Install: uv sync --extra inference --extra dev"
             ) from error
 
-        model_path = _resolve_model_cache_path(self._config.model_url)
-        MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-        if not model_path.exists():
-            logger.info(
-                "Downloading model: %s → %s", self._config.model_url, model_path
-            )
-            urlretrieve(self._config.model_url, model_path)
-            logger.info("Model downloaded: %s", model_path)
-        else:
-            logger.info("Model cache hit: %s", model_path)
-
-        _verify_model_integrity(
-            model_path=model_path,
-            expected_sha256=self._config.model_sha256,
-        )
+        model_path = self._resolve_model_path()
         checksum_status = "verified" if self._config.model_sha256 else "skipped"
         logger.info("Model loaded: path=%s checksum=%s", model_path, checksum_status)
         self._model = yolo_cls(str(model_path))
         return self._model
 
-
-def _resolve_model_cache_path(model_url: str) -> Path:
-    parsed = urlparse(model_url)
-    filename = Path(parsed.path).name or "model.pt"
-    return MODEL_CACHE_DIR / filename
+    def _resolve_model_path(self) -> Path:
+        raise NotImplementedError
 
 
-def _verify_model_integrity(model_path: Path, expected_sha256: str | None) -> None:
-    if not expected_sha256:
-        return
-    normalized = expected_sha256.strip().lower()
-    if len(normalized) != 64 or not all(ch in "0123456789abcdef" for ch in normalized):
-        raise RuntimeError("Invalid model_sha256 format in runtime config")
-    actual = hashlib.sha256(model_path.read_bytes()).hexdigest()
-    if actual != normalized:
-        message = (
-            f"Model checksum mismatch for {model_path.name}: "
-            f"expected {normalized}, got {actual}"
+class PtYoloDetector(_BaseYoloDetector):
+    """YOLO detector that loads PyTorch weights for stand processing."""
+
+    def __init__(self, config: InferenceConfig, model_version: str = "yolov8n-pt"):
+        super().__init__(config, model_version=model_version)
+
+    def _resolve_model_path(self) -> Path:
+        return self._cache.resolve_file(
+            self._config.pt_model_url,
+            self._config.pt_model_sha256,
         )
-        raise RuntimeError(message)
+
+
+class NcnnYoloDetector(_BaseYoloDetector):
+    """YOLO detector that loads an exported NCNN package for local streaming."""
+
+    def __init__(self, config: InferenceConfig, model_version: str = "yolov8n-ncnn"):
+        super().__init__(config, model_version=model_version)
+
+    def _resolve_model_path(self) -> Path:
+        if not self._config.ncnn_model_url:
+            raise RuntimeError("NCNN runtime requires ncnn_model_url")
+        return self._cache.resolve_directory(
+            self._config.ncnn_model_url,
+            self._config.ncnn_model_sha256,
+        )
+
+
+YoloDetector = PtYoloDetector
 
 
 def _extract_detections(

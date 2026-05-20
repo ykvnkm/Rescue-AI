@@ -1,108 +1,73 @@
-# Platform Skeleton
+# Infrastructure
 
-Инфраструктурный каркас для Airflow batch-контура:
+Каталог инфраструктурных артефактов Rescue-AI:
 
-- `Airflow` (`webserver`, `scheduler`, `init`)
-- Docker-based execution of `rescue-ai-batch` image
+- `airflow/dags/` — DAG-файлы Apache Airflow (`rescue_batch_pipeline`).
+- `postgres/init/` — SQL-скрипты инициализации Postgres (схема приложения и БД метаданных Airflow).
+- `k8s/charts/` — Helm-чарты (зонтичный `rescue-ai` и пять прикладных подчартов).
+- `k8s/values/` — values-файлы для двух профилей: `offline.yaml` (наземная станция) и `cloud.yaml` (центральный кластер).
+- `k8s/vault/` — политики Vault per-service.
+- `observability/` — конфигурации Prometheus, Alertmanager и Grafana.
+- `offline/` — отдельный docker-compose offline-стека (исторический).
+- `docker-compose.platform.yml` — **архивный** файл, см. ниже.
 
-## Быстрый старт
+## Apache Airflow
 
-```bash
-cd infra
-cp platform.env.example platform.env
-docker compose -f docker-compose.platform.yml --env-file platform.env up -d
+С момента рефакторинга P1 Airflow развёртывается из корневого `docker-compose.yml` репозитория. Три контейнера (`airflow-init`, `airflow-webserver`, `airflow-scheduler`) поднимаются вместе с прикладным стеком одной командой `docker compose up -d` из корня. Метаданные хранятся в БД `airflow` того же Postgres-инстанса.
+
+Файл `infra/docker-compose.platform.yml` оставлен как архивный — он реализовывал ту же задачу до объединения, отдельным платформенным стеком с собственной БД. Использовать его не нужно; если когда-либо понадобится разделить жизненные циклы Airflow и приложения (например, держать платформу одной командой на отдельном сервере), его можно достать из git-истории и адаптировать.
+
+## DAG `rescue_batch_pipeline`
+
+Файл: `infra/airflow/dags/rescue_batch_daily.py`. Запускается ежедневно (`@daily`) с `catchup=True`. Три задачи идут последовательно через `DockerOperator`:
+
+```
+prepare_dataset → evaluate_model → publish_metrics
 ```
 
-UI/Endpoints:
-
-- Airflow: `http://localhost:8080`
-
-## Остановка
-
-```bash
-docker compose -f docker-compose.platform.yml --env-file platform.env down
-```
-
-## Важно
-
-- В `platform.env.example` нет дефолтных секретов. Перед запуском заполните DSN и S3 ключи.
-- `infra/postgres/init/010-app-schema.sql` — единый SQL со схемой продуктовых таблиц (`missions`, `alerts`, `frame_events`, `episodes`, `batch_pipeline_metrics`) в schema `app`.
-- Airflow metadata хранится в schema `airflow` (через `AIRFLOW__DATABASE__SQL_ALCHEMY_SCHEMA=airflow`).
-- Основной DAG batch-контура: `infra/airflow/dags/rescue_batch_daily.py`.
-
-## DAG: Rescue Batch (DockerOperator + Idempotency + Backfill)
-
-Подробный пошаговый runbook: `infra/AIRFLOW_ML_PIPELINE_RUNBOOK.md`.
-
-`rescue_batch_pipeline`:
-
-- Запускается ежедневно (`@daily`) с `catchup=True`.
-- Три таски `DockerOperator`, идут последовательно:
-  `prepare_dataset -> evaluate_model -> publish_metrics`.
-- Каждая стадия на старте делает свежий `list_objects_v2` по
-  `{prefix}/{ds}/` и итерируется по всем обнаруженным миссиям.
-- Передача между тасками идёт через S3:
-  `prepare_dataset` пишет `dataset.json`, `evaluate_model` читает его и
-  пишет `evaluation_<mv>_<cv>.json`, `publish_metrics` апсертит сводную
-  строку в `batch_pipeline_metrics`.
-- Rerun семантика: `put_object` всегда перезаписывает артефакты,
-  `publish_metrics` делает `ON CONFLICT DO UPDATE`. Никакого
-  skip-by-exists и `--force` нет.
-- Backfill — через `airflow dags backfill`.
+Каждая стадия выполняется в отдельном контейнере `rescue-ai:dev` командой `python -m rescue_ai.interfaces.cli.batch --stage <stage>`. Передача данных между стадиями выполняется через S3 (JSON-файлы). Финальная стадия идемпотентно делает upsert строки в таблицу `batch_pipeline_metrics`.
 
 Канонический контракт stage-runner (`rescue_ai/interfaces/cli/batch.py`):
 
-- Вход: `--stage`, дата через `--ds` или `BATCH_TARGET_DATE`,
-  опциональный allow-list через `--mission-ids-csv` или `BATCH_MISSION_IDS_CSV`.
-- Выход: `status`, `output_uri` (JSON в stdout).
-- Пустой день: процесс завершаетcя с exit code `42`, а DAG таск помечается как `skipped`.
+- вход: `--stage`, дата через `--ds` или `BATCH_TARGET_DATE`, опциональный allow-list через `--mission-ids-csv` или `BATCH_MISSION_IDS_CSV`;
+- выход: `status` и `output_uri` (JSON в stdout);
+- пустой день: процесс завершается с exit code `42`, и Airflow помечает таск как `skipped` (см. параметр `skip_exit_code` в `_COMMON` DAG-а).
 
-## Пошаговый запуск Airflow и что смотреть
+Connections настраиваются через переменные окружения `AIRFLOW_CONN_RESCUE_APP_DB` и `AIRFLOW_CONN_RESCUE_S3` (Airflow автоматически регистрирует их при старте). В DAG-коде обращение через `BaseHook.get_connection(...)`.
 
-1. Подготовьте `infra/platform.env`:
+## Запуск backfill (стандартный сценарий)
+
 ```bash
-cp infra/platform.env.example infra/platform.env
-```
-Заполните минимум:
-`AIRFLOW_ADMIN_USER`, `AIRFLOW_ADMIN_PASSWORD`, `AIRFLOW_ADMIN_EMAIL`, `AIRFLOW_CONN_RESCUE_APP_DB`, `AIRFLOW_CONN_RESCUE_S3`. Секреты прокидываются в Airflow штатно — через env-переменные с префиксом `AIRFLOW_CONN_*`, которые Airflow автоматически регистрирует как Connections на старте. В DAG-е обращение через `BaseHook.get_connection("rescue_app_db" | "rescue_s3")`.
+# 1. Поднять стек из корня
+docker compose up -d
 
-2. Проверьте конфиг compose:
-```bash
-docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env config -q
-```
+# 2. Подождать, пока airflow-webserver станет healthy
+docker compose logs -f airflow-webserver
+# Ctrl+C когда увидишь "Listening at: http://0.0.0.0:8080"
 
-3. Поднимите платформу:
-```bash
-docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env up -d
-```
+# 3. UI: http://localhost:8080 (логин/пароль из локального env)
+#    Найди DAG rescue_batch_pipeline, включи переключатель, нажми ▷
 
-4. Откройте Airflow UI (`http://localhost:8080`), включите DAG `rescue_batch_pipeline`, зайдите в Graph/Grid.
-
-5. Запустите backfill за диапазон:
-```bash
-docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env exec airflow-webserver \
-  airflow dags backfill rescue_batch_pipeline -s 2026-03-10 -e 2026-03-12
+# 4. Или CLI — backfill за диапазон дат:
+docker compose exec airflow-scheduler \
+    airflow dags backfill rescue_batch_pipeline \
+    --start-date 2026-03-10 --end-date 2026-03-12
 ```
 
-6. Проверьте артефакты в S3 (по префиксу):
-`<ARTIFACTS_S3_PREFIX>/batch/ml_pipeline/ds=<ds>/mission=<mission_id>/`.
+## Хранение метрик
 
-7. Проверьте сводные строки в Postgres по ключу
-`(ds, mission_id)` в таблице `batch_pipeline_metrics`.
+После прогона DAG таблица `batch_pipeline_metrics` содержит по одной строке на пару `(ds, mission_id)`. Состав колонок описан в разделе 3.5.4 диплома. Микросервис `rescue-ai-batch-exporter` раз в `BATCH_EXPORTER_SCRAPE_INTERVAL_SEC` секунд читает последнюю запись и проектирует значения в Prometheus-gauge'и; Grafana-дашборд «Качество ML-модели» затем визуализирует эти значения.
 
-## Runbook (failed/partial)
+## S3-layout артефактов batch-DAG
 
-- `failed` + `reason=empty_input`: проверить S3 префикс `<ARTIFACTS_S3_PREFIX>/<mission_id>/<ds>/images`.
-- `failed` + `reason=no_processable_frames`: проверить входные данные и доступность источника.
-- `partial` + `reason=corrupted_input`: высокий процент битых файлов.
-- `partial` + `reason=detector_runtime_error`: ошибки рантайма детектора на кадрах.
-- `partial` + `reason=mixed_input_and_detector_errors`: одновременно битые входы и ошибки детектора.
-- Используется единый набор переменных `DB_DSN` и `ARTIFACTS_S3_*` для online и batch.
-- Полный runbook: `docs/runbooks/batch_operations.md`.
+```
+<ARTIFACTS_S3_PREFIX>/batch/ml_pipeline/
+    ds=<ds>/
+        mission=<mission_id>/
+            dataset.json
+            evaluation_<model_version>_<config_version>.json
+```
 
-## E2E Backfill сценарий
+## Runbook операций batch-сервиса
 
-- Nightly workflow: `.github/workflows/batch-e2e.yml`.
-- Сценарий поднимает платформу, seed'ит миссию, выполняет `airflow dags backfill rescue_batch_pipeline` и проверяет артефакты в S3 и строки в `batch_pipeline_metrics`.
-- Плейбук real-data demo: `docs/runbooks/batch_demo_playbook.md`.
-- Архитектурная схема: `docs/architecture/batch_contour.md`.
+См. `docs/runbooks/batch_operations.md`.

@@ -1,0 +1,58 @@
+replicaCount: 1
+
+# Чарт включается во всех профилях с активным batch-DAG. Umbrella-чарт
+# выставляет enabled=true в offline.yaml и cloud.yaml.
+enabled: false
+
+image:
+  repository: rescue-ai-online
+  pullPolicy: IfNotPresent
+  tag: "local"
+
+deployment:
+  logLevel: INFO
+  appEnv: dev
+  serviceVersion: dev
+
+exporter:
+  # Период обновления gauge'ов из таблицы batch_pipeline_metrics, сек.
+  scrapeIntervalSec: 300
+  # Порт, на котором Prometheus опрашивает /metrics.
+  port: 8003
+
+# Источник секретов — те же варианты, что у API.
+secrets:
+  source: kube
+  kube:
+    existingSecret: ""
+    inline:
+      DB_DSN: ""
+  vault:
+    role: rescue-ai-batch-exporter
+    secretPath: rescue-ai/batch-exporter
+
+service:
+  type: ClusterIP
+  port: 8003
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

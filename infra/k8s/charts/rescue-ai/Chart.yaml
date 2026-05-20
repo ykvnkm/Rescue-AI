@@ -39,8 +39,19 @@ dependencies:
     repository: file://../rescue-ai-detection
     condition: rescue-ai-detection.enabled
 
+  # Микросервис rescue-ai-batch-exporter (см. раздел 3.5 диплома).
+  # Раз в 5 минут проектирует таблицу batch_pipeline_metrics в
+  # Prometheus-gauge'и (recall, precision, accuracy, rows_corrupted,
+  # detector_errors). Включается в обоих рабочих профилях
+  # (offline и cloud) вместе с Apache Airflow.
+  - name: rescue-ai-batch-exporter
+    version: 0.1.0
+    repository: file://../rescue-ai-batch-exporter
+    condition: rescue-ai-batch-exporter.enabled
+
   # Инфра-зависимости — стандартные bitnami-чарты. Включаются только
-  # для offline/hybrid профилей (см. values/offline.yaml + hybrid.yaml).
+  # для offline-профиля (см. values/offline.yaml). В cloud Postgres
+  # и MinIO заменены управляемыми сервисами.
   - name: postgresql
     version: "15.5.38"
     repository: https://charts.bitnami.com/bitnami
@@ -58,3 +69,12 @@ dependencies:
     version: "0.30.0"
     repository: https://helm.releases.hashicorp.com
     condition: vault.enabled
+
+  # Apache Airflow. Запускает DAG `rescue_batch_pipeline` из
+  # infra/airflow/dags/. Включается в обоих рабочих профилях
+  # (offline и cloud). В offline исполнителем является
+  # LocalExecutor (одноузловая станция), в cloud — KubernetesExecutor.
+  - name: airflow
+    version: "1.15.0"
+    repository: https://airflow.apache.org
+    condition: airflow.enabled

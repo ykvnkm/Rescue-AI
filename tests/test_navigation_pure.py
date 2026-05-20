@@ -6,9 +6,9 @@ import cv2
 import numpy as np
 import pytest
 
-from rescue_ai.navigation.altitude import compute_scale_from_samples
-from rescue_ai.navigation.smoothing import laplacian_smooth_window
-from rescue_ai.navigation.tracking import (
+from rescue_ai.infrastructure.navigation.altitude import compute_scale_from_samples
+from rescue_ai.infrastructure.navigation.smoothing import laplacian_smooth_window
+from rescue_ai.infrastructure.navigation.tracking import (
     make_roi_mask,
     order_points,
     polygon_area,
@@ -17,7 +17,7 @@ from rescue_ai.navigation.tracking import (
     project_points_median,
     safe_inv_homography,
 )
-from rescue_ai.navigation.tuning import NavigationTuning
+from rescue_ai.infrastructure.navigation.tuning import NavigationTuning
 
 
 def test_order_points_returns_tl_tr_br_bl() -> None:

@@ -1,0 +1,124 @@
+{
+  "uid": "rescue-ai-station-realtime",
+  "title": "Rescue-AI · Операции реального времени",
+  "tags": ["rescue-ai", "realtime"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "model",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(rescue_ai_inference_duration_seconds_bucket, model)",
+        "current": { "text": "All", "value": "$__all" },
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "p95 / p50 времени запуска модели по кадру, с",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, model) (rate(rescue_ai_inference_duration_seconds_bucket{model=~\"$model\"}[5m])))",
+          "legendFormat": "p95 · {{model}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, model) (rate(rescue_ai_inference_duration_seconds_bucket{model=~\"$model\"}[5m])))",
+          "legendFormat": "p50 · {{model}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Скорость детекций и сигналов, событий/с",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (label) (rate(rescue_ai_detections_total[1m]))",
+          "legendFormat": "detections · {{label}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (mission_mode) (rate(rescue_ai_alerts_created_total[1m]))",
+          "legendFormat": "alerts · {{mission_mode}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Доступность бортового модуля",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "rescue_ai_rpi_connectivity_up", "refId": "A" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Размер буфера кадров",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 8 },
+      "targets": [
+        { "expr": "rescue_ai_current_buffer_size", "refId": "A" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Ошибки HTTP API за 5 мин",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (status) (increase(http_request_duration_seconds_count{status=~\"5..\"}[5m]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Ошибки модели обнаружения за 5 мин",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(increase(rescue_ai_detector_errors_total[5m]))",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

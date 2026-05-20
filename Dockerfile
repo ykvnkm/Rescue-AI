@@ -6,7 +6,7 @@ ENV UV_LINK_MODE=copy
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock ./
 
-FROM builder-base AS builder-online
+FROM builder-base AS builder-app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --extra inference --extra postgres
 
@@ -30,8 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 10001 appuser
 
-FROM runtime-base AS online
-COPY --from=builder-online /app/.venv /app/.venv
+FROM runtime-base AS app
+COPY --from=builder-app /app/.venv /app/.venv
 COPY configs ./configs
 COPY rescue_ai ./rescue_ai
 COPY scripts ./scripts

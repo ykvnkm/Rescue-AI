@@ -27,7 +27,7 @@ from rescue_ai.application.auto_session_manager import (
 )
 from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.config import Settings, get_settings
-from rescue_ai.domain.entities import Detection, FrameEvent
+from rescue_ai.domain.entities import Detection, FrameEvent, TrajectoryPoint
 from rescue_ai.domain.ports import (
     AlertRepository,
     ArtifactStorage,
@@ -38,10 +38,11 @@ from rescue_ai.domain.ports import DetectorPort as DomainDetectorPort
 from rescue_ai.domain.ports import (
     FrameEventRepository,
     MissionRepository,
+    NavigationEnginePort,
     ReportMetadataPayload,
     TrajectoryRepository,
 )
-from rescue_ai.domain.value_objects import AlertRuleConfig
+from rescue_ai.domain.value_objects import AlertRuleConfig, NavMode
 from rescue_ai.infrastructure.artifact_storage import build_s3_storage
 from rescue_ai.infrastructure.contract_loader import load_stream_contract
 from rescue_ai.infrastructure.postgres_connection import wait_for_postgres
@@ -101,6 +102,8 @@ class RpiStreamState:
     gt_sequence_total: int | None = None
     source_frames_total: int | None = None
     read_failures: int = 0
+    trajectory_points: int = 0
+    navigation_failures: int = 0
     end_reason: str | None = None
     last_stats: dict[str, object] | None = None
     error: str | None = None
@@ -136,6 +139,9 @@ class _LoopContext:
     capture: _FrameCapture
     tmp_dir: Path
     frame_id: int = 0
+    trajectory_seq: int = 0
+    navigation_engine: NavigationEnginePort | None = None
+    trajectory_repository: TrajectoryRepository | None = None
     consecutive_read_failures: int = 0
     last_rpi_check: float = 0.0
 
@@ -298,6 +304,8 @@ class DetectionStreamController:
         settings: Settings,
         pilot_service: PilotService | None = None,
         detector: DomainDetectorPort | None = None,
+        navigation_factory: Callable[[str], NavigationEnginePort] | None = None,
+        trajectory_repository: TrajectoryRepository | None = None,
     ) -> None:
         self._rpi_settings = settings.rpi
         # Security/TLS settings travel separately from RpiSettings so a
@@ -310,6 +318,10 @@ class DetectionStreamController:
         self._threads: dict[str, threading.Thread] = {}
         self._pilot_service = pilot_service
         self._detector = detector
+        self._navigation_factory = navigation_factory
+        self._trajectory_repository = trajectory_repository
+        self._trajectory_points: dict[str, list[TrajectoryPoint]] = {}
+        self._trajectory_lock = threading.RLock()
 
     def start(
         self,
@@ -338,6 +350,8 @@ class DetectionStreamController:
             started_at=datetime.now(timezone.utc).isoformat(),
         )
         self._sessions[mission_id] = state
+        with self._trajectory_lock:
+            self._trajectory_points[mission_id] = []
         logger.info(
             "Stream started: mission=%s rpi_mission=%s fps=%.1f",
             mission_id[:8],
@@ -452,6 +466,21 @@ class DetectionStreamController:
             for mission in catalog.missions
         ]
 
+    def list_trajectory(self, mission_id: str) -> list[TrajectoryPoint]:
+        if self._trajectory_repository is not None:
+            try:
+                points = self._trajectory_repository.list_by_mission(mission_id)
+                if points:
+                    return points
+            except (RuntimeError, ValueError, OSError) as error:
+                logger.warning(
+                    "Cannot load operator trajectory from repository: mission=%s %s",
+                    mission_id,
+                    type(error).__name__,
+                )
+        with self._trajectory_lock:
+            return list(self._trajectory_points.get(mission_id, []))
+
     def _client(self) -> RpiClient:
         return RpiClient(self._rpi_settings, security=self._security_settings)
 
@@ -500,6 +529,11 @@ class DetectionStreamController:
             state.end_reason = "loop_exception"
             logger.exception("Detection loop crashed: %s", loop_err)
         finally:
+            if ctx.navigation_engine is not None:
+                close = getattr(ctx.navigation_engine, "close", None)
+                if callable(close):
+                    with suppress(Exception):
+                        close()
             with suppress(Exception):
                 ctx.capture.release()
             state.running = False
@@ -634,6 +668,11 @@ class DetectionStreamController:
         state.capture_backend = (
             "rtsp" if isinstance(capture, _RtspFrameCapture) else "http"
         )
+        navigation_engine = self._build_operator_navigation_engine(
+            mission_id=mission_id,
+            fps=target_fps,
+            state=state,
+        )
         return _LoopContext(
             mission_id=mission_id,
             state=state,
@@ -644,7 +683,33 @@ class DetectionStreamController:
             source_filenames=source_filenames,
             capture=capture,
             tmp_dir=Path(tempfile.mkdtemp(prefix="rescue_frames_")),
+            navigation_engine=navigation_engine,
+            trajectory_repository=self._trajectory_repository,
         )
+
+    def _build_operator_navigation_engine(
+        self,
+        *,
+        mission_id: str,
+        fps: float,
+        state: RpiStreamState,
+    ) -> NavigationEnginePort | None:
+        if self._navigation_factory is None or self._trajectory_repository is None:
+            return None
+        try:
+            engine = self._navigation_factory(mission_id)
+            engine.reset(nav_mode=NavMode.AUTO, fps=fps)
+            return engine
+        except (RuntimeError, ValueError, OSError) as error:
+            state.navigation_failures += 1
+            state.error = f"navigation disabled: {type(error).__name__}: {error}"
+            logger.warning(
+                "Operator navigation unavailable mission=%s: %s: %s",
+                mission_id,
+                type(error).__name__,
+                error,
+            )
+            return None
 
     def _read_frame_with_recovery(
         self,
@@ -701,6 +766,7 @@ class DetectionStreamController:
             ctx.frame_id / ctx.target_fps if ctx.target_fps > 0 else ctx.frame_id * 0.5
         )
         gt_present, gt_episode_id = ctx.gt_tracker.evaluate(ctx.frame_id)
+        self._run_operator_navigation(ctx=ctx, frame=frame, ts_sec=ts_sec)
 
         t0 = time.monotonic()
         detections = self._detect_frame_or_empty(
@@ -747,6 +813,71 @@ class DetectionStreamController:
             )
         ctx.frame_id += 1
         ctx.state.processed_frames = ctx.frame_id
+
+    def _run_operator_navigation(
+        self,
+        *,
+        ctx: _LoopContext,
+        frame: object,
+        ts_sec: float,
+    ) -> None:
+        if ctx.navigation_engine is None or ctx.trajectory_repository is None:
+            return
+        try:
+            raw_point = ctx.navigation_engine.step(
+                self._frame_for_navigation(frame),
+                ts_sec=ts_sec,
+                frame_id=ctx.frame_id,
+            )
+        except (RuntimeError, ValueError, TypeError, OSError) as error:
+            ctx.state.navigation_failures += 1
+            logger.warning(
+                "Navigation error: mission=%s frame=%d error=%s",
+                ctx.mission_id[:8],
+                ctx.frame_id,
+                type(error).__name__,
+            )
+            return
+        if raw_point is None:
+            return
+
+        ctx.trajectory_seq += 1
+        point = TrajectoryPoint(
+            mission_id=ctx.mission_id,
+            seq=ctx.trajectory_seq,
+            ts_sec=raw_point.ts_sec,
+            x=raw_point.x,
+            y=raw_point.y,
+            z=raw_point.z,
+            source=raw_point.source,
+            frame_id=ctx.frame_id if raw_point.frame_id is None else raw_point.frame_id,
+        )
+        try:
+            ctx.trajectory_repository.add(point)
+            with self._trajectory_lock:
+                self._trajectory_points.setdefault(ctx.mission_id, []).append(point)
+            ctx.state.trajectory_points += 1
+        except (RuntimeError, ValueError, OSError) as error:
+            ctx.state.navigation_failures += 1
+            logger.warning(
+                "Trajectory persist error: mission=%s frame=%d error=%s",
+                ctx.mission_id[:8],
+                ctx.frame_id,
+                type(error).__name__,
+            )
+
+    @staticmethod
+    def _frame_for_navigation(frame: object) -> object:
+        if isinstance(frame, bytes):
+            import numpy as np
+
+            cv2 = import_module("cv2")
+            arr = np.frombuffer(frame, dtype=np.uint8)
+            decoded = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if decoded is None:
+                raise ValueError("Cannot decode JPEG frame for navigation")
+            return decoded
+        return frame
 
     @staticmethod
     def _resolve_frame_filename(ctx: _LoopContext) -> str:
@@ -975,51 +1106,40 @@ class DetectionStreamController:
 
 
 def _build_detector() -> DomainDetectorPort | None:
-    """Create detector from stream contract config (lazy, optional).
+    """Wire the HTTP adapter to the standalone detection microservice.
 
-    Если задан ``DETECTOR_URL``, API использует HTTP-адаптер
-    :class:`HttpDetector` к отдельному сервису ``rescue-ai-detection``
-    (ADR-0008 §1). Без переменной — поведение прежнее, локальный
-    YOLO-детектор в этом же процессе.
+    Composition root подключает реализацию ``DetectorPort`` ровно одним
+    адаптером — ``HttpDetector`` к сервису ``rescue-ai-detection``.
+    Адрес сервиса задаётся переменной окружения ``DETECTOR_URL``;
+    при её отсутствии или при недоступности сервиса детектор не
+    подключается, и зависящие от него подсистемы помечаются как
+    неактивные на уровне точки сборки зависимостей.
     """
     settings = get_settings()
     detector_url = str(getattr(settings.detection, "service_url", "")).strip()
-    if detector_url:
-        try:
-            from rescue_ai.infrastructure.http_detector import HttpDetector
-
-            timeout = float(getattr(settings.detection, "service_timeout_sec", 5.0))
-            detector = HttpDetector(base_url=detector_url, timeout_sec=timeout)
-            detector.warmup()
-            logger.info(
-                "Detector initialized (remote): url=%s runtime=%s",
-                detector_url,
-                detector.runtime_name(),
-            )
-            return detector
-        except (ImportError, RuntimeError, OSError) as error:
-            logger.warning(
-                "HttpDetector unavailable, falling back to local: %s: %s",
-                type(error).__name__,
-                error,
-            )
+    if not detector_url:
+        logger.warning(
+            "Detection microservice URL is not configured; detector is unavailable."
+        )
+        return None
 
     try:
-        from rescue_ai.infrastructure.detectors import build_detector
+        from rescue_ai.infrastructure.http_detector import HttpDetector
 
-        contract = load_stream_contract(
-            service_version=settings.app.service_version,
-        )
-        detector = build_detector(contract.inference)
+        timeout = float(getattr(settings.detection, "service_timeout_sec", 5.0))
+        detector = HttpDetector(base_url=detector_url, timeout_sec=timeout)
+        detector.warmup()
         logger.info(
-            "Detector initialized: name=%s model_url=%s",
-            contract.inference.detector_name,
-            contract.inference.model_url,
+            "Detector initialized: url=%s runtime=%s",
+            detector_url,
+            detector.runtime_name(),
         )
         return detector
-    except (ImportError, RuntimeError, ValueError, TypeError, OSError) as error:
+    except (ImportError, RuntimeError, OSError) as error:
         logger.warning(
-            "YoloDetector not available: %s: %s", type(error).__name__, error
+            "HttpDetector unavailable: %s: %s",
+            type(error).__name__,
+            error,
         )
         return None
 
@@ -1072,16 +1192,20 @@ def build_api_runtime() -> tuple[
     pilot_service.set_report_metadata(report_metadata)
 
     detector = _build_detector()
+    operator_navigation_factory = _build_operator_navigation_factory(settings)
 
     stream_controller = DetectionStreamController(
         settings=settings,
         pilot_service=pilot_service,
         detector=detector,
+        navigation_factory=operator_navigation_factory,
+        trajectory_repository=(
+            auto_repos.trajectory_repository if auto_repos is not None else None
+        ),
     )
 
     auto_mission_service = _build_auto_mission_service(
         settings=settings,
-        contract_dataset_fps=contract.dataset_fps,
         alert_rules=alert_rules,
         mission_repository=mission_repository,
         alert_repository=alert_repository,
@@ -1113,10 +1237,38 @@ def build_api_runtime() -> tuple[
     )
 
 
+def _build_operator_navigation_factory(
+    settings: Settings,
+) -> Callable[[str], NavigationEnginePort] | None:
+    nav_engine_url = str(
+        getattr(getattr(settings, "navigation_service", None), "service_url", "")
+    ).strip()
+    if not nav_engine_url:
+        logger.warning(
+            "Navigation microservice URL is not configured; "
+            "operator trajectories are disabled."
+        )
+        return None
+
+    from rescue_ai.infrastructure.http_navigation_engine import HttpNavigationEngine
+
+    nav_timeout = float(
+        getattr(settings.navigation_service, "service_timeout_sec", 5.0)
+    )
+
+    def _factory(mission_id: str) -> NavigationEnginePort:
+        return HttpNavigationEngine(
+            base_url=nav_engine_url,
+            mission_id=mission_id,
+            timeout_sec=nav_timeout,
+        )
+
+    return _factory
+
+
 def _build_auto_mission_service(
     *,
     settings: Settings,
-    contract_dataset_fps: float,
     alert_rules: AlertRuleConfig,
     mission_repository: MissionRepository,
     alert_repository: AlertRepository,
@@ -1137,8 +1289,6 @@ def _build_auto_mission_service(
         from rescue_ai.infrastructure.trajectory_plot import (
             build_trajectory_plot_renderer,
         )
-        from rescue_ai.navigation.engine import NavigationEngine
-        from rescue_ai.navigation.tuning import NavigationTuning
     except ImportError as err:
         logger.warning("AutoMissionService disabled (missing deps): %s", err)
         return None
@@ -1149,35 +1299,32 @@ def _build_auto_mission_service(
         logger.warning("TrajectoryPlotRenderer unavailable: %s", err)
         plot_renderer = None
 
-    # Use the contract dataset FPS only as the construction-time
-    # default. The real per-mission FPS is forwarded later via
-    # ``NavigationEngine.reset(fps=...)`` in
-    # :meth:`AutoMissionService.start_auto_mission`, so the engine's
-    # marker speed gate operates on the actual frame rate of the
-    # source — not the dataset's prior.
+    # Composition root подключает реализацию ``NavigationEnginePort``
+    # ровно одним адаптером — ``HttpNavigationEngine`` к сервису
+    # ``rescue-ai-nav-engine``. Адрес сервиса задаётся переменной
+    # окружения ``NAV_ENGINE_URL``; при её отсутствии автоматический
+    # режим миссии помечается как неактивный.
     nav_engine_url = str(
         getattr(getattr(settings, "navigation_service", None), "service_url", "")
     ).strip()
-    if nav_engine_url:
-        # ADR-0008 §1: вне-процессный nav-engine. Адаптер реализует тот
-        # же ``NavigationEnginePort``, остальной код не меняется.
-        from rescue_ai.infrastructure.http_navigation_engine import (
-            HttpNavigationEngine,
+    if not nav_engine_url:
+        logger.warning(
+            "Navigation microservice URL is not configured; "
+            "AutoMissionService is disabled."
         )
+        return None
 
-        nav_timeout = float(
-            getattr(settings.navigation_service, "service_timeout_sec", 5.0)
-        )
-        nav_engine = HttpNavigationEngine(
-            base_url=nav_engine_url,
-            mission_id="api-auto",
-            timeout_sec=nav_timeout,
-        )
-        logger.info("NavigationEngine initialized (remote): url=%s", nav_engine_url)
-    else:
-        nav_tuning = NavigationTuning(fps=contract_dataset_fps)
-        nav_engine = NavigationEngine(mission_id="api-auto", config=nav_tuning)
-        logger.info("NavigationEngine initialized (in-process)")
+    from rescue_ai.infrastructure.http_navigation_engine import HttpNavigationEngine
+
+    nav_timeout = float(
+        getattr(settings.navigation_service, "service_timeout_sec", 5.0)
+    )
+    nav_engine = HttpNavigationEngine(
+        base_url=nav_engine_url,
+        mission_id="api-auto",
+        timeout_sec=nav_timeout,
+    )
+    logger.info("NavigationEngine initialized: url=%s", nav_engine_url)
 
     return AutoMissionService(
         dependencies=AutoMissionService.Dependencies(
@@ -1319,11 +1466,11 @@ def _build_repositories(
         postgres_db, episode_settings=None
     )
 
-    # Hybrid profile (ADR-0007 §3): wrap every write-side repository
+    # Offline profile (ADR-0007 §3): wrap every write-side repository
     # in an offline-first decorator that emits a `replication_outbox`
     # row alongside the local write. The sync-worker drains those
-    # rows into the remote Postgres / S3.
-    if str(getattr(settings.deployment, "mode", "cloud")) == "hybrid":
+    # rows into the remote Postgres / S3 when connectivity is available.
+    if str(getattr(settings.deployment, "mode", "cloud")) == "offline":
         from rescue_ai.infrastructure.sync.offline_first_repositories import (
             OfflineFirstAlertRepository,
             OfflineFirstAutoDecisionRepository,

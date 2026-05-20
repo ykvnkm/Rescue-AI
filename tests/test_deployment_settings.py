@@ -46,14 +46,15 @@ def test_default_mode_is_cloud_and_outbox_disabled() -> None:
     assert deployment.is_offline_first is False
 
 
-def test_offline_and_hybrid_are_offline_first() -> None:
+def test_offline_profile_is_offline_first() -> None:
     assert DeploymentSettings(DEPLOYMENT_MODE="offline").is_offline_first is True
-    assert DeploymentSettings(DEPLOYMENT_MODE="hybrid").is_offline_first is True
 
 
-def test_outbox_only_enabled_in_hybrid() -> None:
-    assert DeploymentSettings(DEPLOYMENT_MODE="offline").outbox_enabled is False
-    assert DeploymentSettings(DEPLOYMENT_MODE="hybrid").outbox_enabled is True
+def test_outbox_enabled_in_offline() -> None:
+    # The offline profile produces outbox rows for the sync-worker to
+    # drain to the remote contour when connectivity is available.
+    assert DeploymentSettings(DEPLOYMENT_MODE="offline").outbox_enabled is True
+    assert DeploymentSettings(DEPLOYMENT_MODE="cloud").outbox_enabled is False
 
 
 def test_security_mtls_requires_paths() -> None:

@@ -1,16 +1,25 @@
-# Профиль `cloud` — managed Kubernetes (Yandex MK или аналог).
+# Профиль `cloud` — managed Kubernetes (Yandex Managed Kubernetes
+# или аналог), используется для централизованной обработки данных
+# и сопровождения модели (ADR-0007 §5, ADR-0008 §1).
 #
-# Postgres = managed (Supabase / Yandex Managed PostgreSQL).
-# S3       = Yandex Cloud Object Storage.
-# Vault    = либо external (managed), либо deployed отдельно (вне umbrella).
-# Секреты приходят через Vault Agent Injector — pod аннотируется
-# и читает /vault/secrets/app.env при старте.
+# Включённые сервисы:
+#   * rescue-ai-api                   — управление миссией
+#   * rescue-ai-detection             — обнаружение людей
+#   * rescue-ai-nav-engine            — восстановление траектории
+#   * rescue-ai-batch-exporter        — мост batch-метрик в Prometheus
+#   * airflow                         — оркестратор batch-DAG
+#
+# Выключенные / внешние:
+#   * rescue-ai-sync-worker           — не нужен в cloud (cloud получает данные, не отдаёт)
+#   * postgresql                      — Yandex Managed PostgreSQL
+#   * minio                           — Yandex Object Storage
+#   * vault                           — развёрнут отдельным релизом (cluster-wide)
 
 rescue-ai-api:
   enabled: true
   replicaCount: 2
   image:
-    repository: ghcr.io/ykvnkm/rescue-ai/online
+    repository: ghcr.io/ykvnkm/rescue-ai-online
     tag: latest
     pullPolicy: IfNotPresent
   imagePullSecrets:
@@ -27,11 +36,15 @@ rescue-ai-api:
       s3Bucket: rescue-ai-mission-artifacts
       s3Prefix: missions
     rpi:
-      baseUrl: "https://rpi.cloudflare-tunnel.example.com"
-      missionsDir: "/home/ykvnkm/Documents/missions"
+      baseUrl: ""
+      missionsDir: ""
+    detection:
+      serviceUrl: "http://rescue-ai-rescue-ai-detection.rescue-ai.svc.cluster.local:8002"
+    navigation:
+      serviceUrl: "http://rescue-ai-rescue-ai-nav-engine.rescue-ai.svc.cluster.local:8001"
   security:
-    # cloud-режим оставляет TLS off в самом приложении — канал до
-    # RPi прикрыт cloudflared-туннелем (см. ADR-0007 §5).
+    # До борта в cloud-режиме идёт cloudflared-туннель; mTLS
+    # активируется снаружи. См. ADR-0007 §5.
     tlsMode: "off"
   secrets:
     source: vault
@@ -62,15 +75,104 @@ rescue-ai-api:
       cpu: 2000m
       memory: 2Gi
 
+rescue-ai-detection:
+  enabled: true
+  image:
+    repository: ghcr.io/ykvnkm/rescue-ai-online
+    tag: latest
+  imagePullSecrets:
+    - name: ghcr-pull
+
+rescue-ai-nav-engine:
+  enabled: true
+  image:
+    repository: ghcr.io/ykvnkm/rescue-ai-online
+    tag: latest
+  imagePullSecrets:
+    - name: ghcr-pull
+
 rescue-ai-sync-worker:
   enabled: false
+
+rescue-ai-batch-exporter:
+  enabled: true
+  image:
+    repository: ghcr.io/ykvnkm/rescue-ai-online
+    tag: latest
+  imagePullSecrets:
+    - name: ghcr-pull
+  exporter:
+    scrapeIntervalSec: 300
+    port: 8003
+  secrets:
+    source: vault
+    vault:
+      role: rescue-ai-batch-exporter
+      secretPath: rescue-ai/batch-exporter
 
 postgresql:
   enabled: false
 minio:
   enabled: false
 vault:
-  # Vault предполагается уже развёрнутым в кластере отдельным релизом
-  # (production-режим, не из этого umbrella). Аннотации Vault Agent
-  # Injector работают вне зависимости от того, кто его развернул.
+  # В cloud-кластере Vault уже развёрнут отдельным релизом
+  # (production-режим, реальный init + unseal). Аннотации Vault
+  # Agent Injector в подах работают вне зависимости от того, кем
+  # был установлен сам Vault.
   enabled: false
+
+airflow:
+  enabled: true
+  executor: KubernetesExecutor
+  defaultAirflowTag: "2.9.3"
+  airflowVersion: "2.9.3"
+  webserverSecretKey: ${AIRFLOW_WEBSERVER_SECRET_KEY}
+  webserver:
+    defaultUser:
+      enabled: true
+      role: Admin
+      username: admin
+      email: admin@rescue-ai.example.com
+      password: ${AIRFLOW_ADMIN_PASSWORD}
+  postgresql:
+    enabled: false   # используется Yandex Managed PostgreSQL
+  data:
+    metadataConnection:
+      user: rescue_airflow
+      pass: ${AIRFLOW_DB_PASSWORD}
+      host: rescue-airflow-pgsql.mdb.yandexcloud.net
+      port: 6432
+      db: airflow
+  dags:
+    gitSync:
+      enabled: true
+      repo: "https://github.com/ykvnkm/Rescue-AI.git"
+      branch: main
+      subPath: "infra/airflow/dags"
+      depth: 1
+      maxFailures: 5
+      wait: 60
+  env:
+    - name: BATCH_IMAGE
+      value: "ghcr.io/ykvnkm/rescue-ai-online:latest"
+  extraEnv: |
+    - name: AIRFLOW_CONN_RESCUE_APP_DB
+      valueFrom:
+        secretKeyRef:
+          name: rescue-airflow-conns
+          key: rescue_app_db_conn
+    - name: AIRFLOW_CONN_RESCUE_S3
+      valueFrom:
+        secretKeyRef:
+          name: rescue-airflow-conns
+          key: rescue_s3_conn
+  ingress:
+    web:
+      enabled: true
+      hosts:
+        - name: airflow.rescue-ai.example.com
+          tls:
+            enabled: true
+            secretName: rescue-airflow-tls
+  # NB: DAG-стадии должны использовать KubernetesPodOperator
+  # (общий TODO после защиты диплома).

@@ -21,13 +21,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import (
-    APIRouter,
-    HTTPException,
-    Request,
-    WebSocket,
-    WebSocketDisconnect,
-)
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from starlette.datastructures import UploadFile
 

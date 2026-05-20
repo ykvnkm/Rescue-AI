@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import yaml
 
-from rescue_ai.application.inference_config import InferenceConfig
+from rescue_ai.application.inference_config import InferenceConfig, ModelRuntime
 from rescue_ai.domain.ports import ReportMetadataPayload
 from rescue_ai.domain.value_objects import AlertRuleConfig
 
@@ -60,7 +61,7 @@ def _resolve_min_detections_per_frame(payload: dict[str, object]) -> int:
     return int(alert.get("min_detections_per_frame", 1))
 
 
-_SUPPORTED_DETECTORS = {"yolo", "nanodet"}
+_SUPPORTED_RUNTIMES = {"pt", "ncnn"}
 
 
 def _normalize_sha256(value: object) -> str | None:
@@ -75,37 +76,40 @@ def _build_inference_config(
     if not isinstance(infer, dict):
         infer = {}
 
-    detector_cfg = payload.get("detector", {})
-    if not isinstance(detector_cfg, dict):
-        detector_cfg = {}
-    detector_name = str(detector_cfg.get("name", "yolo")).strip().lower()
-    if detector_name not in _SUPPORTED_DETECTORS:
+    model_cfg = payload.get("model", {})
+    if not isinstance(model_cfg, dict):
+        model_cfg = {}
+
+    runtime = str(model_cfg.get("runtime", "pt")).strip().lower()
+    if runtime not in _SUPPORTED_RUNTIMES:
         raise ValueError(
-            f"Unsupported detector: {detector_name!r}; "
-            f"expected one of {sorted(_SUPPORTED_DETECTORS)}"
+            f"Unsupported model runtime: {runtime!r}; "
+            f"expected one of {sorted(_SUPPORTED_RUNTIMES)}"
         )
 
-    nanodet_cfg = detector_cfg.get("nanodet", {})
-    if not isinstance(nanodet_cfg, dict):
-        nanodet_cfg = {}
+    # Backward-compatible fallback for older contracts that used the
+    # top-level model_url/model_sha256 fields.
+    pt_url = str(model_cfg.get("pt_url") or payload.get("model_url", DEFAULT_MODEL_URL))
+    pt_sha256 = _normalize_sha256(
+        model_cfg.get("pt_sha256") or payload.get("model_sha256")
+    )
+    ncnn_url = model_cfg.get("ncnn_url")
+    ncnn_sha256 = _normalize_sha256(model_cfg.get("ncnn_sha256"))
+
+    if runtime == "ncnn" and not ncnn_url:
+        raise ValueError("model.runtime=ncnn requires model.ncnn_url")
 
     return InferenceConfig(
-        model_url=str(payload.get("model_url", DEFAULT_MODEL_URL)),
+        runtime=cast(ModelRuntime, runtime),
+        pt_model_url=pt_url,
+        pt_model_sha256=pt_sha256,
+        ncnn_model_url=str(ncnn_url) if ncnn_url else None,
+        ncnn_model_sha256=ncnn_sha256,
         device=str(payload.get("device", "cpu")),
         imgsz=int(infer.get("imgsz", 960)),
         nms_iou=float(infer.get("nms_iou", 0.75)),
         max_det=int(infer.get("max_det", 1000)),
         confidence_threshold=confidence_threshold,
-        model_sha256=_normalize_sha256(payload.get("model_sha256")),
-        detector_name=detector_name,
-        nanodet_config_url=(
-            str(nanodet_cfg["config_url"]) if nanodet_cfg.get("config_url") else None
-        ),
-        nanodet_config_sha256=_normalize_sha256(nanodet_cfg.get("config_sha256")),
-        nanodet_onnx_url=(
-            str(nanodet_cfg["onnx_url"]) if nanodet_cfg.get("onnx_url") else None
-        ),
-        nanodet_onnx_sha256=_normalize_sha256(nanodet_cfg.get("onnx_sha256")),
     )
 
 

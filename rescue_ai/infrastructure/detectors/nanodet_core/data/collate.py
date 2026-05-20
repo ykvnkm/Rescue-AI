@@ -13,12 +13,14 @@
 # limitations under the License.
 
 import collections
+import importlib
 import re
 
 import torch
 
 try:
-    from torch.utils.data._utils.collate import string_classes
+    collate_module = importlib.import_module("torch.utils.data._utils.collate")
+    string_classes = getattr(collate_module, "string_classes")
 except Exception:  # noqa: BLE001
     string_classes = (str, bytes)
 

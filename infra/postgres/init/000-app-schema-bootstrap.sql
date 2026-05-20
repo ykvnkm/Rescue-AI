@@ -1,4 +1,4 @@
--- Bootstrap для локального Postgres (offline / hybrid профили).
+-- Bootstrap для локального Postgres (offline-профиль).
 --
 -- Cloud-БД (Supabase, ADR-0007) исторически держит таблицы в схеме `app`,
 -- и репозитории в `rescue_ai/interfaces/cli/online.py` подключаются с

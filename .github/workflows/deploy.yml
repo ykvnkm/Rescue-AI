@@ -1,5 +1,18 @@
 name: deploy
 
+# Прод-деплой через Helm в k3s-кластер на VPS.
+#
+# Триггерится автоматически после успешного `ci.yml` на ветке main,
+# либо вручную через workflow_dispatch.
+#
+# Что делает:
+#   1. build-online    — собирает образ rescue-ai-online и пушит в GHCR
+#                        с тегами latest и ${GIT_SHA}.
+#   2. build-batch     — то же для образа batch (контейнеры Airflow-стадий).
+#   3. deploy          — подключается к VPS по SSH, обновляет репо,
+#                        делает `helm upgrade --install rescue-ai`
+#                        с подменой image.tag на свежий ${GIT_SHA}.
+
 on:
   workflow_run:
     workflows: [ci]
@@ -28,7 +41,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          target: online
+          target: app
           push: true
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/rescue-ai-online:cache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/rescue-ai-online:cache,mode=max
@@ -65,254 +78,106 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-online, build-batch]
     permissions: { contents: read, packages: read }
-
     steps:
-      - name: Deploy via SSH
+      - name: Helm upgrade via SSH to VPS
         uses: appleboy/ssh-action@v1.2.0
         env:
-          DB_DSN: ${{ secrets.DB_DSN }}
-          ARTIFACTS_S3_ENDPOINT: ${{ secrets.ARTIFACTS_S3_ENDPOINT }}
-          ARTIFACTS_S3_REGION: ${{ secrets.ARTIFACTS_S3_REGION }}
-          ARTIFACTS_S3_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_S3_ACCESS_KEY_ID }}
-          ARTIFACTS_S3_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_S3_SECRET_ACCESS_KEY }}
-          ARTIFACTS_S3_BUCKET: ${{ secrets.ARTIFACTS_S3_BUCKET }}
-          ARTIFACTS_S3_PREFIX: ${{ secrets.ARTIFACTS_S3_PREFIX }}
-          RPI_BASE_URL: ${{ secrets.RPI_BASE_URL }}
-          RPI_MISSIONS_DIR: ${{ secrets.RPI_MISSIONS_DIR }}
-          RPI_RTSP_PORT: ${{ secrets.RPI_RTSP_PORT }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-          AIRFLOW_DB_USER: ${{ secrets.AIRFLOW_DB_USER }}
-          AIRFLOW_DB_PASSWORD: ${{ secrets.AIRFLOW_DB_PASSWORD }}
-          AIRFLOW_ADMIN_USER: ${{ secrets.AIRFLOW_ADMIN_USER }}
-          AIRFLOW_ADMIN_PASSWORD: ${{ secrets.AIRFLOW_ADMIN_PASSWORD }}
-          AIRFLOW_ADMIN_EMAIL: ${{ secrets.AIRFLOW_ADMIN_EMAIL }}
           GIT_SHA: ${{ env.DEPLOY_SHA }}
           OWNER: ${{ github.repository_owner }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: DB_DSN,ARTIFACTS_S3_ENDPOINT,ARTIFACTS_S3_REGION,ARTIFACTS_S3_ACCESS_KEY_ID,ARTIFACTS_S3_SECRET_ACCESS_KEY,ARTIFACTS_S3_BUCKET,ARTIFACTS_S3_PREFIX,RPI_BASE_URL,RPI_MISSIONS_DIR,RPI_RTSP_PORT,GHCR_TOKEN,GHCR_USERNAME,AIRFLOW_DB_USER,AIRFLOW_DB_PASSWORD,AIRFLOW_ADMIN_USER,AIRFLOW_ADMIN_PASSWORD,AIRFLOW_ADMIN_EMAIL,GIT_SHA,OWNER
+          envs: GIT_SHA,OWNER,GHCR_USERNAME,GHCR_TOKEN
           command_timeout: 30m
           script: |
             set -euo pipefail
 
-            APP_DIR="$HOME/rescue-ai"
-            ARTIFACTS_S3_PREFIX="${ARTIFACTS_S3_PREFIX:-missions}"
+            REPO_DIR="$HOME/rescue-ai"
+            NAMESPACE="rescue-ai"
+            export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
 
-            export ONLINE_IMAGE="ghcr.io/${OWNER}/rescue-ai-online:${GIT_SHA}"
-            export BATCH_IMAGE="ghcr.io/${OWNER}/rescue-ai-batch:${GIT_SHA}"
-            export DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
+            echo "==> Update repository to commit ${GIT_SHA}"
+            cd "${REPO_DIR}"
+            git fetch --depth=1 origin "${GIT_SHA}"
+            git checkout --detach "${GIT_SHA}"
 
-            mkdir -p "${APP_DIR}/infra"
+            echo "==> Ensure namespace"
+            kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-            cat > "${APP_DIR}/infra/docker-compose.platform.yml" <<'COMPOSE'
-            name: rescue-platform
+            echo "==> Refresh pg-init ConfigMap"
+            kubectl -n "${NAMESPACE}" delete configmap pg-init --ignore-not-found
+            kubectl -n "${NAMESPACE}" create configmap pg-init \
+                --from-file=infra/postgres/init/
 
-            x-airflow-common: &airflow-common
-              environment: &airflow-env
-                AIRFLOW__CORE__EXECUTOR: LocalExecutor
-                AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/airflow
-                AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+            echo "==> Ensure GHCR pull secret"
+            kubectl -n "${NAMESPACE}" create secret docker-registry ghcr-pull \
+                --docker-server=ghcr.io \
+                --docker-username="${GHCR_USERNAME}" \
+                --docker-password="${GHCR_TOKEN}" \
+                --dry-run=client -o yaml | kubectl apply -f -
 
-            services:
-              airflow-db:
-                image: postgres:16
-                restart: unless-stopped
-                environment:
-                  POSTGRES_USER: ${AIRFLOW_DB_USER}
-                  POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
-                  POSTGRES_DB: airflow
-                healthcheck:
-                  test: ["CMD-SHELL", "pg_isready -U ${AIRFLOW_DB_USER} -d airflow"]
-                  interval: 5s
-                  timeout: 5s
-                  retries: 10
-                volumes:
-                  - airflow_db_data:/var/lib/postgresql/data
+            echo "==> Ensure rpi-mtls secret (server-side files in ~/secrets/)"
+            kubectl -n "${NAMESPACE}" create secret generic rpi-mtls \
+                --from-file=ca.crt="$HOME/secrets/station-root-ca.crt" \
+                --from-file=client.crt="$HOME/secrets/gcs-client.crt" \
+                --from-file=client.key="$HOME/secrets/gcs-client.key" \
+                --dry-run=client -o yaml | kubectl apply -f -
 
-              airflow-init:
-                image: ${BATCH_IMAGE}
-                depends_on:
-                  airflow-db:
-                    condition: service_healthy
-                <<: *airflow-common
-                env_file:
-                  - platform.env
-                command: >-
-                  bash -c "airflow db migrate
-                  && (airflow users create
-                  --username $${AIRFLOW_ADMIN_USER}
-                  --firstname Platform
-                  --lastname Admin
-                  --role Admin
-                  --email $${AIRFLOW_ADMIN_EMAIL}
-                  --password $${AIRFLOW_ADMIN_PASSWORD}
-                  || airflow users reset-password
-                  --username $${AIRFLOW_ADMIN_USER}
-                  --password $${AIRFLOW_ADMIN_PASSWORD})"
-                restart: "no"
+            echo "==> Resolve umbrella chart dependencies"
+            helm repo add bitnami https://charts.bitnami.com/bitnami --force-update
+            helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
+            helm repo add apache-airflow https://airflow.apache.org --force-update
+            helm repo update
+            helm dependency update infra/k8s/charts/rescue-ai
 
-              airflow-webserver:
-                image: ${BATCH_IMAGE}
-                restart: unless-stopped
-                depends_on:
-                  airflow-db:
-                    condition: service_healthy
-                  airflow-init:
-                    condition: service_completed_successfully
-                <<: *airflow-common
-                environment:
-                  <<: *airflow-env
-                  AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
-                  AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-                  BATCH_IMAGE: ${BATCH_IMAGE}
-                env_file:
-                  - platform.env
-                volumes:
-                  - airflow_logs:/opt/airflow/logs
-                  - /var/run/docker.sock:/var/run/docker.sock
-                group_add:
-                  - "${DOCKER_GID}"
-                ports:
-                  - "8080:8080"
-                command: airflow webserver
+            echo "==> Deploy rescue-ai (Helm upgrade --install)"
+            # Используется профиль offline (полная self-contained
+            # одноузловая инсталляция); источник образа переопределяется
+            # на GHCR с тегом текущего коммита.
+            IMAGE_REPO="ghcr.io/${OWNER}/rescue-ai-online"
+            helm upgrade --install rescue-ai infra/k8s/charts/rescue-ai \
+                --namespace "${NAMESPACE}" \
+                -f infra/k8s/values/offline.yaml \
+                --set rescue-ai-api.image.repository="${IMAGE_REPO}" \
+                --set rescue-ai-api.image.tag="${GIT_SHA}" \
+                --set rescue-ai-api.image.pullPolicy="Always" \
+                --set-json "rescue-ai-api.imagePullSecrets=[{\"name\":\"ghcr-pull\"}]" \
+                --set rescue-ai-detection.image.repository="${IMAGE_REPO}" \
+                --set rescue-ai-detection.image.tag="${GIT_SHA}" \
+                --set rescue-ai-detection.image.pullPolicy="Always" \
+                --set-json "rescue-ai-detection.imagePullSecrets=[{\"name\":\"ghcr-pull\"}]" \
+                --set rescue-ai-nav-engine.image.repository="${IMAGE_REPO}" \
+                --set rescue-ai-nav-engine.image.tag="${GIT_SHA}" \
+                --set rescue-ai-nav-engine.image.pullPolicy="Always" \
+                --set-json "rescue-ai-nav-engine.imagePullSecrets=[{\"name\":\"ghcr-pull\"}]" \
+                --set rescue-ai-batch-exporter.image.repository="${IMAGE_REPO}" \
+                --set rescue-ai-batch-exporter.image.tag="${GIT_SHA}" \
+                --set rescue-ai-batch-exporter.image.pullPolicy="Always" \
+                --set-json "rescue-ai-batch-exporter.imagePullSecrets=[{\"name\":\"ghcr-pull\"}]" \
+                --set "airflow.env[0].value=${IMAGE_REPO}:${GIT_SHA}" \
+                --wait --timeout 15m
 
-              airflow-scheduler:
-                image: ${BATCH_IMAGE}
-                restart: unless-stopped
-                depends_on:
-                  airflow-db:
-                    condition: service_healthy
-                  airflow-init:
-                    condition: service_completed_successfully
-                <<: *airflow-common
-                environment:
-                  <<: *airflow-env
-                  BATCH_IMAGE: ${BATCH_IMAGE}
-                env_file:
-                  - platform.env
-                volumes:
-                  - airflow_logs:/opt/airflow/logs
-                  - /var/run/docker.sock:/var/run/docker.sock
-                group_add:
-                  - "${DOCKER_GID}"
-                command: airflow scheduler
+            echo "==> Check Vault Agent rendered application secrets"
+            # Real secrets are provisioned outside CI/CD. The deploy job only
+            # verifies that Vault Agent Injector rendered the expected env file.
+            kubectl -n "${NAMESPACE}" exec -i deploy/rescue-ai-rescue-ai-api -- \
+                bash -lc "test -f /vault/secrets/app.env" \
+                || echo "WARNING: vault-agent did not produce /vault/secrets/app.env; check Vault role binding"
 
-            volumes:
-              airflow_db_data:
-              airflow_logs:
-            COMPOSE
-            sed -i 's/^            //' "${APP_DIR}/infra/docker-compose.platform.yml"
+            echo "==> Wait for rollout"
+            kubectl -n "${NAMESPACE}" rollout status deploy/rescue-ai-rescue-ai-api --timeout=5m
+            kubectl -n "${NAMESPACE}" rollout status deploy/rescue-ai-rescue-ai-detection --timeout=5m
+            kubectl -n "${NAMESPACE}" rollout status deploy/rescue-ai-rescue-ai-nav-engine --timeout=5m
+            kubectl -n "${NAMESPACE}" rollout status deploy/rescue-ai-rescue-ai-batch-exporter --timeout=5m
 
-            echo "── Login to GHCR and pull app images ──"
-            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
-            docker pull "${ONLINE_IMAGE}" &
-            pid1=$!
-            docker pull "${BATCH_IMAGE}" &
-            pid2=$!
-            wait "$pid1" "$pid2"
-
-            echo "── Write .env for online service ──"
-            cat > "${APP_DIR}/.env" <<ENVEOF
-            APP_HOST=0.0.0.0
-            APP_PORT=8000
-            DB_DSN=${DB_DSN}
-            ARTIFACTS_S3_ENDPOINT=${ARTIFACTS_S3_ENDPOINT}
-            ARTIFACTS_S3_REGION=${ARTIFACTS_S3_REGION}
-            ARTIFACTS_S3_ACCESS_KEY_ID=${ARTIFACTS_S3_ACCESS_KEY_ID}
-            ARTIFACTS_S3_SECRET_ACCESS_KEY=${ARTIFACTS_S3_SECRET_ACCESS_KEY}
-            ARTIFACTS_S3_BUCKET=${ARTIFACTS_S3_BUCKET}
-            ARTIFACTS_S3_PREFIX=${ARTIFACTS_S3_PREFIX}
-            RPI_BASE_URL=${RPI_BASE_URL}
-            RPI_MISSIONS_DIR=${RPI_MISSIONS_DIR}
-            RPI_RTSP_PORT=${RPI_RTSP_PORT}
-            RPI_RTSP_PATH_PREFIX=live
-            RPI_TIMEOUT_SEC=10
-            ENVEOF
-            sed -i 's/^[[:space:]]*//' "${APP_DIR}/.env"
-            chmod 600 "${APP_DIR}/.env"
-
-            echo "── Compose Airflow Connection URIs ──"
-            # rescue_app_db: Airflow accepts a postgresql:// DSN directly as a
-            # Connection URI, so we reuse DB_DSN verbatim.
-            # rescue_s3: Airflow's aws:// URI format with userinfo credentials
-            # and endpoint/region/bucket/prefix in the query string. We build
-            # it via Python to get correct URL-encoding of every component.
-            AIRFLOW_CONN_RESCUE_APP_DB="${DB_DSN}"
-            AIRFLOW_CONN_RESCUE_S3="$(
-              ARTIFACTS_S3_ENDPOINT="${ARTIFACTS_S3_ENDPOINT}" \
-              ARTIFACTS_S3_REGION="${ARTIFACTS_S3_REGION}" \
-              ARTIFACTS_S3_ACCESS_KEY_ID="${ARTIFACTS_S3_ACCESS_KEY_ID}" \
-              ARTIFACTS_S3_SECRET_ACCESS_KEY="${ARTIFACTS_S3_SECRET_ACCESS_KEY}" \
-              ARTIFACTS_S3_BUCKET="${ARTIFACTS_S3_BUCKET}" \
-              ARTIFACTS_S3_PREFIX="${ARTIFACTS_S3_PREFIX}" \
-              python3 -c '
-            import os, urllib.parse
-            q = lambda v: urllib.parse.quote(v, safe="")
-            print("aws://{k}:{s}@/?endpoint_url={e}&region_name={r}&bucket={b}&prefix={p}".format(
-                k=q(os.environ["ARTIFACTS_S3_ACCESS_KEY_ID"]),
-                s=q(os.environ["ARTIFACTS_S3_SECRET_ACCESS_KEY"]),
-                e=q(os.environ["ARTIFACTS_S3_ENDPOINT"]),
-                r=q(os.environ["ARTIFACTS_S3_REGION"]),
-                b=q(os.environ["ARTIFACTS_S3_BUCKET"]),
-                p=q(os.environ["ARTIFACTS_S3_PREFIX"]),
-            ))
-            '
-            )"
-            export AIRFLOW_CONN_RESCUE_APP_DB AIRFLOW_CONN_RESCUE_S3
-
-            echo "── Write platform.env for Airflow stack ──"
-            cat > "${APP_DIR}/infra/platform.env" <<ENVEOF
-            AIRFLOW_DB_USER=${AIRFLOW_DB_USER}
-            AIRFLOW_DB_PASSWORD=${AIRFLOW_DB_PASSWORD}
-            AIRFLOW_ADMIN_USER=${AIRFLOW_ADMIN_USER}
-            AIRFLOW_ADMIN_PASSWORD=${AIRFLOW_ADMIN_PASSWORD}
-            AIRFLOW_ADMIN_EMAIL=${AIRFLOW_ADMIN_EMAIL}
-            AIRFLOW_CONN_RESCUE_APP_DB=${AIRFLOW_CONN_RESCUE_APP_DB}
-            AIRFLOW_CONN_RESCUE_S3=${AIRFLOW_CONN_RESCUE_S3}
-            ENVEOF
-            sed -i 's/^[[:space:]]*//' "${APP_DIR}/infra/platform.env"
-            chmod 600 "${APP_DIR}/infra/platform.env"
-
-            echo "── Initialize app schema (idempotent) ──"
-            docker run --rm \
-              --env-file "${APP_DIR}/.env" \
-              "${ONLINE_IMAGE}" \
-              python -m rescue_ai.interfaces.cli.init_remote_db
-
-            echo "── Deploy online service ──"
-            docker rm -f rescue-ai-online 2>/dev/null || true
-            docker run -d \
-              --name rescue-ai-online \
-              --restart unless-stopped \
-              --network host \
-              --env-file "${APP_DIR}/.env" \
-              "${ONLINE_IMAGE}"
-
-            echo "── Deploy Airflow stack ──"
-            cd "${APP_DIR}/infra"
-
-            docker compose --env-file platform.env \
-              -f docker-compose.platform.yml \
-              up -d airflow-db
-
-            if ! docker compose --env-file platform.env \
-              -f docker-compose.platform.yml \
-              up --abort-on-container-exit --exit-code-from airflow-init airflow-init; then
-              docker compose --env-file platform.env \
-                -f docker-compose.platform.yml \
-                logs --tail=200 airflow-db airflow-init
-              exit 1
-            fi
-
-            docker compose --env-file platform.env \
-              -f docker-compose.platform.yml \
-              up -d airflow-webserver airflow-scheduler
-
-            echo "── Health check ──"
+            echo "==> Health check"
+            kubectl -n "${NAMESPACE}" port-forward svc/rescue-ai-rescue-ai-api 8000:8000 &
+            PF_PID=$!
             sleep 5
-            curl -sf http://127.0.0.1:8000/health || echo "WARNING: online health check failed"
+            curl -fsS http://127.0.0.1:8000/health || (kill $PF_PID; exit 1)
+            kill $PF_PID || true
 
-            echo "Deploy complete"
+            echo "==> Deploy complete: rescue-ai @ ${GIT_SHA}"

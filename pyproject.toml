@@ -12,6 +12,7 @@ dependencies = [
   "pydantic-settings==2.7.1",
   "uvicorn[standard]==0.30.6",
   "PyYAML==6.0.2",
+  "prometheus-client==0.21.1",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +33,10 @@ inference = [
   "ultralytics==8.3.57",
   "torch>=2.0.0",
   "torchvision>=0.15.0",
+  "onnx>=1.16,<2",
+  "onnxslim>=0.1.60,<0.2",
+  "onnxruntime>=1.18,<2",
+  "onnxscript>=0.1,<1",
 ]
 postgres = [
   "psycopg[binary]==3.2.3",
@@ -44,7 +49,7 @@ batch = [
 ]
 airflow = [
   "apache-airflow==2.9.3",
-  "apache-airflow-providers-docker==3.11.0",
+  "apache-airflow-providers-cncf-kubernetes==8.3.4",
   "psycopg2-binary==2.9.10",
   "pydantic>=2,<3",
   "pydantic-settings==2.7.1",
@@ -92,7 +97,7 @@ generated-members = ["cv2.*"]
 ignore-paths = ["^rescue_ai/infrastructure/detectors/nanodet_core/.*$"]
 
 [tool.pylint.format]
-max-module-lines = 1300
+max-module-lines = 1600
 
 [tool.pylint.design]
 max-args = 8

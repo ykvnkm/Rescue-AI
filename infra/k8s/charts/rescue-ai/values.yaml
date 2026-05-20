@@ -1,25 +1,28 @@
-# Дефолты umbrella-чарта — собирают cloud-профиль (managed Postgres
-# + S3, без локальных subcharts). Конкретные профили лежат в
-# infra/k8s/values/{cloud,offline,hybrid,dev}.yaml.
+# Дефолты umbrella-чарта (cloud-ориентированные). Конкретные профили
+# лежат в infra/k8s/values/{cloud,offline,dev}.yaml и подключаются
+# при установке: `helm install rescue-ai . -f ../../values/<profile>.yaml`.
 
 rescue-ai-api:
   enabled: true
   deployment:
     deploymentMode: cloud
 
-rescue-ai-sync-worker:
-  enabled: false  # включается только в hybrid
-
-# Микросервисное разделение (ADR-0008 §1). По умолчанию выключены —
-# монолит. В values/<profile>.yaml можно включить и проставить URL'ы
-# в rescue-ai-api.config (DETECTOR_URL / NAV_ENGINE_URL).
-rescue-ai-nav-engine:
-  enabled: false
-
+# Прикладные микросервисы — выключены по умолчанию, чтобы у дефолтного
+# `helm install` без -f не разворачивался лишнего. Профили включают
+# нужные сервисы явно.
 rescue-ai-detection:
   enabled: false
 
-# Внешние managed зависимости — не разворачиваем поды.
+rescue-ai-nav-engine:
+  enabled: false
+
+rescue-ai-sync-worker:
+  enabled: false   # только offline
+
+rescue-ai-batch-exporter:
+  enabled: false   # offline + cloud
+
+# Инфра-зависимости — выключены по умолчанию (предполагается managed).
 postgresql:
   enabled: false
 
@@ -28,3 +31,6 @@ minio:
 
 vault:
   enabled: false
+
+airflow:
+  enabled: false   # offline + cloud

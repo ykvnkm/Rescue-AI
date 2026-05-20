@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from rescue_ai.domain.entities import Detection
+from rescue_ai.domain.entities import Detection, TrajectoryPoint
+from rescue_ai.domain.value_objects import TrajectorySource
 from rescue_ai.interfaces.api.app import app
 
 client = TestClient(app)
@@ -19,13 +20,38 @@ class _FakeMission:
         self.source_name = source_name
         self.fps = fps
         self.completed_frame_id = None
+        self.created_at = "2026-05-16T10:00:00+00:00"
+
+
+class _FakeAlert:
+    def __init__(self, alert_id: str = "a-1", ts_sec: float = 4.0) -> None:
+        detection = Detection(
+            bbox=(1.0, 2.0, 3.0, 4.0),
+            score=0.9,
+            label="person",
+            model_name="test-detector",
+            explanation=None,
+        )
+        self.alert_id = alert_id
+        self.mission_id = "m-1"
+        self.frame_id = 8
+        self.ts_sec = ts_sec
+        self.image_uri = "file:///tmp/frame.jpg"
+        self.people_detected = 1
+        self.primary_detection = detection
+        self.detections = [detection]
+        self.status: str = "queued"
+        self.reviewed_by: str | None = None
+        self.reviewed_at_sec: float | None = None
+        self.decision_reason: str | None = None
 
 
 class _FakePilotService:
     def __init__(self) -> None:
         self._mission = _FakeMission("m-1", "created", "rpi:demo", 6.0)
         self._active_mission: _FakeMission | None = None
-        self._queued_alerts: list[object] = []
+        self._queued_alerts: list[_FakeAlert] = []
+        self.last_review_updates = None
 
     def create_mission(self, source_name: str, total_frames: int, fps: float):
         _ = total_frames
@@ -73,10 +99,17 @@ class _FakePilotService:
         return []
 
     def review_alert(self, alert_id: str, updates):
-        _ = updates
+        self.last_review_updates = updates
         for idx, item in enumerate(self._queued_alerts):
             if getattr(item, "alert_id", "") == alert_id:
                 self._queued_alerts.pop(idx)
+                item.status = updates["status"]
+                item.reviewed_by = updates.get("reviewed_by")
+                reviewed_at = updates.get("reviewed_at_sec")
+                item.reviewed_at_sec = (
+                    float(reviewed_at) if reviewed_at is not None else item.ts_sec
+                )
+                item.decision_reason = updates.get("decision_reason")
                 return item
         return None
 
@@ -107,6 +140,20 @@ class _FakeStreamController:
     def stop(self, mission_id: str):
         _ = mission_id
         return self._StoppedState(processed_frames=3)
+
+    def list_trajectory(self, mission_id: str):
+        return [
+            TrajectoryPoint(
+                mission_id=mission_id,
+                seq=1,
+                ts_sec=0.5,
+                x=1.0,
+                y=2.0,
+                z=3.0,
+                source=TrajectorySource.MARKER,
+                frame_id=1,
+            )
+        ]
 
 
 def test_health_ok() -> None:
@@ -183,6 +230,10 @@ def test_predict_flow_smoke(monkeypatch) -> None:
     assert status.status_code == 200
     assert status.json()["mission_id"] == "m-1"
 
+    trajectory = client.get("/missions/m-1/trajectory")
+    assert trajectory.status_code == 200
+    assert trajectory.json()["points"][0]["x"] == 1.0
+
     stop = client.post("/missions/m-1/complete")
     assert stop.status_code == 200
     assert stop.json()["status"] == "completed"
@@ -221,7 +272,7 @@ def test_complete_mission_rejected_when_alerts_queued(monkeypatch) -> None:
 
     pilot = _FakePilotService()
     pilot._mission.status = "running"
-    pilot._queued_alerts = [object()]
+    pilot._queued_alerts = [_FakeAlert()]
     stream = _FakeStreamController()
 
     def _get_pilot_service():
@@ -236,6 +287,35 @@ def test_complete_mission_rejected_when_alerts_queued(monkeypatch) -> None:
     response = client.post("/missions/m-1/complete")
     assert response.status_code == 409
     assert "queued alerts" in response.json()["detail"]
+
+
+def test_confirm_alert_preserves_review_timing_payload(monkeypatch) -> None:
+    from rescue_ai.interfaces.api import routes
+
+    pilot = _FakePilotService()
+    pilot._queued_alerts = [_FakeAlert()]
+
+    def _get_pilot_service():
+        return pilot
+
+    monkeypatch.setattr(routes, "get_pilot_service", _get_pilot_service)
+
+    response = client.post(
+        "/alerts/a-1/confirm",
+        json={
+            "reviewed_by": "operator",
+            "reviewed_at_sec": 6.25,
+            "decision_reason": "visible person",
+        },
+    )
+
+    assert response.status_code == 200
+    assert pilot.last_review_updates == {
+        "status": "reviewed_confirmed",
+        "reviewed_by": "operator",
+        "reviewed_at_sec": 6.25,
+        "decision_reason": "visible person",
+    }
 
 
 def test_force_complete_resolves_queued_alerts(monkeypatch) -> None:

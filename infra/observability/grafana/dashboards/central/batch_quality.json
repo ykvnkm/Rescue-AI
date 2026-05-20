@@ -1,0 +1,105 @@
+{
+  "uid": "rescue-ai-batch-quality",
+  "title": "Rescue-AI · Качество ML-модели",
+  "tags": ["rescue-ai", "batch", "ml"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Полнота обнаружения (recall)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.85 },
+              { "color": "green", "value": 0.90 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "rescue_ai_batch_recall", "instant": true, "range": false, "refId": "A" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Точность (precision)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [
+        { "expr": "rescue_ai_batch_precision", "instant": true, "range": false, "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Accuracy",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [
+        { "expr": "rescue_ai_batch_accuracy", "instant": true, "range": false, "refId": "A" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Метка времени последнего batch-прогона",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "dateTimeAsIso" } },
+      "targets": [
+        {
+          "expr": "rescue_ai_batch_last_run_timestamp_seconds * 1000",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Доля повреждённых кадров и сбоев инференса",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [
+        {
+          "expr": "rescue_ai_batch_rows_corrupted",
+          "legendFormat": "повреждённые кадры",
+          "refId": "A"
+        },
+        {
+          "expr": "rescue_ai_batch_detector_errors",
+          "legendFormat": "сбои инференса",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Динамика recall / precision / accuracy",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [
+        { "expr": "rescue_ai_batch_recall", "legendFormat": "recall", "refId": "A" },
+        { "expr": "rescue_ai_batch_precision", "legendFormat": "precision", "refId": "B" },
+        { "expr": "rescue_ai_batch_accuracy", "legendFormat": "accuracy", "refId": "C" }
+      ]
+    }
+  ]
+}

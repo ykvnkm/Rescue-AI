@@ -14,7 +14,7 @@ from typing import Callable, Protocol
 from rescue_ai.application.auto_mission_service import AutoMissionService
 from rescue_ai.application.auto_session_manager import AutoSessionManager
 from rescue_ai.application.pilot_service import PilotService
-from rescue_ai.domain.entities import Detection
+from rescue_ai.domain.entities import Detection, TrajectoryPoint
 from rescue_ai.domain.ports import ArtifactStorage
 
 
@@ -36,6 +36,8 @@ class StreamControllerPort(Protocol):
     def check_rpi_health(self) -> dict[str, object]: ...
 
     def list_rpi_missions(self) -> list[dict[str, str]]: ...
+
+    def list_trajectory(self, mission_id: str) -> list[TrajectoryPoint]: ...
 
 
 class DetectorPort(Protocol):

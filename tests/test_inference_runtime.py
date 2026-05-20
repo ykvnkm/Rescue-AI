@@ -12,9 +12,12 @@ from rescue_ai.application.inference_config import InferenceConfig
 from rescue_ai.application.payloads import build_frame_payload, serialize_detections
 from rescue_ai.infrastructure.annotation_index import build_annotation_index
 from rescue_ai.infrastructure.detectors.yolo_detector import (
+    NcnnYoloDetector,
+    PtYoloDetector,
     YoloDetector,
     _resolve_person_ids,
 )
+from rescue_ai.infrastructure.model_cache import ModelCache
 
 
 def test_build_annotation_index_from_coco_json() -> None:
@@ -84,7 +87,8 @@ def test_yolo_detector_warmup_requires_ultralytics(
         "yolov8n_baseline_multiscale/v1/yolov8n_baseline_multiscale.pt"
     )
     config = InferenceConfig(
-        model_url=model_url,
+        runtime="pt",
+        pt_model_url=model_url,
         device="cpu",
         imgsz=960,
         nms_iou=0.75,
@@ -113,21 +117,18 @@ def test_yolo_detector_validates_checksum(monkeypatch: pytest.MonkeyPatch) -> No
         model_file = cache_dir / "model.pt"
         model_file.write_bytes(b"fake-model")
 
-        monkeypatch.setattr(
-            "rescue_ai.infrastructure.detectors.yolo_detector.MODEL_CACHE_DIR",
-            cache_dir,
-        )
-
         config = InferenceConfig(
-            model_url="https://example.com/model.pt",
+            runtime="pt",
+            pt_model_url="https://example.com/model.pt",
             device="cpu",
             imgsz=640,
             nms_iou=0.7,
             max_det=100,
             confidence_threshold=0.25,
-            model_sha256="0" * 64,
+            pt_model_sha256="0" * 64,
         )
-        detector = YoloDetector(config)
+        detector = PtYoloDetector(config)
+        detector._cache = ModelCache(cache_dir)
 
         class _FakeYolo:
             def __init__(self, model_path: str) -> None:
@@ -153,21 +154,18 @@ def test_yolo_detector_accepts_matching_checksum(
         model_file.write_bytes(payload)
         expected_hash = hashlib.sha256(payload).hexdigest()
 
-        monkeypatch.setattr(
-            "rescue_ai.infrastructure.detectors.yolo_detector.MODEL_CACHE_DIR",
-            cache_dir,
-        )
-
         config = InferenceConfig(
-            model_url="https://example.com/model.pt",
+            runtime="pt",
+            pt_model_url="https://example.com/model.pt",
             device="cpu",
             imgsz=640,
             nms_iou=0.7,
             max_det=100,
             confidence_threshold=0.25,
-            model_sha256=expected_hash,
+            pt_model_sha256=expected_hash,
         )
-        detector = YoloDetector(config)
+        detector = PtYoloDetector(config)
+        detector._cache = ModelCache(cache_dir)
 
         class _FakeYolo:
             def __init__(self, model_path: str) -> None:
@@ -179,3 +177,41 @@ def test_yolo_detector_accepts_matching_checksum(
         )
 
         detector.warmup()
+        assert isinstance(detector._model, _FakeYolo)
+        assert detector._model.model_path == str(model_file)
+
+
+def test_ncnn_detector_resolves_export_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        cache_dir = Path(temp_dir) / "models"
+        model_dir = cache_dir / "model_ncnn"
+        model_dir.mkdir(parents=True)
+        (model_dir / "model.ncnn.param").write_text("param")
+        (model_dir / "model.ncnn.bin").write_bytes(b"bin")
+
+        config = InferenceConfig(
+            runtime="ncnn",
+            pt_model_url="https://example.com/model.pt",
+            ncnn_model_url=str(model_dir),
+            device="cpu",
+            imgsz=640,
+            nms_iou=0.5,
+            max_det=100,
+            confidence_threshold=0.3,
+        )
+        detector = NcnnYoloDetector(config)
+
+        class _FakeYolo:
+            def __init__(self, model_path: str) -> None:
+                self.model_path = model_path
+
+        monkeypatch.setattr(
+            "rescue_ai.infrastructure.detectors.yolo_detector._load_yolo_class",
+            lambda: _FakeYolo,
+        )
+
+        detector.warmup()
+        assert isinstance(detector._model, _FakeYolo)
+        assert detector._model.model_path == str(model_dir)

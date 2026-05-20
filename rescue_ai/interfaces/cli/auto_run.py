@@ -35,6 +35,8 @@ from rescue_ai.domain.value_objects import NavMode
 from rescue_ai.infrastructure.artifact_storage import build_s3_storage
 from rescue_ai.infrastructure.contract_loader import load_stream_contract
 from rescue_ai.infrastructure.detectors import build_detector
+from rescue_ai.infrastructure.navigation.engine import NavigationEngine
+from rescue_ai.infrastructure.navigation.tuning import NavigationTuning
 from rescue_ai.infrastructure.postgres_auto_repositories import (
     PostgresAutoDecisionRepository,
     PostgresAutoMissionConfigRepository,
@@ -55,8 +57,6 @@ from rescue_ai.infrastructure.video import (
     FolderFramesSource,
     RTSPVideoSource,
 )
-from rescue_ai.navigation.engine import NavigationEngine
-from rescue_ai.navigation.tuning import NavigationTuning
 
 logger = logging.getLogger(__name__)
 

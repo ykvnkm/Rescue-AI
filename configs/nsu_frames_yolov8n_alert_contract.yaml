@@ -1,7 +1,11 @@
 name: nsu_frames_yolov8n_alert_contract
 reason: "Локальный поток кадров: единый контракт инференса, алертов и метрик миссии."
-model_url: https://storage.yandexcloud.net/rescue-ai-models-public/models/yolov8n_baseline_multiscale/v1/yolov8n_baseline_multiscale.pt
 device: cpu
+
+model:
+  runtime: pt
+  pt_url: https://storage.yandexcloud.net/rescue-ai-detectors/models/yolov8n_baseline_multiscale/v1/yolov8n_baseline_multiscale.pt
+  ncnn_url: https://storage.yandexcloud.net/rescue-ai-detectors/models/yolov8n_baseline_multiscale/v1/yolov8n_baseline_multiscale_ncnn.zip
 
 dataset:
   fps: 6.0
@@ -9,12 +13,12 @@ dataset:
 infer:
   imgsz: 960
   conf_min: 0.001
-  nms_iou: 0.75
+  nms_iou: 0.5
   max_det: 1000
 
 alert:
   window_sec: 1.0
-  quorum_k: 1
+  quorum_k: 2
   cooldown_sec: 1.5
   gap_end_sec: 1.2
   gt_gap_end_sec: 1.0
@@ -25,4 +29,4 @@ alert:
 eval:
   target_recall: 0.90
   fp_per_min_target: 1.0
-  thresholds: [0.20, 0.24, 0.28, 0.30, 0.32, 0.35, 0.38, 0.40, 0.45]
+  thresholds: [0.30]

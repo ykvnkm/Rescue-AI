@@ -1,0 +1,73 @@
+"""CLI entry point for the sync-worker (offline profile).
+
+Drains the local ``replication_outbox`` table into the remote
+contour (remote Postgres + remote S3) whenever connectivity is
+available. Started by Helm subchart ``rescue-ai-sync-worker`` when
+``DEPLOYMENT_MODE=offline``.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from rescue_ai.config import get_settings
+from rescue_ai.infrastructure.postgres_connection import (
+    PostgresDatabase,
+    wait_for_postgres,
+)
+from rescue_ai.infrastructure.sync.remote_sync_target import RemoteSyncTargetAdapter
+from rescue_ai.infrastructure.sync.sync_outbox_repository import (
+    PostgresSyncOutboxRepository,
+)
+from rescue_ai.infrastructure.sync.sync_worker import SyncWorker, SyncWorkerConfig
+
+
+def _build_s3_client(deployment) -> object:
+    # boto3 is heavy; importing lazily here keeps the main application
+    # startup fast.
+    import boto3
+
+    return boto3.client(
+        "s3",
+        endpoint_url=deployment.remote_s3_endpoint or None,
+        region_name=deployment.remote_s3_region,
+        aws_access_key_id=deployment.remote_s3_access_key_id,
+        aws_secret_access_key=deployment.remote_s3_secret_access_key,
+    )
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO)
+    settings = get_settings()
+    deployment = settings.deployment
+    deployment_mode = str(getattr(deployment, "mode", "cloud"))
+    if deployment_mode != "offline":
+        raise SystemExit(
+            "sync-worker requires DEPLOYMENT_MODE=offline; got " f"{deployment_mode}"
+        )
+
+    local_db = PostgresDatabase(settings.database.dsn)
+    wait_for_postgres(settings.database.dsn, timeout_sec=60.0)
+
+    remote_db = PostgresDatabase(str(getattr(deployment, "remote_db_dsn", "")))
+    s3_client = _build_s3_client(deployment)
+
+    outbox = PostgresSyncOutboxRepository(local_db)
+    target = RemoteSyncTargetAdapter(remote_db, s3_client)
+    worker = SyncWorker(
+        outbox=outbox,
+        target=target,
+        config=SyncWorkerConfig(
+            batch_size=int(getattr(deployment, "sync_batch_size", 50)),
+            interval_sec=float(getattr(deployment, "sync_interval_sec", 10.0)),
+            max_attempts=int(getattr(deployment, "sync_max_attempts", 10)),
+            processing_timeout_sec=float(
+                getattr(deployment, "sync_processing_timeout_sec", 120.0)
+            ),
+        ),
+    )
+    worker.run_forever()
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()

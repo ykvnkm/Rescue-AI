@@ -41,6 +41,10 @@ class _FakeStreamController:
     def list_rpi_missions(self) -> list[dict[str, str]]:
         return [{"mission_id": "demo", "name": "Demo"}]
 
+    def list_trajectory(self, mission_id: str):
+        _ = mission_id
+        return []
+
 
 def test_lazy_runtime_bootstrap_and_getters(monkeypatch) -> None:
     dependencies._STATE.runtime = None

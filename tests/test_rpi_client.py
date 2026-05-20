@@ -56,7 +56,7 @@ def test_rpi_client_health_catalog_and_session_calls(monkeypatch) -> None:
     client = RpiClient(
         RpiSettings(
             RPI_BASE_URL="http://rpi.local:9100",
-            RPI_MISSIONS_DIR="/home/ykvnkm/Documents/missions",
+            RPI_MISSIONS_DIR="/srv/rescue-ai/missions",
             RPI_RTSP_PORT=8554,
             RPI_RTSP_PATH_PREFIX="live",
         )
@@ -82,7 +82,7 @@ def test_rpi_client_health_catalog_and_session_calls(monkeypatch) -> None:
 
     start_call = [item for item in calls if item[1].endswith("/source/start")][0]
     assert start_call[2] is not None
-    assert start_call[2]["source"] == "/home/ykvnkm/Documents/missions/m1"
+    assert start_call[2]["source"] == "/srv/rescue-ai/missions/m1"
     assert start_call[2]["loop"] is False
 
 
@@ -124,7 +124,7 @@ def test_load_gt_sequence_from_raw_file(monkeypatch) -> None:
     client = RpiClient(
         RpiSettings(
             RPI_BASE_URL="http://rpi.local:9100",
-            RPI_MISSIONS_DIR="/home/ykvnkm/Documents/missions",
+            RPI_MISSIONS_DIR="/srv/rescue-ai/missions",
             RPI_RTSP_PORT=8554,
             RPI_RTSP_PATH_PREFIX="live",
         )

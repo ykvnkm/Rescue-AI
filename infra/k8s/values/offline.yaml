@@ -1,16 +1,40 @@
-# Профиль `offline` — k3s на полевой станции (ADR-0007 §2 + ADR-0008 §2).
+# Профиль `offline` — наземная станция (ADR-0007 §2, ADR-0008 §2).
 #
-# Postgres = bitnami subchart, single-node, persistent volume.
-# MinIO    = bitnami subchart, single-node, persistent volume.
-# Vault    = dev-mode (in-memory), достаточно для дипломной защиты.
-# Sync-worker = НЕ запускается (offline = без интернета).
+# Все ключевые операции миссии выполняются локально без зависимости
+# от внешней сети: приём кадра, обнаружение, восстановление траектории,
+# формирование сигналов, сохранение отчётов и журналов. Локальные
+# Postgres и MinIO являются основным хранилищем; кадры миссии и
+# `labels.json` лежат в локальном S3 — оператор может просматривать
+# и скачивать их через консоль MinIO даже при полном отсутствии
+# связи.
+#
+# Sync-worker фоновым процессом каждые 10 секунд проверяет, доступна
+# ли связь с центральным контуром. Если связь есть — дренирует
+# `replication_outbox` в удалённый Postgres и удалённый S3. Если
+# связи нет — продолжает работать вхолостую, не влияя на ход миссии.
+# Профиль таким образом одновременно покрывает оба сценария: полевая
+# станция без интернета и станция с периодической связью.
+#
+# Ежедневный batch-пересчёт качества модели на станции не
+# выполняется — он живёт только в cloud-профиле, где накапливается
+# аккумулированный корпус миссий со всех станций. Локальная Grafana
+# показывает только дашборд операций реального времени; ML-качества
+# и дрейфа дашборды смотрят в центральной Grafana.
+#
+# Включённые сервисы:
+#   * rescue-ai-api                   — управление миссией
+#   * rescue-ai-detection             — обнаружение людей
+#   * rescue-ai-nav-engine            — восстановление траектории
+#   * rescue-ai-sync-worker           — дрейн outbox в remote
+#   * postgresql (bitnami)            — локальная БД миссии
+#   * minio (bitnami)                 — локальное S3-хранилище
+#   * vault (hashicorp)               — секреты
 
 rescue-ai-api:
   enabled: true
   image:
-    repository: rescue-ai/online
+    repository: rescue-ai-online
     tag: local
-    pullPolicy: IfNotPresent
   deployment:
     deploymentMode: offline
     appEnv: field
@@ -22,26 +46,62 @@ rescue-ai-api:
       s3Bucket: rescue-artifacts
       s3Prefix: missions
     rpi:
-      baseUrl: "https://192.168.0.118:9100"
-      missionsDir: "/home/ykvnkm/Documents/missions"
+      baseUrl: ""
+      missionsDir: ""
+    detection:
+      serviceUrl: "http://rescue-ai-rescue-ai-detection.rescue-ai.svc.cluster.local:8002"
+    navigation:
+      serviceUrl: "http://rescue-ai-rescue-ai-nav-engine.rescue-ai.svc.cluster.local:8001"
   security:
     tlsMode: "mtls"
     ca:
-      # Создать в k8s заранее:
-      #   kubectl create secret generic rpi-mtls \
-      #     --from-file=ca.crt=scripts/security/out/station-root-ca.crt \
-      #     --from-file=client.crt=scripts/security/out/gcs-client.crt \
-      #     --from-file=client.key=scripts/security/out/gcs-client.key
       existingSecret: rpi-mtls
   secrets:
     source: vault
     vault:
       role: rescue-ai-api
       secretPath: rescue-ai/api
-  service:
-    type: ClusterIP
+
+rescue-ai-detection:
+  enabled: true
+  image:
+    repository: rescue-ai-online
+    tag: local
+
+rescue-ai-nav-engine:
+  enabled: true
+  image:
+    repository: rescue-ai-online
+    tag: local
 
 rescue-ai-sync-worker:
+  enabled: true
+  image:
+    repository: rescue-ai-online
+    tag: local
+  deployment:
+    appEnv: field
+    logLevel: INFO
+  sync:
+    batchSize: 50
+    intervalSec: 10
+    maxAttempts: 10
+    processingTimeoutSec: 120
+  config:
+    remoteS3:
+      endpoint: "https://storage.yandexcloud.net"
+      region: ru-central1
+      bucket: rescue-ai-mission-artifacts
+  secrets:
+    source: vault
+    vault:
+      role: rescue-ai-sync-worker
+      secretPath: rescue-ai/sync-worker
+
+rescue-ai-batch-exporter:
+  # Не разворачивается на наземной станции. Batch-пересчёт качества
+  # модели выполняется только централизованно (см. cloud.yaml), где
+  # есть аккумулированный набор миссий со всех станций.
   enabled: false
 
 postgresql:
@@ -51,17 +111,19 @@ postgresql:
     repository: bitnamilegacy/postgresql
   auth:
     username: rescue
-    password: rescue-offline-dev
     database: rescue_ai
+    existingSecret: rescue-ai-postgresql-auth
+    secretKeys:
+      userPasswordKey: password
+      adminPasswordKey: postgres-password
   primary:
     persistence:
       enabled: true
       size: 10Gi
     initdb:
-      # Применяем те же init-скрипты, что и offline docker-compose.
-      # Файлы лежат в репо, монтировать их в сабчарт нельзя — поэтому
-      # на станции выполняется `kubectl create configmap pg-init --from-file=infra/postgres/init/`
-      # и через extraVolumes подключается. Подробнее — в runbook'е.
+      # ConfigMap pg-init создаётся отдельно командой:
+      #   kubectl -n rescue-ai create configmap pg-init \
+      #     --from-file=infra/postgres/init/
       scriptsConfigMap: pg-init
 
 minio:
@@ -70,8 +132,9 @@ minio:
     registry: docker.io
     repository: bitnamilegacy/minio
   auth:
-    rootUser: rescueadmin
-    rootPassword: rescueadmin
+    existingSecret: rescue-ai-minio-auth
+    rootUserSecretKey: root-user
+    rootPasswordSecretKey: root-password
   defaultBuckets: "rescue-artifacts"
   persistence:
     enabled: true
@@ -81,7 +144,16 @@ vault:
   enabled: true
   server:
     dev:
-      enabled: true
-      devRootToken: "root-dev-token"
+      enabled: false
   injector:
     enabled: true
+
+airflow:
+  # Apache Airflow на наземной станции не разворачивается. Ежедневный
+  # batch-пересчёт качества модели выполняется централизованно
+  # (см. cloud.yaml): только в центральном кластере накоплен корпус
+  # миссий со всех станций, и оценка качества по этой выборке
+  # статистически осмысленна. Локальный пересчёт по одной станции
+  # привёл бы к дублированной работе над тем же набором данных и
+  # фрагментированной статистике.
+  enabled: false

@@ -27,6 +27,14 @@ from datetime import datetime, timezone
 from typing import Protocol
 from uuid import NAMESPACE_URL, uuid5
 
+from rescue_ai.application.metrics import (
+    ALERTS_CREATED_TOTAL,
+    DETECTIONS_TOTAL,
+    DETECTOR_ERRORS_TOTAL,
+    INFERENCE_DURATION_SECONDS,
+    NAVIGATION_UPDATE_DURATION_SECONDS,
+    observe_duration,
+)
 from rescue_ai.domain.alert_policy import MissionAlertState, evaluate_alert
 from rescue_ai.domain.entities import (
     Alert,
@@ -318,7 +326,15 @@ class AutoMissionService:
         )
 
         if detect_enabled:
-            detections = list(self._deps.detector.detect(frame_bgr))
+            model_name = getattr(self._deps.detector, "model_name", "default")
+            try:
+                with observe_duration(INFERENCE_DURATION_SECONDS, model=model_name):
+                    detections = list(self._deps.detector.detect(frame_bgr))
+            except Exception:
+                DETECTOR_ERRORS_TOTAL.labels(model=model_name).inc()
+                raise
+            for detection in detections:
+                DETECTIONS_TOTAL.labels(model=model_name, label=detection.label).inc()
         else:
             detections = []
 
@@ -364,6 +380,7 @@ class AutoMissionService:
             self._deps.frame_event_repository.add(frame_event)
             frame_event_persisted = True
             self._deps.alert_repository.add(alert)
+            ALERTS_CREATED_TOTAL.labels(mission_mode="auto").inc()
             alerts.append(alert)
             decisions.append(
                 self._record_decision(
@@ -411,9 +428,10 @@ class AutoMissionService:
         ts_sec: float,
         frame_id: int,
     ) -> TrajectoryPoint | None:
-        raw_point = self._deps.navigation_engine.step(
-            frame_bgr=frame_bgr, ts_sec=ts_sec, frame_id=frame_id
-        )
+        with observe_duration(NAVIGATION_UPDATE_DURATION_SECONDS):
+            raw_point = self._deps.navigation_engine.step(
+                frame_bgr=frame_bgr, ts_sec=ts_sec, frame_id=frame_id
+            )
         if raw_point is None:
             return None
         point = TrajectoryPoint(

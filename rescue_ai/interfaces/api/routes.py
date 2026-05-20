@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from rescue_ai.config import get_settings
-from rescue_ai.domain.entities import Alert, Detection
+from rescue_ai.domain.entities import Alert, Detection, TrajectoryPoint
 from rescue_ai.domain.ports import AlertReviewPayload
 from rescue_ai.interfaces.api.dependencies import (
     get_artifact_storage,
@@ -39,6 +39,14 @@ class ReviewRequest(BaseModel):
     reviewed_by: str = Field(
         default="оператор",
         description="Identifier of the reviewer",
+    )
+    reviewed_at_sec: float | None = Field(
+        default=None,
+        description="Mission-relative timestamp when the operator reviewed the alert",
+    )
+    decision_reason: str | None = Field(
+        default=None,
+        description="Optional operator decision rationale",
     )
 
 
@@ -87,6 +95,25 @@ class PredictResponse(BaseModel):
         description="List of detected objects",
     )
     count: int = Field(description="Total number of detections")
+
+
+class TrajectoryPointResponse(BaseModel):
+    """One operator trajectory sample."""
+
+    seq: int
+    ts_sec: float
+    frame_id: int | None
+    x: float
+    y: float
+    z: float
+    source: str
+
+
+class MissionTrajectoryResponse(BaseModel):
+    """Live operator trajectory for a mission."""
+
+    mission_id: str
+    points: list[TrajectoryPointResponse]
 
 
 class ForceCompleteRequest(BaseModel):
@@ -740,6 +767,34 @@ def get_mission_stream_status(mission_id: str) -> dict[str, object]:
 
 
 @router.get(
+    "/missions/{mission_id}/trajectory",
+    tags=["missions"],
+    summary="Get live operator trajectory",
+    response_model=MissionTrajectoryResponse,
+    responses={404: {"description": "Mission not found"}},
+)
+def get_mission_trajectory(mission_id: str) -> dict[str, object]:
+    """Return trajectory points produced while the operator stream runs."""
+    logger.info("Endpoint get_mission_trajectory: mission_id=%s", mission_id)
+    service = get_pilot_service()
+    stream_controller = get_stream_controller()
+
+    if service.get_mission(mission_id) is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+
+    points = stream_controller.list_trajectory(mission_id)
+    logger.info(
+        "Endpoint get_mission_trajectory success: mission_id=%s points=%d",
+        mission_id,
+        len(points),
+    )
+    return {
+        "mission_id": mission_id,
+        "points": [_trajectory_point_to_dict(point) for point in points],
+    }
+
+
+@router.get(
     "/missions/{mission_id}/report",
     tags=["missions"],
     summary="Get mission report",
@@ -878,8 +933,8 @@ def confirm_alert(
         {
             "status": "reviewed_confirmed",
             "reviewed_by": payload.reviewed_by,
-            "reviewed_at_sec": None,
-            "decision_reason": None,
+            "reviewed_at_sec": payload.reviewed_at_sec,
+            "decision_reason": payload.decision_reason,
         },
     )
     try:
@@ -924,8 +979,8 @@ def reject_alert(
         {
             "status": "reviewed_rejected",
             "reviewed_by": payload.reviewed_by,
-            "reviewed_at_sec": None,
-            "decision_reason": None,
+            "reviewed_at_sec": payload.reviewed_at_sec,
+            "decision_reason": payload.decision_reason,
         },
     )
     try:
@@ -1086,6 +1141,18 @@ def _alert_to_dict(alert: Alert, service: Any) -> dict[str, object]:
         "explanation": alert.primary_detection.explanation,
         "status": alert.status,
         "reviewed_by": alert.reviewed_by,
+    }
+
+
+def _trajectory_point_to_dict(point: TrajectoryPoint) -> dict[str, object]:
+    return {
+        "seq": point.seq,
+        "ts_sec": point.ts_sec,
+        "frame_id": point.frame_id,
+        "x": point.x,
+        "y": point.y,
+        "z": point.z,
+        "source": str(point.source),
     }
 
 

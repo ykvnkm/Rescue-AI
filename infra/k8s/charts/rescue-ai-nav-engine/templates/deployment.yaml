@@ -24,7 +24,7 @@ spec:
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           command:
-            ["python", "-m", "rescue_ai.services.nav_engine.run_service"]
+            ["python", "-m", "rescue_ai.interfaces.nav_engine.run_service"]
           ports:
             - name: http
               containerPort: 8001

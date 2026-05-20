@@ -345,9 +345,7 @@ class _StubAlertRepo:
         self.added.append(alert)
 
     def get(self, alert_id: str) -> Alert | None:
-        return next(
-            (a for a in self.added if a.alert_id == alert_id), None
-        )
+        return next((a for a in self.added if a.alert_id == alert_id), None)
 
     def list(
         self, mission_id: str | None = None, status: str | None = None
@@ -476,9 +474,7 @@ def test_offline_first_trajectory_repo_uses_seq_in_key() -> None:
     assert inner.added == [point]
     assert outbox.rows[0].idempotency_key == "trajectory_point:m-1:3"
     assert outbox.rows[0].payload_json["seq"] == 3
-    assert outbox.rows[0].payload_json["source"] == str(
-        TrajectorySource.MARKER
-    )
+    assert outbox.rows[0].payload_json["source"] == str(TrajectorySource.MARKER)
 
 
 class _StubAutoDecisionRepo:
