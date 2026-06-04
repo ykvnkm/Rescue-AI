@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import yaml
 
-from rescue_ai.application.inference_config import InferenceConfig
+from rescue_ai.application.inference_config import InferenceConfig, ModelRuntime
 from rescue_ai.domain.ports import ReportMetadataPayload
 from rescue_ai.domain.value_objects import AlertRuleConfig
 
@@ -60,6 +61,13 @@ def _resolve_min_detections_per_frame(payload: dict[str, object]) -> int:
     return int(alert.get("min_detections_per_frame", 1))
 
 
+_SUPPORTED_RUNTIMES = {"pt", "ncnn"}
+
+
+def _normalize_sha256(value: object) -> str | None:
+    return str(value).strip().lower() if value else None
+
+
 def _build_inference_config(
     payload: dict[str, object],
     confidence_threshold: float,
@@ -67,17 +75,41 @@ def _build_inference_config(
     infer = payload.get("infer", {})
     if not isinstance(infer, dict):
         infer = {}
-    model_sha256_raw = payload.get("model_sha256")
+
+    model_cfg = payload.get("model", {})
+    if not isinstance(model_cfg, dict):
+        model_cfg = {}
+
+    runtime = str(model_cfg.get("runtime", "pt")).strip().lower()
+    if runtime not in _SUPPORTED_RUNTIMES:
+        raise ValueError(
+            f"Unsupported model runtime: {runtime!r}; "
+            f"expected one of {sorted(_SUPPORTED_RUNTIMES)}"
+        )
+
+    # Backward-compatible fallback for older contracts that used the
+    # top-level model_url/model_sha256 fields.
+    pt_url = str(model_cfg.get("pt_url") or payload.get("model_url", DEFAULT_MODEL_URL))
+    pt_sha256 = _normalize_sha256(
+        model_cfg.get("pt_sha256") or payload.get("model_sha256")
+    )
+    ncnn_url = model_cfg.get("ncnn_url")
+    ncnn_sha256 = _normalize_sha256(model_cfg.get("ncnn_sha256"))
+
+    if runtime == "ncnn" and not ncnn_url:
+        raise ValueError("model.runtime=ncnn requires model.ncnn_url")
+
     return InferenceConfig(
-        model_url=str(payload.get("model_url", DEFAULT_MODEL_URL)),
+        runtime=cast(ModelRuntime, runtime),
+        pt_model_url=pt_url,
+        pt_model_sha256=pt_sha256,
+        ncnn_model_url=str(ncnn_url) if ncnn_url else None,
+        ncnn_model_sha256=ncnn_sha256,
         device=str(payload.get("device", "cpu")),
         imgsz=int(infer.get("imgsz", 960)),
         nms_iou=float(infer.get("nms_iou", 0.75)),
         max_det=int(infer.get("max_det", 1000)),
         confidence_threshold=confidence_threshold,
-        model_sha256=(
-            str(model_sha256_raw).strip().lower() if model_sha256_raw else None
-        ),
     )
 
 
@@ -95,9 +127,12 @@ class StreamContract:
     service_version: str
 
 
-def load_stream_contract(service_version: str = "dev") -> StreamContract:
-    """Load and resolve the stream contract from the default YAML file."""
-    contract_path = DEFAULT_CONTRACT_PATH
+def load_stream_contract(
+    service_version: str = "dev",
+    contract_path: Path | None = None,
+) -> StreamContract:
+    """Load and resolve the stream contract from ``contract_path`` (or default)."""
+    contract_path = contract_path or DEFAULT_CONTRACT_PATH
     payload = _require_mapping(
         yaml.safe_load(contract_path.read_text(encoding="utf-8"))
     )

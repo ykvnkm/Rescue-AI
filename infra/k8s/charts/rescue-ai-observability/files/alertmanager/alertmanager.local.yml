@@ -1,0 +1,34 @@
+# Local development Alertmanager config.
+#
+# Production-like email routing lives in alertmanager.yml and expects
+# deployment-time secret substitution. The local Compose stack only needs
+# Alertmanager to accept alerts and expose its UI/API without SMTP secrets.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: local-dev
+  group_by: ['alertname', 'contour']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity = "critical"
+      receiver: local-dev
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 30m
+
+receivers:
+  - name: local-dev
+
+inhibit_rules:
+  - source_matchers:
+      - alertname = "BatchRecallCriticallyLow"
+      - severity = "critical"
+    target_matchers:
+      - alertname = "BatchRecallBelowTarget"
+      - severity = "warning"
+    equal: ['cluster', 'contour']

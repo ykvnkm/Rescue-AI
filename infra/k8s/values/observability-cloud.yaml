@@ -1,0 +1,89 @@
+# Профиль observability для центрального managed K8s.
+#
+# Включён central-контур: prometheus + alertmanager + grafana. Prometheus
+# скрейпит как online (rescue-ai), так и batch (rescue-batch); Grafana
+# поднимает все 3 дашборда (realtime + ML quality + drift); Alertmanager
+# использует «прод»-конфиг с реальным receiver-ом (SMTP/Slack).
+#
+# Install:
+#   kubectl create namespace monitoring
+#   helm install rescue-ai-observability infra/k8s/charts/rescue-ai-observability \
+#     -n monitoring \
+#     -f infra/k8s/values/observability-cloud.yaml \
+#     --set grafana.admin.existingSecret=rescue-ai-grafana-admin
+
+createNamespace: false
+namespace: monitoring
+contour: central
+
+prometheus:
+  enabled: true
+  retentionTime: 30d
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  persistence:
+    enabled: true
+    size: 50Gi
+  service:
+    type: ClusterIP
+  scrape:
+    appNamespace: rescue-ai
+    batchNamespace: rescue-batch
+    apiService: rescue-ai-rescue-ai-api
+    detectionService: rescue-ai-rescue-ai-detection
+    navEngineService: rescue-ai-rescue-ai-nav-engine
+    batchExporterService: rescue-batch-rescue-ai-batch-exporter
+
+alertmanager:
+  enabled: true
+  configFile: alertmanager.yml   # прод-роутинг (SMTP)
+  # Vault Agent рендерит SMTP creds + адреса получателей в
+  # /vault/secrets/alertmanager.env; см.
+  # scripts/security/vault_bootstrap.sh с флагом ENABLE_ALERTMANAGER=true.
+  vaultAgent:
+    enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  persistence:
+    enabled: true
+    size: 5Gi
+
+grafana:
+  enabled: true
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  persistence:
+    enabled: true
+    size: 10Gi
+  # admin-credentials лежат в Vault на пути secret/data/rescue-ai/grafana
+  # (см. scripts/security/vault_bootstrap.sh c флагом ENABLE_GRAFANA=true).
+  # Vault Agent Injector рендерит их в /vault/secrets/grafana.env;
+  # никаких k8s Secret-ов с admin-паролем в namespace monitoring больше нет.
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    host: grafana.rescue-ai.example.com
+    tls:
+      - secretName: rescue-ai-grafana-tls
+        hosts:
+          - grafana.rescue-ai.example.com
+
+networkPolicy:
+  enabled: true

@@ -1,0 +1,99 @@
+replicaCount: 1
+
+# Чарт включается во всех профилях с активным batch-DAG. Umbrella-чарт
+# выставляет enabled=true в offline.yaml и cloud.yaml.
+enabled: false
+
+image:
+  repository: rescue-ai-batch-exporter
+  pullPolicy: IfNotPresent
+  tag: "local"
+
+deployment:
+  logLevel: INFO
+  appEnv: dev
+  serviceVersion: dev
+
+exporter:
+  # Период обновления gauge'ов из таблицы batch_pipeline_metrics, сек.
+  scrapeIntervalSec: 300
+  # Порт, на котором Prometheus опрашивает /metrics.
+  port: 8003
+
+# Источник секретов — те же варианты, что у API.
+secrets:
+  source: kube
+  kube:
+    existingSecret: ""
+    inline:
+      DB_DSN: ""
+  vault:
+    role: rescue-ai-batch-exporter
+    secretPath: rescue-ai/batch-exporter
+
+service:
+  type: ClusterIP
+  port: 8003
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+probes:
+  liveness:
+    httpGet:
+      path: /health
+      port: metrics
+    periodSeconds: 30
+    failureThreshold: 3
+  readiness:
+    httpGet:
+      path: /health
+      port: metrics
+    periodSeconds: 10
+    failureThreshold: 3
+  startup:
+    httpGet:
+      path: /health
+      port: metrics
+    periodSeconds: 3
+    failureThreshold: 20
+
+terminationGracePeriodSeconds: 15
+lifecycle:
+  preStop:
+    exec:
+      command: ["/bin/sh", "-c", "sleep 3"]
+
+initContainers:
+  waitForPostgres:
+    enabled: false
+    image: postgres:16-alpine
+    timeoutSec: 120
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+networkPolicy:
+  enabled: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

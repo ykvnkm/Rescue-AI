@@ -1,0 +1,9 @@
+Vendored minimum inference subset of RangiLyu/nanodet (Apache-2.0).
+Source: https://github.com/RangiLyu/nanodet
+See LICENSE for the upstream license terms.
+
+Training, evaluation, and optimizer components are intentionally
+omitted — only the dependencies required for inference (build_model,
+Pipeline, check_point.load_model_weight, util.config.load_config,
+batch_process.stack_batch_img, collate.naive_collate, repvgg convert)
+are included.

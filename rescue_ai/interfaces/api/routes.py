@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from rescue_ai.config import get_settings
-from rescue_ai.domain.entities import Alert, Detection
+from rescue_ai.domain.entities import Alert, Detection, TrajectoryPoint
 from rescue_ai.domain.ports import AlertReviewPayload
 from rescue_ai.interfaces.api.dependencies import (
     get_artifact_storage,
@@ -24,6 +24,8 @@ from rescue_ai.interfaces.api.logging_utils import (
     build_source_log_fields,
     sanitize_log_text,
 )
+from rescue_ai.interfaces.api.routes_auto import router as auto_router
+from rescue_ai.interfaces.api.routes_auto_sessions import router as auto_sessions_router
 from rescue_ai.interfaces.api.ui_page import build_ui_html
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,14 @@ class ReviewRequest(BaseModel):
     reviewed_by: str = Field(
         default="оператор",
         description="Identifier of the reviewer",
+    )
+    reviewed_at_sec: float | None = Field(
+        default=None,
+        description="Mission-relative timestamp when the operator reviewed the alert",
+    )
+    decision_reason: str | None = Field(
+        default=None,
+        description="Optional operator decision rationale",
     )
 
 
@@ -87,6 +97,25 @@ class PredictResponse(BaseModel):
     count: int = Field(description="Total number of detections")
 
 
+class TrajectoryPointResponse(BaseModel):
+    """One operator trajectory sample."""
+
+    seq: int
+    ts_sec: float
+    frame_id: int | None
+    x: float
+    y: float
+    z: float
+    source: str
+
+
+class MissionTrajectoryResponse(BaseModel):
+    """Live operator trajectory for a mission."""
+
+    mission_id: str
+    points: list[TrajectoryPointResponse]
+
+
 class ForceCompleteRequest(BaseModel):
     """Emergency mission completion: auto-rejects all pending alerts."""
 
@@ -111,7 +140,7 @@ class ReadyResponse(BaseModel):
 
     status: str = Field(description="Overall readiness", examples=["ready"])
     checks: dict[str, bool] = Field(
-        description="Per-subsystem configuration checks " "(database, storage, rpi)",
+        description="Per-subsystem configuration checks (database, storage)",
     )
 
 
@@ -265,9 +294,13 @@ def health() -> dict[str, str]:
     responses={503: {"description": "One or more subsystems not configured"}},
 )
 def ready() -> dict[str, object]:
-    """Checks that all required integrations (database, S3, RPi) are configured.
+    """Checks that the pod-level integrations (database, S3) are configured.
 
-    Returns 503 with a per-subsystem breakdown if any check fails."""
+    The RPi link is *not* a readiness dependency: its address is supplied
+    per mission by the operator (each drone computer differs), so it is
+    never wired at deploy time. RPi reachability is reported separately by
+    ``/rpi/status``. Returns 503 with a per-subsystem breakdown if a
+    required integration is missing."""
     settings = get_settings()
     checks = {
         "database": bool(settings.database.dsn.strip()),
@@ -275,7 +308,6 @@ def ready() -> dict[str, object]:
             settings.storage.s3_bucket.strip()
             and settings.storage.s3_access_key_id.strip()
         ),
-        "rpi": bool(settings.rpi.base_url.strip() and settings.rpi.rtsp_port > 0),
     }
     if not all(checks.values()):
         logger.warning("Endpoint ready: status=not_ready checks=%s", checks)
@@ -738,6 +770,34 @@ def get_mission_stream_status(mission_id: str) -> dict[str, object]:
 
 
 @router.get(
+    "/missions/{mission_id}/trajectory",
+    tags=["missions"],
+    summary="Get live operator trajectory",
+    response_model=MissionTrajectoryResponse,
+    responses={404: {"description": "Mission not found"}},
+)
+def get_mission_trajectory(mission_id: str) -> dict[str, object]:
+    """Return trajectory points produced while the operator stream runs."""
+    logger.info("Endpoint get_mission_trajectory: mission_id=%s", mission_id)
+    service = get_pilot_service()
+    stream_controller = get_stream_controller()
+
+    if service.get_mission(mission_id) is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+
+    points = stream_controller.list_trajectory(mission_id)
+    logger.info(
+        "Endpoint get_mission_trajectory success: mission_id=%s points=%d",
+        mission_id,
+        len(points),
+    )
+    return {
+        "mission_id": mission_id,
+        "points": [_trajectory_point_to_dict(point) for point in points],
+    }
+
+
+@router.get(
     "/missions/{mission_id}/report",
     tags=["missions"],
     summary="Get mission report",
@@ -876,8 +936,8 @@ def confirm_alert(
         {
             "status": "reviewed_confirmed",
             "reviewed_by": payload.reviewed_by,
-            "reviewed_at_sec": None,
-            "decision_reason": None,
+            "reviewed_at_sec": payload.reviewed_at_sec,
+            "decision_reason": payload.decision_reason,
         },
     )
     try:
@@ -922,8 +982,8 @@ def reject_alert(
         {
             "status": "reviewed_rejected",
             "reviewed_by": payload.reviewed_by,
-            "reviewed_at_sec": None,
-            "decision_reason": None,
+            "reviewed_at_sec": payload.reviewed_at_sec,
+            "decision_reason": payload.decision_reason,
         },
     )
     try:
@@ -1087,6 +1147,18 @@ def _alert_to_dict(alert: Alert, service: Any) -> dict[str, object]:
     }
 
 
+def _trajectory_point_to_dict(point: TrajectoryPoint) -> dict[str, object]:
+    return {
+        "seq": point.seq,
+        "ts_sec": point.ts_sec,
+        "frame_id": point.frame_id,
+        "x": point.x,
+        "y": point.y,
+        "z": point.z,
+        "source": str(point.source),
+    }
+
+
 def _build_alert_wall_time(created_at: str | None, offset_sec: float) -> str | None:
     if created_at is None:
         return None
@@ -1097,3 +1169,7 @@ def _build_alert_wall_time(created_at: str | None, offset_sec: float) -> str | N
     if base.tzinfo is None:
         base = base.replace(tzinfo=timezone.utc)
     return (base + timedelta(seconds=offset_sec)).isoformat()
+
+
+router.include_router(auto_router)
+router.include_router(auto_sessions_router)

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: rescue-ai-batch-exporter
+description: |
+  Микросервис Rescue-AI Batch Metrics Exporter (см. раздел 3.5 диплома).
+  Раз в BATCH_EXPORTER_SCRAPE_INTERVAL_SEC читает агрегированные метрики
+  качества модели из таблицы batch_pipeline_metrics и публикует их в
+  Prometheus через эндпоинт /metrics.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

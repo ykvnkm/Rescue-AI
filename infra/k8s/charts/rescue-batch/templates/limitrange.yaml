@@ -1,0 +1,20 @@
+{{- if .Values.limitRange.enabled }}
+# LimitRange ставит дефолтные resources.requests/limits для подов,
+# которые их не указали явно. Полезно для ad-hoc kubectl-run
+# debug-подов в namespace, чтобы они не уронили ResourceQuota
+# отсутствием requests.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: rescue-batch-limits
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "rescue-batch.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        {{- toYaml .Values.limitRange.defaultRequest | nindent 8 }}
+      default:
+        {{- toYaml .Values.limitRange.default | nindent 8 }}
+{{- end }}

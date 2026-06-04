@@ -1,8 +1,20 @@
-"""Mission-level metric aggregation and KPI computation."""
+"""Mission-level metric aggregation and KPI computation.
+
+В модуле живут два набора правил расчёта метрик (см. таблицу 3.1
+пояснительной записки):
+  * KPI миссии (recall_event, TtFC, fp_per_minute) — секции
+    ``build_report_stats`` и далее;
+  * Индексы дрейфа PSI / CSI по формулам (2.11)–(2.12) пояснительной
+    записки — секция в конце файла.
+Drift-функции отделены от KPI и не зависят от классов Mission/Alert —
+они работают на чистых числовых распределениях.
+"""
 
 from __future__ import annotations
 
-from typing import NamedTuple
+import math
+from dataclasses import dataclass
+from typing import NamedTuple, Sequence
 
 from rescue_ai.domain.entities import Alert, FrameEvent
 from rescue_ai.domain.value_objects import AlertRuleConfig, AlertStatus
@@ -185,3 +197,217 @@ def compute_ttfc_first_episode(
     if first_alert.reviewed_at_sec is None:
         return None
     return first_alert.reviewed_at_sec - first_start
+
+
+# ── Дрейф данных (PSI/CSI, формулы (2.11)-(2.12) пояснительной записки)
+
+# Учебная норма: 10 бинов на признак. Меньше — теряем чувствительность;
+# больше — sparse-buckets шумят даже на ~1000 кадров. PSI/CSI в индустрии
+# традиционно считают на 10 бинах.
+DRIFT_BINS: int = 10
+
+# Confidence модели и среднее brightness кадра живут в [0, 1].
+_UNIT_INTERVAL_EDGES: tuple[float, ...] = tuple(
+    round(i / DRIFT_BINS, 4) for i in range(DRIFT_BINS + 1)
+)
+CONFIDENCE_EDGES: tuple[float, ...] = _UNIT_INTERVAL_EDGES
+BRIGHTNESS_EDGES: tuple[float, ...] = _UNIT_INTERVAL_EDGES
+
+# Bbox area — доля площади кадра. Для дронов > 2 % почти не бывает,
+# поэтому первая половина бинов сжата, последняя растянута.
+BBOX_AREA_EDGES: tuple[float, ...] = (
+    0.0,
+    0.001,
+    0.002,
+    0.005,
+    0.01,
+    0.02,
+    0.05,
+    0.1,
+    0.2,
+    0.35,
+    1.0,
+)
+
+# Aspect ratio bbox = width / height. Стоящий человек ~0.3-0.6,
+# лежащий ~1.5-3.0; крайние бины ловят выбросы.
+BBOX_RATIO_EDGES: tuple[float, ...] = (
+    0.0,
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    1.0,
+    1.5,
+    2.0,
+    3.0,
+    5.0,
+    100.0,
+)
+
+
+@dataclass(frozen=True)
+class FrameFeatures:
+    """Per-frame набор признаков для гистограмм дрейфа.
+
+    Кадры без детекций имеют ``confidence_max=0.0`` и ``bbox_*=None``;
+    brightness — свойство самого кадра, всегда заполняется.
+    """
+
+    confidence_max: float
+    bbox_area_norm: float | None
+    bbox_ratio: float | None
+    brightness_mean: float
+
+
+@dataclass(frozen=True)
+class FeatureHistograms:
+    """4 нормализованные гистограммы + общее n_samples."""
+
+    confidence: tuple[float, ...]
+    bbox_area: tuple[float, ...]
+    bbox_ratio: tuple[float, ...]
+    brightness: tuple[float, ...]
+    n_samples: int
+
+    def is_empty(self) -> bool:
+        return self.n_samples == 0
+
+
+@dataclass(frozen=True)
+class DriftScores:
+    """Итог сравнения current гистограмм с reference."""
+
+    psi_confidence: float
+    csi_bbox_area: float
+    csi_bbox_ratio: float
+    csi_brightness: float
+
+    def drift_flag(self, threshold: float = 0.2) -> bool:
+        """Формула (2.12) пояснительной записки.
+
+        Дрейф фиксируется, если хотя бы один индикатор превышает
+        порог. По умолчанию порог = 0.2 (учебное значение «moderate
+        shift»).
+        """
+        return (
+            self.psi_confidence > threshold
+            or self.csi_bbox_area > threshold
+            or self.csi_bbox_ratio > threshold
+            or self.csi_brightness > threshold
+        )
+
+
+def build_histograms(features: Sequence[FrameFeatures]) -> FeatureHistograms:
+    """Собрать per-frame features в нормализованные гистограммы.
+
+    bbox features учитываются только когда bbox есть; brightness и
+    confidence — всегда (None для confidence не бывает, frame без
+    детекций даёт 0.0).
+    """
+    if not features:
+        return FeatureHistograms(
+            confidence=_zero_hist(),
+            bbox_area=_zero_hist(),
+            bbox_ratio=_zero_hist(),
+            brightness=_zero_hist(),
+            n_samples=0,
+        )
+
+    conf_values = [float(f.confidence_max) for f in features]
+    brightness_values = [float(f.brightness_mean) for f in features]
+    area_values = [
+        float(f.bbox_area_norm) for f in features if f.bbox_area_norm is not None
+    ]
+    ratio_values = [float(f.bbox_ratio) for f in features if f.bbox_ratio is not None]
+
+    return FeatureHistograms(
+        confidence=_histogram(conf_values, CONFIDENCE_EDGES),
+        bbox_area=_histogram(area_values, BBOX_AREA_EDGES),
+        bbox_ratio=_histogram(ratio_values, BBOX_RATIO_EDGES),
+        brightness=_histogram(brightness_values, BRIGHTNESS_EDGES),
+        n_samples=len(features),
+    )
+
+
+# Защита от log(0) в PSI. Учебное floor-значение 1e-4 для 10 бинов.
+_PSI_EPSILON: float = 1e-4
+
+
+def psi(reference: Sequence[float], current: Sequence[float]) -> float:
+    """Population Stability Index — формула (2.11) пояснительной записки.
+
+    PSI = Σ (p_c - p_r) · ln(p_c / p_r) по всем бинам.
+
+    Интерпретация (учебная):
+      * PSI < 0.1 — стабильно;
+      * 0.1 ≤ PSI < 0.2 — заметный сдвиг, контролировать;
+      * PSI ≥ 0.2 — сильный дрейф, действовать.
+    """
+    if len(reference) != len(current):
+        raise ValueError(
+            f"PSI length mismatch: reference={len(reference)} current={len(current)}"
+        )
+    score = 0.0
+    for p_ref, p_cur in zip(reference, current):
+        p_ref_safe = max(p_ref, _PSI_EPSILON)
+        p_cur_safe = max(p_cur, _PSI_EPSILON)
+        score += (p_cur_safe - p_ref_safe) * math.log(p_cur_safe / p_ref_safe)
+    return round(score, 6)
+
+
+def csi(reference: Sequence[float], current: Sequence[float]) -> float:
+    """CSI — формула идентична PSI, отличается семантика входа.
+
+    PSI применяется к выходному распределению модели (confidence),
+    CSI — к распределениям входных характеристик (площадь bbox, его
+    aspect ratio, brightness кадра).
+    """
+    return psi(reference, current)
+
+
+def compare_drift(
+    reference: FeatureHistograms,
+    current: FeatureHistograms,
+) -> DriftScores:
+    """Посчитать 1 × PSI (confidence) + 3 × CSI (bbox area, bbox ratio,
+    brightness) между current и reference гистограммами."""
+    return DriftScores(
+        psi_confidence=psi(reference.confidence, current.confidence),
+        csi_bbox_area=csi(reference.bbox_area, current.bbox_area),
+        csi_bbox_ratio=csi(reference.bbox_ratio, current.bbox_ratio),
+        csi_brightness=csi(reference.brightness, current.brightness),
+    )
+
+
+def _histogram(values: list[float], edges: Sequence[float]) -> tuple[float, ...]:
+    """Нормализованная гистограмма: counts / total в каждом бине."""
+    bins = [0] * (len(edges) - 1)
+    if not values:
+        return tuple(0.0 for _ in bins)
+
+    for v in values:
+        idx = _bin_index(v, edges)
+        bins[idx] += 1
+
+    total = sum(bins)
+    if total == 0:
+        return tuple(0.0 for _ in bins)
+    return tuple(round(c / total, 6) for c in bins)
+
+
+def _bin_index(value: float, edges: Sequence[float]) -> int:
+    """Положить value в один из N бинов [edges[i], edges[i+1])."""
+    n_bins = len(edges) - 1
+    if value <= edges[0]:
+        return 0
+    if value >= edges[-1]:
+        return n_bins - 1
+    for i in range(n_bins):
+        if edges[i] <= value < edges[i + 1]:
+            return i
+    return n_bins - 1  # pragma: no cover — должны были вернуться выше
+
+
+def _zero_hist() -> tuple[float, ...]:
+    return tuple(0.0 for _ in range(DRIFT_BINS))

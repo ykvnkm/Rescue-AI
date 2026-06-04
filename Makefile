@@ -1,22 +1,30 @@
 PYTHONPATH := $(shell pwd)
 UV := PYTHONPATH=$(PYTHONPATH) uv run
-PLATFORM_COMPOSE := docker compose -f infra/docker-compose.platform.yml --env-file infra/platform.env
+HELM ?= helm
+UMBRELLA_CHART := infra/k8s/charts/rescue-ai
+BATCH_CHART    := infra/k8s/charts/rescue-batch
+OBS_CHART      := infra/k8s/charts/rescue-ai-observability
+VALUES_DIR := infra/k8s/values
 
-.PHONY: help install format lint test test-batch ci \
-	up up-postgres down batch-build batch-up batch-down batch-logs batch-backfill
+.PHONY: help install format lint test ci \
+	helm-check helm-deps helm-lint helm-template \
+	up down \
+	batch-up batch-down batch-logs batch-backfill
 
 help:
 	@echo "Available commands:"
 	@echo "  make install         - install dev dependencies via uv"
 	@echo "  make format          - format code (black + isort)"
-	@echo "  make lint            - check code and batch DAG syntax"
-	@echo "  make test            - run all tests (unit + architecture)"
-	@echo "  make ci              - full local CI (lint + test)"
-	@echo "  make up              - start main service (docker compose)"
-	@echo "  make down            - stop main service"
+	@echo "  make lint            - run static analysis (linters + DAG check)"
+	@echo "  make test            - run pytest with coverage gate"
+	@echo "  make helm-lint       - helm lint of all charts + template per profile"
+	@echo "  make helm-template P=offline  - render a specific profile to stdout"
+	@echo "  make ci              - full local CI (lint + test + helm-lint)"
+	@echo "  make up              - start full local stack (docker compose)"
+	@echo "  make down            - stop and remove compose stack"
 
 install:
-	uv sync --extra dev --extra batch
+	uv sync --extra dev
 
 format:
 	$(UV) black rescue_ai tests scripts infra
@@ -32,28 +40,76 @@ lint:
 test:
 	$(UV) pytest tests --cov=rescue_ai --cov-fail-under=70
 
-ci: lint test
+# ── Helm-проверки локально (полное соответствие тому, что прогоняет
+#    workflow .github/workflows/k8s-lint.yml).
+
+helm-check:
+	@if ! command -v $(HELM) >/dev/null 2>&1; then \
+		echo "ERROR: Helm CLI is required for helm-lint/ci but was not found."; \
+		echo "Install it locally, for example: brew install helm"; \
+		echo "CI installs Helm via azure/setup-helm; local machines must install it separately."; \
+		exit 127; \
+	fi
+
+helm-deps: helm-check
+	$(HELM) repo add hashicorp https://helm.releases.hashicorp.com --force-update
+	$(HELM) repo add apache-airflow https://airflow.apache.org --force-update
+	$(HELM) repo update
+	$(HELM) dependency update $(UMBRELLA_CHART)
+	$(HELM) dependency update $(BATCH_CHART)
+
+helm-lint: helm-deps
+	$(HELM) lint infra/k8s/charts/rescue-ai-api
+	$(HELM) lint infra/k8s/charts/rescue-ai-detection
+	$(HELM) lint infra/k8s/charts/rescue-ai-nav-engine
+	$(HELM) lint infra/k8s/charts/rescue-ai-sync-worker
+	$(HELM) lint infra/k8s/charts/rescue-ai-batch-exporter
+	$(HELM) lint $(UMBRELLA_CHART)
+	$(HELM) lint $(BATCH_CHART)
+	$(HELM) lint $(OBS_CHART)
+	@for p in offline cloud; do \
+		echo "==> helm template rescue-ai $$p"; \
+		$(HELM) template rescue-ai $(UMBRELLA_CHART) \
+			-f $(VALUES_DIR)/$$p.yaml > /tmp/rescue-ai-$$p.yaml || exit 1; \
+		test -s /tmp/rescue-ai-$$p.yaml || exit 1; \
+	done
+	@echo "==> helm template rescue-batch (cloud-only)"
+	$(HELM) template rescue-batch $(BATCH_CHART) \
+		-f $(VALUES_DIR)/rescue-batch-cloud.yaml > /tmp/rescue-batch.yaml
+	test -s /tmp/rescue-batch.yaml
+	@for p in offline cloud; do \
+		echo "==> helm template rescue-ai-observability $$p"; \
+		$(HELM) template rescue-ai-observability $(OBS_CHART) \
+			-f $(VALUES_DIR)/observability-$$p.yaml \
+			> /tmp/observability-$$p.yaml || exit 1; \
+		test -s /tmp/observability-$$p.yaml || exit 1; \
+	done
+
+# Использование: make helm-template P=vps
+helm-template: helm-deps
+	@if [ -z "$(P)" ]; then echo "Usage: make helm-template P=<profile>"; exit 1; fi
+	$(HELM) template rescue-ai $(UMBRELLA_CHART) -f $(VALUES_DIR)/$(P).yaml
+
+ci: lint test helm-lint
 
 up:
-	docker compose up --build
-
-up-postgres:
-	docker compose --profile postgres up --build
+	docker compose up --build -d
 
 down:
 	docker compose down
 
-batch-build:
-	$(PLATFORM_COMPOSE) --profile batch-build build batch-runner-image
+# ── batch-операции (запускаются на уже поднятом стенде, см. infra/README.md).
 
 batch-up:
-	$(PLATFORM_COMPOSE) up -d
+	docker compose up -d airflow-init airflow-webserver airflow-scheduler
 
 batch-down:
-	$(PLATFORM_COMPOSE) down
+	docker compose stop airflow-init airflow-webserver airflow-scheduler
 
 batch-logs:
-	$(PLATFORM_COMPOSE) logs -f airflow-webserver
+	docker compose logs -f airflow-webserver airflow-scheduler
 
 batch-backfill:
-	$(PLATFORM_COMPOSE) exec airflow-webserver airflow dags backfill rescue_batch_pipeline -s 2026-03-10 -e 2026-03-12
+	docker compose exec airflow-scheduler \
+		airflow dags backfill rescue_batch_pipeline \
+		--start-date 2026-03-10 --end-date 2026-03-12

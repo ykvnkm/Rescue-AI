@@ -7,7 +7,7 @@
 - [x] CI линтеров: `black`, `isort`, `flake8`, `mypy`, `pylint`
 - [x] CI тестов
 - [x] Push-based CD workflow (`.github/workflows/deploy.yml`)
-- [x] Публикация двух образов в GHCR (`rescue-ai-online`, `rescue-ai-batch`)
+- [x] Публикация шести независимых образов в GHCR (`rescue-ai-api`, `rescue-ai-detection`, `rescue-ai-nav-engine`, `rescue-ai-sync-worker`, `rescue-ai-batch-worker`, `rescue-ai-batch-exporter`)
 - [x] Airflow DAG задеплоен в прод-контур (`rescue_batch_pipeline`, `@daily`, `catchup=true`)
 - [x] mission_id для batch auto-discovery из S3 (без ручного `BATCH_MISSION_ID`)
 - [x] Логическое разделение в одном Postgres: `app` schema (продуктовые таблицы) и `airflow` schema (метаданные Airflow)

@@ -16,11 +16,11 @@ def test_batch_dag_import_and_task_command() -> None:
     dag_path = Path("infra/airflow/dags/rescue_batch_daily.py")
     payload = dag_path.read_text(encoding="utf-8")
     assert 'DAG_ID = "rescue_batch_pipeline"' in payload
-    assert "DockerOperator(" in payload
+    assert "KubernetesPodOperator" in payload
     assert "rescue_ai.interfaces.cli.batch" in payload
-    assert 'task_id="prepare_dataset"' in payload
-    assert 'task_id="evaluate_model"' in payload
-    assert 'task_id="publish_metrics"' in payload
+    assert '"prepare_dataset", "prepare_dataset"' in payload
+    assert '"evaluate_model", "evaluate_model"' in payload
+    assert '"publish_metrics", "publish_metrics"' in payload
     # No skip-by-exists shortcuts left in the DAG: the stage command must
     # not pass --force, and there must be no force_rerun Param.
     assert "--force " not in payload

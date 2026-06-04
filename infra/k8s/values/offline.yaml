@@ -1,0 +1,242 @@
+# Профиль `offline` — наземная станция (ADR-0007 §2, ADR-0008 §2).
+#
+# Все ключевые операции миссии выполняются локально без зависимости
+# от внешней сети: приём кадра, обнаружение, восстановление траектории,
+# формирование сигналов, сохранение отчётов и журналов. Локальные
+# Postgres и MinIO являются основным хранилищем; кадры миссии и
+# `labels.json` лежат в локальном S3 — оператор может просматривать
+# и скачивать их через консоль MinIO даже при полном отсутствии
+# связи.
+#
+# Sync-worker фоновым процессом каждые 10 секунд проверяет, доступна
+# ли связь с центральным контуром. Если связь есть — дренирует
+# `replication_outbox` в удалённый Postgres и удалённый S3. Если
+# связи нет — продолжает работать вхолостую, не влияя на ход миссии.
+# Профиль таким образом одновременно покрывает оба сценария: полевая
+# станция без интернета и станция с периодической связью.
+#
+# Ежедневный batch-пересчёт качества модели на станции не
+# выполняется — он живёт только в cloud-профиле, где накапливается
+# аккумулированный корпус миссий со всех станций. Локальная Grafana
+# показывает только дашборд операций реального времени; ML-качества
+# и дрейфа дашборды смотрят в центральной Grafana.
+#
+# Включённые сервисы:
+#   * rescue-ai-api                   — управление миссией
+#   * rescue-ai-detection             — обнаружение людей
+#   * rescue-ai-nav-engine            — восстановление траектории
+#   * rescue-ai-sync-worker           — дрейн outbox в remote
+#   * localPostgresql                 — локальная БД, пароль из Vault
+#                                       Agent через POSTGRES_PASSWORD_FILE
+#                                       (custom StatefulSet в umbrella'е,
+#                                       не bitnami subchart)
+#   * localMinio                      — локальное S3, root credentials
+#                                       из Vault Agent через MINIO_*_FILE
+#                                       (custom StatefulSet)
+#
+# Vault (Helm релиз rescue-ai-vault) ставится ОТДЕЛЬНО до umbrella —
+# см. docs/runbooks/vault_setup.md, часть 1. Init/unseal/bootstrap
+# выполняются ДО `helm install rescue-ai`, чтобы прикладные поды
+# получили секреты сразу при первом старте.
+
+rescue-ai-api:
+  enabled: true
+  image:
+    repository: rescue-ai-api
+    tag: local
+  deployment:
+    deploymentMode: offline
+    appEnv: field
+    logLevel: INFO
+  config:
+    storage:
+      s3Endpoint: "http://rescue-ai-minio.rescue-ai.svc.cluster.local:9000"
+      s3Region: ru-central1
+      s3Bucket: rescue-artifacts
+      s3Prefix: missions
+    rpi:
+      # Пусто НАМЕРЕННО. Адрес бортового компьютера БПЛА (RPi) — параметр
+      # конкретной станции, разный у каждого оператора, и его не коммитят в
+      # git в открытом виде. Задаётся на бутстрапе через Vault-секрет
+      # secret/rescue-ai/api (ключ RPI_BASE_URL), откуда Vault Agent
+      # источает его в окружение пода и перетирает этот пустой дефолт.
+      # См. scripts/security/vault_bootstrap.sh (RPI_BASE_URL=…).
+      baseUrl: ""
+      missionsDir: ""
+    services:
+      detectorUrl: "http://rescue-ai-rescue-ai-detection.rescue-ai.svc.cluster.local:8002"
+      navEngineUrl: "http://rescue-ai-rescue-ai-nav-engine.rescue-ai.svc.cluster.local:8001"
+  security:
+    tlsMode: "mtls"
+    ca:
+      source: vault
+      vault:
+        role: rescue-ai-api
+        secretPath: rescue-ai/rpi-mtls
+  secrets:
+    source: vault
+    vault:
+      role: rescue-ai-api
+      secretPath: rescue-ai/api
+  # Offline-станция одноузловая → HPA / podAntiAffinity не имеют
+  # смысла. PDB включён формально (maxUnavailable=0 запретит kubectl
+  # drain — оператор делает manual scale down перед drain'ом).
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 0
+  networkPolicy:
+    enabled: true
+  initContainers:
+    waitForPostgres:
+      enabled: true   # локальный Postgres рядом, может стартовать
+                      # 30-60 секунд при первом старте — даём api подождать.
+
+rescue-ai-detection:
+  enabled: true
+  image:
+    repository: rescue-ai-detection
+    tag: local
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 0
+  networkPolicy:
+    enabled: true
+
+rescue-ai-nav-engine:
+  enabled: true
+  image:
+    repository: rescue-ai-nav-engine
+    tag: local
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 0
+  networkPolicy:
+    enabled: true
+
+rescue-ai-sync-worker:
+  enabled: true
+  image:
+    repository: rescue-ai-sync-worker
+    tag: local
+  deployment:
+    appEnv: field
+    logLevel: INFO
+  sync:
+    batchSize: 50
+    intervalSec: 10
+    maxAttempts: 10
+    processingTimeoutSec: 120
+  # Egress подовой сети до УДАЛЁННОГО Postgres на этой станции режется по пути
+  # (RST), а host-стек ноды до него доходит — поэтому воркер живёт в сетевом
+  # namespace ноды. Локальные Postgres/MinIO/Vault остаются доступны через
+  # ClusterFirstWithHostNet (см. чарт).
+  hostNetwork:
+    enabled: true
+  config:
+    remoteS3:
+      endpoint: "https://storage.yandexcloud.net"
+      region: ru-central1
+      bucket: rescue-ai-mission-artifacts
+  secrets:
+    source: vault
+    vault:
+      role: rescue-ai-sync-worker
+      secretPath: rescue-ai/sync-worker
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 0
+  networkPolicy:
+    enabled: true
+  # Init-контейнер на локальную Postgres уже включён в дефолтах
+  # чарта (sync-worker/values.yaml).
+
+rescue-ai-batch-exporter:
+  # Не разворачивается на наземной станции. Batch-пересчёт качества
+  # модели выполняется только централизованно (см. cloud.yaml), где
+  # есть аккумулированный набор миссий со всех станций.
+  enabled: false
+
+postgresql:
+  # Отключено: offline-prod использует localPostgresql ниже.
+  enabled: false
+
+minio:
+  # Отключено: offline-prod использует localMinio ниже.
+  enabled: false
+
+vault:
+  # Vault ставится отдельным релизом в namespace `vault` ДО
+  # umbrella-чарта:
+  #   helm install rescue-ai-vault hashicorp/vault \
+  #     -n vault --create-namespace \
+  #     -f infra/k8s/vault/values-offline.yaml
+  enabled: false
+
+localPostgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  serviceAccountName: rescue-ai-postgresql
+  auth:
+    username: rescue
+    database: rescue_ai
+  vault:
+    role: rescue-ai-postgresql
+    secretPath: rescue-ai/postgresql
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: null
+  initdb:
+    scriptsConfigMap: pg-init
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+localMinio:
+  enabled: true
+  image:
+    repository: quay.io/minio/minio
+    tag: "RELEASE.2024-07-16T23-46-41Z"
+    pullPolicy: IfNotPresent
+  mcImage:
+    repository: quay.io/minio/mc
+    tag: "RELEASE.2024-07-22T20-02-49Z"
+    pullPolicy: IfNotPresent
+  serviceAccountName: rescue-ai-minio
+  vault:
+    role: rescue-ai-minio
+    secretPath: rescue-ai/minio
+  defaultBuckets: "rescue-artifacts"
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: null
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+localPostgresqlBackup:
+  enabled: true
+  schedule: "0 2 * * *"   # 02:00 UTC
+  bucket: rescue-artifacts
+
+airflow:
+  # Apache Airflow на наземной станции не разворачивается. Ежедневный
+  # batch-пересчёт качества модели выполняется централизованно
+  # (см. cloud.yaml): только в центральном кластере накоплен корпус
+  # миссий со всех станций, и оценка качества по этой выборке
+  # статистически осмысленна. Локальный пересчёт по одной станции
+  # привёл бы к дублированной работе над тем же набором данных и
+  # фрагментированной статистике.
+  enabled: false

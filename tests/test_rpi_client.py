@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from rescue_ai.config import RpiSettings
+from rescue_ai.config import RpiSettings, SecuritySettings
 from rescue_ai.infrastructure.rpi_client import RpiClient, _build_gt_sequence_from_coco
 
 
@@ -56,7 +56,7 @@ def test_rpi_client_health_catalog_and_session_calls(monkeypatch) -> None:
     client = RpiClient(
         RpiSettings(
             RPI_BASE_URL="http://rpi.local:9100",
-            RPI_MISSIONS_DIR="/home/ykvnkm/Documents/missions",
+            RPI_MISSIONS_DIR="/srv/rescue-ai/missions",
             RPI_RTSP_PORT=8554,
             RPI_RTSP_PATH_PREFIX="live",
         )
@@ -82,7 +82,7 @@ def test_rpi_client_health_catalog_and_session_calls(monkeypatch) -> None:
 
     start_call = [item for item in calls if item[1].endswith("/source/start")][0]
     assert start_call[2] is not None
-    assert start_call[2]["source"] == "/home/ykvnkm/Documents/missions/m1"
+    assert start_call[2]["source"] == "/srv/rescue-ai/missions/m1"
     assert start_call[2]["loop"] is False
 
 
@@ -124,7 +124,7 @@ def test_load_gt_sequence_from_raw_file(monkeypatch) -> None:
     client = RpiClient(
         RpiSettings(
             RPI_BASE_URL="http://rpi.local:9100",
-            RPI_MISSIONS_DIR="/home/ykvnkm/Documents/missions",
+            RPI_MISSIONS_DIR="/srv/rescue-ai/missions",
             RPI_RTSP_PORT=8554,
             RPI_RTSP_PATH_PREFIX="live",
         )
@@ -148,6 +148,57 @@ def test_build_gt_sequence_filters_non_person_annotations() -> None:
     }
 
     assert _build_gt_sequence_from_coco(payload) == [True, False]
+
+
+def test_rpi_client_tls_off_does_not_pass_cert(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_get(url: str, **kwargs):
+        captured.update(kwargs)
+        captured["url"] = url
+        return _Response({"status": "ok"})
+
+    monkeypatch.setattr("rescue_ai.infrastructure.rpi_client.httpx.get", _fake_get)
+
+    client = RpiClient(
+        RpiSettings(RPI_BASE_URL="http://rpi.local:9100"),
+        security=SecuritySettings(TLS_MODE="off"),
+    )
+    client.health(timeout_sec=1.0)
+
+    assert "cert" not in captured
+    assert "verify" not in captured
+
+
+def test_rpi_client_mtls_passes_cert_and_ca(tmp_path, monkeypatch) -> None:
+    ca = tmp_path / "ca.crt"
+    crt = tmp_path / "client.crt"
+    key = tmp_path / "client.key"
+    for path in (ca, crt, key):
+        path.write_text("dummy")
+
+    captured: dict[str, object] = {}
+
+    def _fake_get(url: str, **kwargs):
+        captured.update(kwargs)
+        captured["url"] = url
+        return _Response({"status": "ok"})
+
+    monkeypatch.setattr("rescue_ai.infrastructure.rpi_client.httpx.get", _fake_get)
+
+    client = RpiClient(
+        RpiSettings(RPI_BASE_URL="https://rpi.local:9100"),
+        security=SecuritySettings(
+            TLS_MODE="mtls",
+            TLS_CA_CERT_PATH=str(ca),
+            TLS_CLIENT_CERT_PATH=str(crt),
+            TLS_CLIENT_KEY_PATH=str(key),
+        ),
+    )
+    client.health(timeout_sec=1.0)
+
+    assert captured["verify"] == str(ca)
+    assert captured["cert"] == (str(crt), str(key))
 
 
 def test_build_gt_sequence_uses_numeric_filename_gaps_as_negatives() -> None:

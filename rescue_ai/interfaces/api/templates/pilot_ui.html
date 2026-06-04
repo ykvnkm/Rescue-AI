@@ -6,6 +6,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Sans:wght@400;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <style>
     :root {
       --bg: #070c17;
@@ -200,6 +201,55 @@
       border-color: rgba(251,146,60,0.8);
       box-shadow: 0 0 0 3px rgba(249,115,22,0.2), inset 0 0 0 1px rgba(255,255,255,0.06);
     }
+    .input-strong {
+      width: 100%;
+      padding: 11px 13px;
+      border-radius: 11px;
+      border: 1px solid rgba(255,255,255,0.22);
+      background:
+        linear-gradient(135deg, rgba(249,115,22,0.06), rgba(15,23,42,0.82)),
+        rgba(0,0,0,0.28);
+      color: var(--text);
+      font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      outline: none;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+      transition: border-color 0.16s ease, box-shadow 0.16s ease;
+    }
+    .input-strong:focus {
+      border-color: rgba(251,146,60,0.8);
+      box-shadow: 0 0 0 3px rgba(249,115,22,0.2), inset 0 0 0 1px rgba(255,255,255,0.06);
+    }
+    .file-strong {
+      width: 100%;
+      padding: 11px 13px;
+      border-radius: 11px;
+      border: 1px dashed rgba(255,255,255,0.28);
+      background: rgba(0,0,0,0.22);
+      color: var(--text);
+      font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color 0.16s ease, background 0.16s ease;
+    }
+    .file-strong:hover {
+      border-color: rgba(251,146,60,0.55);
+      background: rgba(249,115,22,0.06);
+    }
+    .file-strong::file-selector-button {
+      margin-right: 10px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: linear-gradient(120deg, #f97316, #fb923c);
+      color: #07121e;
+      font-family: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
     .rpi-check-btn {
       border: none;
       border-radius: 10px;
@@ -330,6 +380,18 @@
       grid-template-columns: repeat(3, 1fr);
       gap: 8px;
     }
+    .operator-plots {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .operator-plot-3d {
+      grid-column: 1 / span 2;
+      min-height: 300px;
+    }
+    .operator-plot {
+      min-height: 230px;
+    }
     .meta-item {
       background:
         linear-gradient(135deg, rgba(14,22,40,0.84), rgba(9,14,26,0.84));
@@ -440,14 +502,234 @@
     @media (max-width: 1100px) {
       .layout { grid-template-columns: 1fr; }
       .meta-row { grid-template-columns: 1fr 1fr; }
+      .operator-plots { grid-template-columns: 1fr; }
+      .operator-plot-3d { grid-column: auto; }
+    }
+
+    /* ── Mode switcher (Operator / Auto) + Auto-mode UI ───────── */
+    .mode-tabs {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin: 0 0 16px;
+    }
+    .mode-tab {
+      flex: 0 0 auto;
+      padding: 10px 22px;
+      border: 1px solid rgba(251,146,60,0.28);
+      background: rgba(15,23,42,0.7);
+      color: var(--text);
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: 700;
+      font-family: 'Space Grotesk', sans-serif;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      transition: all 0.15s ease;
+    }
+    .mode-tab.active {
+      border-color: var(--accent);
+      box-shadow: 0 12px 30px rgba(249,115,22,0.25);
+      background: linear-gradient(120deg, rgba(249,115,22,0.22), rgba(12,18,34,0.7));
+    }
+    #autoMode { display: none; }
+    #autoMode.active { display: block; }
+    #operatorMode.hidden { display: none; }
+
+    .sub-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+    .sub-tab {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid rgba(148,163,184,0.2);
+      background: rgba(15,23,42,0.6);
+      color: var(--text);
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      font-family: 'Space Grotesk', sans-serif;
+      transition: all 0.15s ease;
+    }
+    .sub-tab.active {
+      border-color: var(--hud);
+      background: linear-gradient(120deg, rgba(34,211,238,0.18), rgba(12,18,34,0.7));
+    }
+    .auto-form .field { margin-bottom: 10px; }
+    .auto-form label { display:block; font-size:12px; color: var(--muted); margin-bottom:4px; }
+    .auto-form input[type="text"], .auto-form input[type="number"], .auto-form select {
+      width: 100%;
+      background: rgba(15,23,42,0.8);
+      border: 1px solid rgba(148,163,184,0.22);
+      border-radius: 10px;
+      color: var(--text);
+      padding: 8px 10px;
+      font-family: inherit;
+      font-size: 13px;
+    }
+    .auto-form input[type="file"] { color: var(--muted); font-size: 12px; }
+    .auto-file-input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .auto-form .auto-file-dropzone {
+      min-height: 108px;
+      border: 1px dashed rgba(249,115,22,0.68);
+      border-radius: 20px;
+      background:
+        radial-gradient(circle at 50% 0%, rgba(249,115,22,0.16), transparent 52%),
+        rgba(6,14,28,0.82);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 24px 20px;
+      cursor: pointer;
+      text-align: center;
+      margin-bottom: 0;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.025);
+      transition: border-color 0.16s ease, background 0.16s ease;
+    }
+    .auto-form .auto-file-dropzone:hover,
+    .auto-form .auto-file-dropzone.drag-over {
+      border-color: rgba(251,146,60,0.92);
+      background:
+        radial-gradient(circle at 50% 0%, rgba(249,115,22,0.22), transparent 54%),
+        rgba(7,16,32,0.9);
+    }
+    .auto-form .auto-file-drop-title {
+      font-size: 20px;
+      line-height: 1.2;
+      font-weight: 600;
+      color: #e5edf8;
+    }
+    .auto-form .auto-file-drop-hint {
+      font-size: 15px;
+      line-height: 1.2;
+      color: var(--muted);
+    }
+    .auto-toggle-row {
+      display: flex; align-items: center; gap: 10px; margin: 10px 0;
+    }
+    .auto-toggle-row .auto-toggle-text { display: flex; flex-direction: column; }
+    .auto-toggle-row .auto-toggle-title { font-weight: 700; font-size: 13px; color: var(--text); }
+    .auto-toggle-row .auto-toggle-hint { color: var(--muted); font-size: 11px; }
+    .switch {
+      position: relative; display: inline-block;
+      width: 44px; height: 24px; flex-shrink: 0;
+    }
+    .switch input { display: none; }
+    .switch .slider {
+      position: absolute; cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(255,255,255,0.18);
+      transition: .2s; border-radius: 24px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+    }
+    .switch .slider:before {
+      position: absolute; content: "";
+      height: 18px; width: 18px;
+      left: 3px; bottom: 3px;
+      background: #0f172a;
+      transition: .2s; border-radius: 50%;
+      box-shadow: 0 6px 15px rgba(0,0,0,0.35);
+    }
+    .switch input:checked + .slider {
+      background: linear-gradient(120deg, #38bdf8, #fb923c);
+      box-shadow: 0 10px 30px rgba(56,189,248,0.35);
+    }
+    .switch input:checked + .slider:before { transform: translateX(20px); }
+    .auto-chips {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .auto-chip {
+      padding: 8px 10px;
+      background: rgba(15,23,42,0.85);
+      border: 1px solid rgba(148,163,184,0.15);
+      border-radius: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .auto-chip strong { display: block; color: var(--text); font-size: 15px; font-family: 'JetBrains Mono', monospace; }
+    .auto-workspace-grid {
+      display: grid;
+      grid-template-columns: minmax(320px, 0.92fr) minmax(380px, 1.08fr);
+      grid-template-rows: minmax(300px, 0.95fr) minmax(250px, 0.8fr);
+      gap: 12px;
+      flex: 1;
+      min-height: 670px;
+    }
+    .auto-video-wrap {
+      position: relative;
+      background: rgba(4,8,16,0.8);
+      border: 1px solid rgba(148,163,184,0.18);
+      border-radius: var(--radius);
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .auto-video-wrap img { width: 100%; height: 100%; object-fit: contain; display: none; }
+    .auto-video-wrap img.active { display: block; }
+    .auto-video-placeholder { color: var(--muted); font-size: 13px; }
+    .auto-plot {
+      background: rgba(12,18,34,0.9);
+      border: 1px solid rgba(148,163,184,0.14);
+      border-radius: 14px;
+      padding: 10px;
+      min-height: 240px;
+      display: flex;
+      flex-direction: column;
+    }
+    .auto-plot h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .auto-plot-body { flex: 1; min-height: 0; }
+    .auto-video-panel .auto-video-wrap { height: 100%; aspect-ratio: auto; }
+    .auto-alert-log {
+      margin-top: 12px;
+      max-height: 160px;
+      overflow: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      background: rgba(15,23,42,0.6);
+      border-radius: 10px;
+      padding: 8px;
+      color: var(--muted);
+      white-space: pre-wrap;
+    }
+    @media (max-width: 1200px) {
+      .auto-workspace-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: repeat(4, minmax(260px, auto));
+        min-height: 0;
+      }
     }
   </style>
 </head>
 <body>
 <header>
   <h1>Наземная станция мониторинга</h1>
+  <div id="apiTokenBox" style="display:none;align-items:center;gap:6px;">
+    <label for="apiTokenInput" style="font-size:12px;color:var(--muted);">API-токен</label>
+    <input type="password" id="apiTokenInput" class="input-strong" style="width:200px;"
+           placeholder="Bearer-токен сервиса" autocomplete="off" />
+    <button type="button" class="btn secondary" id="apiTokenSave">Сохранить</button>
+  </div>
 </header>
 
+<div class="mode-tabs">
+  <button type="button" class="mode-tab active" data-mode="operator" id="modeTabOperator">Операторский режим</button>
+  <button type="button" class="mode-tab" data-mode="auto" id="modeTabAuto">Автоматический режим</button>
+</div>
+
+<div id="operatorMode">
 <div class="layout">
   <aside>
     <!-- RPi connection status -->
@@ -512,6 +794,21 @@
       <button class="action-btn reject" onclick="reviewCurrent('reject')">Отклонить</button>
     </div>
 
+    <div class="operator-plots">
+      <div class="auto-plot operator-plot-3d">
+        <h4>Траектория 3D</h4>
+        <div id="operatorPlot3d" class="auto-plot-body" style="width:100%;height:100%;"></div>
+      </div>
+      <div class="auto-plot operator-plot">
+        <h4>Плоскость XY</h4>
+        <div id="operatorPlotXY" class="auto-plot-body" style="width:100%;height:100%;"></div>
+      </div>
+      <div class="auto-plot operator-plot">
+        <h4>Высота Z(t)</h4>
+        <div id="operatorPlotZ" class="auto-plot-body" style="width:100%;height:100%;"></div>
+      </div>
+    </div>
+
     <div class="card" style="padding:12px; margin-top:4px;">
       <h3 style="margin-bottom:8px;">Отчет по миссии</h3>
       <table class="report-table">
@@ -530,13 +827,272 @@
 
   </section>
 </div>
+</div><!-- /#operatorMode -->
+
+<div id="autoMode">
+  <div class="layout">
+    <aside>
+      <div class="card" style="margin-bottom:14px;">
+        <h3>Автоматический режим</h3>
+
+        <div class="field" style="margin-bottom:12px;">
+          <label class="form-label" for="autoNsuChannel">Режим вычислений</label>
+          <select id="autoNsuChannel" class="select-strong">
+            <option value="local" selected>Стендовый</option>
+            <option value="stream">Потоковый (RaspberryPi)</option>
+          </select>
+        </div>
+
+        <div id="autoRpiRow" style="display:none;margin-bottom:12px;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,0.14);background:rgba(0,0,0,0.22);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">
+              <div style="font-size:12px;color:var(--muted);">Состояние канала RaspberryPi</div>
+              <div style="font-size:13px;color:var(--text);">
+                Статус: <strong id="autoRpiStatus" style="color:#fbbf24;">не проверено</strong>
+              </div>
+              <div id="autoRpiCatalogSummary" style="font-size:12px;color:var(--muted);"></div>
+            </div>
+            <button id="autoRpiCheckBtn" type="button" class="btn" style="width:auto;padding:8px 12px;">Проверить канал</button>
+          </div>
+        </div>
+
+        <span class="hud-label">Источник данных</span>
+        <div class="sub-tabs" id="autoSourceTabs">
+          <button type="button" class="sub-tab active" data-src="video">Видео</button>
+          <button type="button" class="sub-tab" data-src="rtsp" data-channel="local">RTSP поток</button>
+          <button type="button" class="sub-tab" data-src="frames">Поток кадров</button>
+        </div>
+
+        <form class="auto-form" id="autoStartForm" onsubmit="return false;">
+          <!-- VIDEO source: local = file upload, stream = mission select from RPi -->
+          <div class="field" data-src-field="video" data-channel="local">
+            <label class="form-label" for="autoVideoFile">Видео файл</label>
+            <input type="file" id="autoVideoFile" accept="video/mp4,video/quicktime,video/x-msvideo,.mp4,.mov,.avi" class="auto-file-input" />
+            <label class="auto-file-dropzone" id="autoVideoDropzone" for="autoVideoFile">
+              <span class="auto-file-drop-title" id="autoVideoDropTitle">Перетащите или выберите видео</span>
+              <span class="auto-file-drop-hint" id="autoVideoDropHint">Поддерживаются mp4/mov/avi</span>
+            </label>
+          </div>
+          <div class="field" data-src-field="video" data-channel="stream" style="display:none;">
+            <label class="form-label" for="autoVideoMission">Миссия RaspberryPi</label>
+            <select id="autoVideoMission" class="select-strong"><option value="">— проверьте канал —</option></select>
+            <small style="color:var(--muted);font-size:11px;">Запустится потоковая обработка миссии с RPi.</small>
+          </div>
+
+          <!-- RTSP source: только в стендовом режиме -->
+          <div class="field" data-src-field="rtsp" data-channel="local" style="display:none;">
+            <label class="form-label" for="autoRtspUrl">RTSP URL</label>
+            <input type="text" id="autoRtspUrl" class="input-strong" placeholder="rtsp://host:8554/live/session" />
+          </div>
+
+          <!-- FRAMES source (local): offline = ZIP upload, cloud = re-run from S3 -->
+          <div class="field" data-src-field="frames" data-channel="local" data-profile="offline" style="display:none;">
+            <label class="form-label" for="autoFramesZip">ZIP-архив кадров</label>
+            <input type="file" id="autoFramesZip" accept=".zip,application/zip" class="auto-file-input" />
+            <label class="auto-file-dropzone" id="autoFramesZipDropzone" for="autoFramesZip">
+              <span class="auto-file-drop-title" id="autoFramesZipDropTitle">Перетащите или выберите ZIP миссии</span>
+              <span class="auto-file-drop-hint">Структура как в S3: frames/*.jpg + опционально labels.json</span>
+            </label>
+          </div>
+          <div class="field" data-src-field="frames" data-channel="local" data-profile="cloud" style="display:none;">
+            <label class="form-label" for="autoS3Mission">Миссия в облаке (S3)</label>
+            <select id="autoS3Mission" class="select-strong"><option value="">Загрузка миссий из S3...</option></select>
+            <small style="color:var(--muted);font-size:11px;">Кадры подтянутся из S3 и прогонятся заново; результат перезапишет ту же миссию.</small>
+          </div>
+          <div class="field" data-src-field="frames" data-channel="stream" style="display:none;">
+            <label class="form-label" for="autoFramesMission">Миссия RaspberryPi</label>
+            <select id="autoFramesMission" class="select-strong"><option value="">— проверьте канал —</option></select>
+            <small style="color:var(--muted);font-size:11px;">Каталог подтянется после проверки канала.</small>
+          </div>
+
+          <!-- common controls -->
+          <div class="field">
+            <label class="form-label" for="autoDetector">Детектор</label>
+            <select id="autoDetector" class="select-strong">
+              <option value="yolo" selected>YOLOv8n multi-scale</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="form-label" for="autoNavMode">Режим навигации</label>
+            <select id="autoNavMode" class="select-strong">
+              <option value="auto" selected>auto</option>
+              <option value="marker">marker</option>
+              <option value="no_marker">no_marker</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="form-label" for="autoFps">FPS</label>
+            <input type="number" id="autoFps" class="input-strong" value="6" min="1" max="60" step="1" />
+          </div>
+          <div class="field">
+            <label class="form-label" for="autoOriginLat">Точка старта (необязательно)</label>
+            <div style="display:flex;gap:8px;">
+              <input type="number" id="autoOriginLat" class="input-strong" style="flex:1;" placeholder="широта" step="any" min="-90" max="90" />
+              <input type="number" id="autoOriginLon" class="input-strong" style="flex:1;" placeholder="долгота" step="any" min="-180" max="180" />
+            </div>
+            <small style="color:var(--muted);font-size:11px;">Если задана — траектория и отчёт будут в абсолютных координатах (иначе — в метрах от старта).</small>
+          </div>
+
+          <div class="auto-toggle-row">
+            <label class="switch"><input type="checkbox" id="autoDetectEnabled" checked /><span class="slider"></span></label>
+            <div class="auto-toggle-text">
+              <div class="auto-toggle-title">Детекция людей</div>
+              <div class="auto-toggle-hint">Отключите, если нужна только траектория</div>
+            </div>
+          </div>
+          <div class="auto-toggle-row">
+            <label class="switch"><input type="checkbox" id="autoSaveVideo" /><span class="slider"></span></label>
+            <div class="auto-toggle-text">
+              <div class="auto-toggle-title">Сохранить видео с детекцией</div>
+              <div class="auto-toggle-hint">Сохранение обработанного ролика в отчет</div>
+            </div>
+          </div>
+          <div class="auto-toggle-row" data-src-field="video" data-channel="local">
+            <label class="switch"><input type="checkbox" id="autoDemoLoop" /><span class="slider"></span></label>
+            <div class="auto-toggle-text">
+              <div class="auto-toggle-title">Демо-цикл видео</div>
+              <div class="auto-toggle-hint">Автоперезапуск через 5 секунд после завершения</div>
+            </div>
+          </div>
+
+          <button class="btn" id="autoStartBtn" type="submit">Запустить сессию</button>
+          <button class="btn secondary" id="autoStopBtn" type="button" disabled>Остановить</button>
+          <button class="btn secondary" id="autoReportBtn" type="button">Отчет по миссии</button>
+        </form>
+
+        <div class="auto-chips">
+          <div class="auto-chip">Люди<strong id="autoChipPeople">0</strong></div>
+          <div class="auto-chip">Кадр ID<strong id="autoChipFrameId">—</strong></div>
+          <div class="auto-chip">Сред. FPS<strong id="autoChipAvgFps">0.00</strong></div>
+          <div class="auto-chip">Отброшено<strong id="autoChipDropped">0</strong></div>
+          <div class="auto-chip">Алертов<strong id="autoChipAlerts">0</strong></div>
+          <div class="auto-chip">Высота Z<strong id="autoChipZ">—</strong></div>
+          <div class="auto-chip" data-channel="stream" style="display:none;">RPi FPS<strong id="autoChipRpiFps">—</strong></div>
+          <div class="auto-chip" data-channel="stream" style="display:none;">RPi Drop<strong id="autoChipRpiDropped">—</strong></div>
+        </div>
+
+        <div style="margin-top:10px;font-size:12px;color:var(--muted);">
+          Статус: <strong id="autoSessionStatus" style="color:var(--text);">не запущено</strong>
+        </div>
+      </div>
+
+      <div class="card">
+        <span class="hud-label" style="margin-bottom:8px;">Лог событий</span>
+        <div class="auto-alert-log" id="autoEventLog">Ожидание запуска сессии...</div>
+      </div>
+    </aside>
+
+    <section class="card console" style="padding:16px;">
+      <div class="auto-workspace-grid">
+        <div class="auto-plot auto-video-panel">
+          <h4>Видео + боксы</h4>
+          <div class="auto-video-wrap auto-plot-body">
+            <div class="auto-video-placeholder" id="autoVideoEmpty">Поток не запущен</div>
+            <img id="autoVideoImg" alt="живой кадр авто-сессии" />
+          </div>
+        </div>
+        <div class="auto-plot">
+          <h4>Траектория 3D</h4>
+          <div id="autoPlot3d" class="auto-plot-body" style="width:100%;height:100%;"></div>
+        </div>
+        <div class="auto-plot">
+          <h4>Плоскость XY <span id="autoCoordsReadout" style="font-weight:400;font-size:11px;color:var(--muted);"></span></h4>
+          <div id="autoPlotXY" class="auto-plot-body" style="width:100%;height:100%;"></div>
+        </div>
+        <div class="auto-plot">
+          <h4>Высота Z(t)</h4>
+          <div id="autoPlotZ" class="auto-plot-body" style="width:100%;height:100%;"></div>
+        </div>
+      </div>
+
+      <div class="card" id="autoReportCard" style="padding:14px;margin-top:12px;display:none;">
+        <h3 style="margin-bottom:10px;">Отчет автоматической миссии</h3>
+        <table class="report-table">
+          <tbody>
+            <tr><td>Mission ID</td><td id="arMissionId">&mdash;</td></tr>
+            <tr><td>Статус</td><td id="arStatus">&mdash;</td></tr>
+            <tr><td>Источник</td><td id="arSource">&mdash;</td></tr>
+            <tr><td>FPS</td><td id="arFps">&mdash;</td></tr>
+            <tr><td>Кадров обработано</td><td id="arFrames">&mdash;</td></tr>
+            <tr><td>Алертов всего</td><td id="arAlerts">&mdash;</td></tr>
+            <tr><td>Точек траектории</td><td id="arPoints">&mdash;</td></tr>
+            <tr><td>Система координат</td><td id="arCoordSystem">&mdash;</td></tr>
+            <tr><td>Длительность (с)</td><td id="arDuration">&mdash;</td></tr>
+            <tr><td>Решения</td><td id="arDecisions">&mdash;</td></tr>
+            <tr><td>Сгенерирован</td><td id="arGeneratedAt">&mdash;</td></tr>
+          </tbody>
+        </table>
+        <div style="margin-top:12px;">
+          <h4 style="margin-bottom:6px;">График траектории</h4>
+          <div id="arPlotWrap" style="background:rgba(0,0,0,0.25);border-radius:8px;padding:6px;text-align:center;">
+            <span id="arPlotEmpty" style="color:var(--muted);font-size:13px;">График ещё не сформирован.</span>
+            <img id="arPlotImg" alt="trajectory plot" style="display:none;max-width:100%;border-radius:6px;" />
+          </div>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+          <a id="arDownloadCsv" class="btn secondary" style="flex:1;text-align:center;text-decoration:none;" target="_blank" rel="noopener">Скачать trajectory.csv</a>
+          <a id="arDownloadJson" class="btn secondary" style="flex:1;text-align:center;text-decoration:none;" target="_blank" rel="noopener">Скачать report.json</a>
+        </div>
+      </div>
+    </section>
+  </div>
+</div><!-- /#autoMode -->
 
 <script>
+// Injected by build_ui_html() — selects the frames source UX per profile
+// (offline → ZIP upload, cloud → re-run from S3) and whether to show the API
+// token box. Defaults to cloud when served without substitution.
+window.DEPLOYMENT_MODE = "__DEPLOYMENT_MODE__".indexOf("DEPLOYMENT_MODE") >= 0
+  ? "cloud" : "__DEPLOYMENT_MODE__";
+
+/* ---- API auth: attach the shared-secret bearer token to same-origin calls.
+   Installed before any fetch() runs so every API request carries the token
+   the operator saved. No-op when no token is stored (gate disabled). ---- */
+const API_TOKEN_KEY = 'rescueApiToken';
+function getApiToken() {
+  try { return localStorage.getItem(API_TOKEN_KEY) || ''; } catch (e) { return ''; }
+}
+(function installAuthFetch() {
+  const origFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    init = init || {};
+    const token = getApiToken();
+    let sameOrigin = true;
+    try {
+      const ref = (typeof input === 'string' || input instanceof URL) ? input : input.url;
+      sameOrigin = new URL(ref, window.location.origin).origin === window.location.origin;
+    } catch (e) { sameOrigin = true; }
+    if (token && sameOrigin) {
+      const headers = new Headers(init.headers || (input && input.headers) || {});
+      if (!headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + token);
+      init = Object.assign({}, init, { headers });
+    }
+    return origFetch(input, init);
+  };
+})();
+
+(function setupApiTokenBox() {
+  const box = document.getElementById('apiTokenBox');
+  const input = document.getElementById('apiTokenInput');
+  const save = document.getElementById('apiTokenSave');
+  if (!box || !input || !save) return;
+  // The cloud profile is where the gate is typically enabled; offline/dev
+  // run without a token, so keep the box hidden there to avoid confusion.
+  if (window.DEPLOYMENT_MODE === 'cloud') box.style.display = 'flex';
+  input.value = getApiToken();
+  save.addEventListener('click', () => {
+    try { localStorage.setItem(API_TOKEN_KEY, input.value.trim()); } catch (e) {}
+    save.textContent = 'Сохранено';
+    setTimeout(() => { save.textContent = 'Сохранить'; }, 1500);
+  });
+})();
+
 const alertSeenAt = new Map();
 let currentAlert = null;
 let currentMissionId = '';
 let streamPollTimer = null;
 let alertsPollTimer = null;
+let operatorTrajectoryPollTimer = null;
 let reportLoadedMissionId = '';
 let missionClosed = false;
 let reviewInFlight = false;
@@ -546,6 +1102,13 @@ let dragStartX = 0, dragStartY = 0;
 let dragActive = false;
 let lastRenderedAlertId = '';
 let lastStreamStatus = null;
+const OP_TRAJ = {
+  initialized: false,
+  x: [],
+  y: [],
+  z: [],
+  ts: [],
+};
 
 function nowSec() { return Date.now() / 1000; }
 function missionId() { return currentMissionId; }
@@ -689,6 +1252,101 @@ async function loadMissionCatalog(showStatus) {
   renderMissionOptions(Array.isArray(data.missions) ? data.missions : []);
 }
 
+/* ---- Operator trajectory plots ---- */
+function operatorFlatLayout(xTitle, yTitle) {
+  return {
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(12,18,34,0.6)',
+    margin: { l: 40, r: 10, t: 8, b: 32 },
+    xaxis: { title: xTitle, color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.12)' },
+    yaxis: { title: yTitle, color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.12)' },
+    showlegend: false,
+  };
+}
+
+function initOperatorPlots() {
+  if (OP_TRAJ.initialized || !window.Plotly) return;
+  const layout3d = {
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    margin: { l: 0, r: 0, t: 0, b: 0 },
+    scene: {
+      xaxis: { title: 'X', color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.15)' },
+      yaxis: { title: 'Y', color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.15)' },
+      zaxis: { title: 'Z', color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.15)' },
+      bgcolor: 'rgba(12,18,34,0.6)',
+    },
+    showlegend: false,
+  };
+  Plotly.newPlot('operatorPlot3d', [{
+    x: [], y: [], z: [],
+    type: 'scatter3d', mode: 'lines+markers',
+    line: { color: '#f97316', width: 4 },
+    marker: { size: 3, color: '#fb923c' },
+  }], layout3d, { displayModeBar: false, responsive: true });
+  Plotly.newPlot('operatorPlotXY', [{
+    x: [], y: [], mode: 'lines+markers',
+    line: { color: '#22d3ee', width: 2 },
+    marker: { size: 4, color: '#38bdf8' },
+  }], operatorFlatLayout('X', 'Y'), { displayModeBar: false, responsive: true });
+  Plotly.newPlot('operatorPlotZ', [{
+    x: [], y: [], mode: 'lines',
+    line: { color: '#f97316', width: 2 },
+  }], operatorFlatLayout('t, сек', 'Z'), { displayModeBar: false, responsive: true });
+  OP_TRAJ.initialized = true;
+}
+
+function resizeOperatorPlots() {
+  if (!OP_TRAJ.initialized || !window.Plotly) return;
+  ['operatorPlot3d', 'operatorPlotXY', 'operatorPlotZ'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) Plotly.Plots.resize(el);
+  });
+}
+
+function resetOperatorPlots() {
+  OP_TRAJ.x = [];
+  OP_TRAJ.y = [];
+  OP_TRAJ.z = [];
+  OP_TRAJ.ts = [];
+  if (!OP_TRAJ.initialized) return;
+  Plotly.restyle('operatorPlot3d', { x: [[]], y: [[]], z: [[]] });
+  Plotly.restyle('operatorPlotXY', { x: [[]], y: [[]] });
+  Plotly.restyle('operatorPlotZ', { x: [[]], y: [[]] });
+}
+
+function renderOperatorTrajectory(points) {
+  initOperatorPlots();
+  OP_TRAJ.x = points.map((p) => Number(p.x));
+  OP_TRAJ.y = points.map((p) => Number(p.y));
+  OP_TRAJ.z = points.map((p) => Number(p.z));
+  OP_TRAJ.ts = points.map((p) => Number(p.ts_sec));
+  Plotly.restyle('operatorPlot3d', { x: [OP_TRAJ.x], y: [OP_TRAJ.y], z: [OP_TRAJ.z] });
+  Plotly.restyle('operatorPlotXY', { x: [OP_TRAJ.x], y: [OP_TRAJ.y] });
+  Plotly.restyle('operatorPlotZ', { x: [OP_TRAJ.ts], y: [OP_TRAJ.z] });
+}
+
+async function refreshOperatorTrajectory() {
+  if (!missionId()) return;
+  const resp = await fetch(`/missions/${encodeURIComponent(missionId())}/trajectory`);
+  if (!resp.ok) return;
+  const data = await resp.json().catch(() => ({ points: [] }));
+  renderOperatorTrajectory(Array.isArray(data.points) ? data.points : []);
+}
+
+function stopOperatorTrajectoryPolling() {
+  if (operatorTrajectoryPollTimer) {
+    clearInterval(operatorTrajectoryPollTimer);
+    operatorTrajectoryPollTimer = null;
+  }
+}
+
+function startOperatorTrajectoryPolling() {
+  stopOperatorTrajectoryPolling();
+  refreshOperatorTrajectory();
+  operatorTrajectoryPollTimer = setInterval(refreshOperatorTrajectory, 1500);
+}
+
 /* ---- Mission lifecycle ---- */
 async function startMission() {
   const rpiMissionId = missionSelect.value.trim();
@@ -709,8 +1367,10 @@ async function startMission() {
   lastStreamStatus = null;
   setMissionStatus(`Миссия запущена: ${data.mission_id}`);
   resetAlertView('Поток запущен. Ожидаем первые алерты в очереди...');
+  resetOperatorPlots();
   startAlertsPolling();
   startStreamPolling();
+  startOperatorTrajectoryPolling();
   await refreshAlerts();
 }
 
@@ -723,6 +1383,8 @@ async function stopStream() {
     return;
   }
   stopStreamPolling();
+  stopOperatorTrajectoryPolling();
+  await refreshOperatorTrajectory();
   const queued = data.queued_alerts || 0;
   if (queued > 0) {
     setMissionStatus(`Поток остановлен. Обработано кадров: ${data.processed_frames ?? '\u2014'}
@@ -757,6 +1419,8 @@ async function completeMission() {
   if (data.report) fillReport(data.report); else await loadReport();
   stopAlertsPolling();
   stopStreamPolling();
+  stopOperatorTrajectoryPolling();
+  await refreshOperatorTrajectory();
   resetAlertView(`Миссия завершена. Причина: ${reason}`);
 }
 
@@ -794,6 +1458,8 @@ async function forceCompleteMission() {
   if (data.report) fillReport(data.report); else await loadReport();
   stopAlertsPolling();
   stopStreamPolling();
+  stopOperatorTrajectoryPolling();
+  await refreshOperatorTrajectory();
   resetAlertView(`Миссия завершена в аварийном режиме. Причина: ${reason}`);
 }
 
@@ -922,7 +1588,7 @@ async function fetchStreamStatus() {
   if (!missionId()) return null;
   const resp = await fetch(`/missions/${missionId()}/stream/status`);
   if (resp.status === 404) {
-    missionClosed = true; stopStreamPolling();
+    missionClosed = true; stopStreamPolling(); stopOperatorTrajectoryPolling();
     currentMissionId = ''; resetAlertView();
     setMissionStatus('Сессия недоступна. Запустите новую миссию.');
     return null;
@@ -979,6 +1645,8 @@ function startStreamPolling() {
     setMissionStatus(buildStreamStatusText(s));
     if (!s.running) {
       stopStreamPolling();
+      stopOperatorTrajectoryPolling();
+      refreshOperatorTrajectory();
       if (s.end_reason === 'source_finished_pending_alert_review') {
         setEmptyState('Поток завершен. Обработайте оставшиеся алерты для завершения миссии.');
       } else {
@@ -1055,7 +1723,743 @@ document.getElementById('checkRpiBtn').addEventListener('click', () => loadMissi
 
 /* ---- Boot ---- */
 setupMouseZoomAndPan();
+initOperatorPlots();
+requestAnimationFrame(resizeOperatorPlots);
 loadMissionCatalog(false);
+
+/* ================================================================
+ * Automatic-mode UI (ADR-0006)
+ *   - mode switcher (operator ↔ auto)
+ *   - video/rtsp/frames sub-tabs
+ *   - Start/Stop session, WebSocket live stream, Plotly plots
+ * ================================================================ */
+
+const AUTO = {
+  sourceKind: 'video',
+  origin: null,
+  session: null,
+  ws: null,
+  plots: { initialized: false },
+  traj: { x: [], y: [], z: [], ts: [] },
+  persons: 0,
+  alerts: 0,
+  dropped: 0,
+  lastMissionId: '',
+};
+
+function setActiveMode(mode) {
+  const isAuto = mode === 'auto';
+  document.getElementById('modeTabOperator').classList.toggle('active', !isAuto);
+  document.getElementById('modeTabAuto').classList.toggle('active', isAuto);
+  document.getElementById('operatorMode').classList.toggle('hidden', isAuto);
+  document.getElementById('autoMode').classList.toggle('active', isAuto);
+  if (isAuto && !AUTO.plots.initialized) {
+    initAutoPlots();
+  }
+  if (isAuto) {
+    requestAnimationFrame(resizeAutoPlots);
+    refreshActiveAutoSession();
+  } else {
+    requestAnimationFrame(resizeOperatorPlots);
+  }
+}
+
+document.getElementById('modeTabOperator').addEventListener('click', () => setActiveMode('operator'));
+document.getElementById('modeTabAuto').addEventListener('click', () => setActiveMode('auto'));
+
+/* ---- Channel (Стендовый / Потоковый) + source sub-tabs ---- */
+AUTO.nsuChannel = 'local';
+AUTO.rpiCatalog = { missions: [] };
+
+function applyAutoChannelAndTab() {
+  const channel = AUTO.nsuChannel;
+  const stream = channel === 'stream';
+  const rpiRow = document.getElementById('autoRpiRow');
+  if (rpiRow) rpiRow.style.display = stream ? 'block' : 'none';
+
+  // Tab visibility: hide RTSP in stream mode; if it was active, jump to video.
+  document.querySelectorAll('#autoSourceTabs .sub-tab').forEach(btn => {
+    const tabChannel = btn.getAttribute('data-channel');
+    const hide = tabChannel && tabChannel !== channel;
+    btn.style.display = hide ? 'none' : 'inline-block';
+  });
+  if (stream && AUTO.sourceKind === 'rtsp') {
+    AUTO.sourceKind = 'video';
+    document.querySelectorAll('#autoSourceTabs .sub-tab').forEach(b => {
+      b.classList.toggle('active', b.getAttribute('data-src') === 'video');
+    });
+  }
+
+  // Field visibility: a field shows when its data-src-field matches the
+  // current tab, its data-channel matches the channel (or is empty), and its
+  // data-profile matches the deployment profile (or is empty). The last rule
+  // swaps the frames source between offline (ZIP upload) and cloud (S3 picker).
+  document.querySelectorAll('[data-src-field]').forEach(field => {
+    const kindMatch = field.getAttribute('data-src-field') === AUTO.sourceKind;
+    const fieldChannel = field.getAttribute('data-channel');
+    const channelMatch = !fieldChannel || fieldChannel === channel;
+    const fieldProfile = field.getAttribute('data-profile');
+    const profileMatch = !fieldProfile || fieldProfile === window.DEPLOYMENT_MODE;
+    field.style.display = (kindMatch && channelMatch && profileMatch) ? '' : 'none';
+  });
+
+  // Stream-only chips.
+  document.querySelectorAll('.auto-chip[data-channel="stream"]').forEach(chip => {
+    chip.style.display = stream ? '' : 'none';
+  });
+}
+
+document.querySelectorAll('#autoSourceTabs .sub-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    AUTO.sourceKind = btn.getAttribute('data-src');
+    document.querySelectorAll('#autoSourceTabs .sub-tab').forEach(b => {
+      b.classList.toggle('active', b === btn);
+    });
+    applyAutoChannelAndTab();
+    // Cloud profile: the frames tab re-runs an archived mission → load list.
+    if (AUTO.sourceKind === 'frames' && AUTO.nsuChannel === 'local'
+        && window.DEPLOYMENT_MODE === 'cloud') {
+      loadS3Missions();
+    }
+  });
+});
+
+async function loadS3Missions() {
+  const sel = document.getElementById('autoS3Mission');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Загрузка миссий из S3...</option>';
+  let missions = [];
+  try {
+    const resp = await fetch('/s3-missions');
+    if (resp.ok) {
+      const data = await resp.json();
+      missions = Array.isArray(data.missions) ? data.missions : [];
+    }
+  } catch (err) {
+    autoLog(`Не удалось получить список миссий из S3: ${err}`);
+  }
+  sel.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  placeholder.textContent = missions.length ? 'Выберите миссию' : 'Миссии в S3 не найдены';
+  sel.appendChild(placeholder);
+  for (const m of missions) {
+    const opt = document.createElement('option');
+    opt.value = `${m.ds}/${m.mission_id}`;
+    opt.textContent = `${m.ds} · ${String(m.mission_id).slice(0, 8)}`;
+    sel.appendChild(opt);
+  }
+}
+
+const autoNsuChannelSel = document.getElementById('autoNsuChannel');
+if (autoNsuChannelSel) {
+  autoNsuChannelSel.addEventListener('change', async () => {
+    AUTO.nsuChannel = autoNsuChannelSel.value;
+    applyAutoChannelAndTab();
+    if (AUTO.nsuChannel === 'stream') {
+      await autoCheckRpi(false);
+    }
+  });
+}
+
+function fillAutoMissionSelects() {
+  const missions = Array.isArray(AUTO.rpiCatalog.missions) ? AUTO.rpiCatalog.missions : [];
+  const targets = [
+    document.getElementById('autoVideoMission'),
+    document.getElementById('autoFramesMission'),
+  ];
+  for (const sel of targets) {
+    if (!sel) continue;
+    sel.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    placeholder.textContent = missions.length ? 'Выберите миссию' : 'Миссии не найдены';
+    sel.appendChild(placeholder);
+    for (const m of missions) {
+      const opt = document.createElement('option');
+      opt.value = String(m.mission_id || m.id || '');
+      const label = m.name || m.mission_id || m.id || 'миссия';
+      opt.textContent = `Миссия ${opt.value}${m.name ? `: ${m.name}` : ''}`;
+      if (!opt.value) opt.disabled = true;
+      sel.appendChild(opt);
+    }
+  }
+}
+
+async function autoCheckRpi(userTriggered) {
+  const statusEl = document.getElementById('autoRpiStatus');
+  const summaryEl = document.getElementById('autoRpiCatalogSummary');
+  if (statusEl) { statusEl.textContent = 'проверяем...'; statusEl.style.color = '#fbbf24'; }
+  if (summaryEl) summaryEl.textContent = '';
+  try {
+    const res = await fetch('/rpi/status');
+    const data = await res.json();
+    if (!data.connected) {
+      if (statusEl) { statusEl.textContent = 'канал недоступен'; statusEl.style.color = '#fca5a5'; }
+      if (userTriggered) autoLog('RaspberryPi недоступен.');
+      return false;
+    }
+    if (statusEl) { statusEl.textContent = 'канал активен'; statusEl.style.color = '#86efac'; }
+  } catch (err) {
+    if (statusEl) { statusEl.textContent = 'ошибка канала'; statusEl.style.color = '#fca5a5'; }
+    if (userTriggered) autoLog(`Ошибка проверки канала: ${err}`);
+    return false;
+  }
+  try {
+    const res = await fetch('/rpi/missions');
+    if (!res.ok) {
+      if (summaryEl) summaryEl.textContent = 'каталог недоступен';
+      return false;
+    }
+    const data = await res.json();
+    AUTO.rpiCatalog.missions = Array.isArray(data.missions) ? data.missions : [];
+    fillAutoMissionSelects();
+    if (summaryEl) summaryEl.textContent = `миссий: ${AUTO.rpiCatalog.missions.length}`;
+    if (userTriggered) autoLog(`Каталог загружен: ${AUTO.rpiCatalog.missions.length} миссий.`);
+    return true;
+  } catch (err) {
+    if (summaryEl) summaryEl.textContent = 'ошибка каталога';
+    if (userTriggered) autoLog(`Ошибка каталога: ${err}`);
+    return false;
+  }
+}
+
+const autoRpiCheckBtn = document.getElementById('autoRpiCheckBtn');
+if (autoRpiCheckBtn) {
+  autoRpiCheckBtn.addEventListener('click', () => autoCheckRpi(true));
+}
+
+const autoVideoFileInput = document.getElementById('autoVideoFile');
+const autoVideoDropzone = document.getElementById('autoVideoDropzone');
+const autoVideoDropTitle = document.getElementById('autoVideoDropTitle');
+const autoVideoDropHint = document.getElementById('autoVideoDropHint');
+
+function syncAutoVideoDropzone() {
+  const file = autoVideoFileInput && autoVideoFileInput.files ? autoVideoFileInput.files[0] : null;
+  if (!autoVideoDropTitle || !autoVideoDropHint) return;
+  autoVideoDropTitle.textContent = file ? file.name : 'Перетащите или выберите видео';
+  autoVideoDropHint.textContent = file ? 'Готово к запуску' : 'Поддерживаются mp4/mov/avi';
+}
+
+if (autoVideoFileInput && autoVideoDropzone) {
+  autoVideoFileInput.addEventListener('change', syncAutoVideoDropzone);
+  ['dragenter', 'dragover'].forEach((eventName) => {
+    autoVideoDropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      autoVideoDropzone.classList.add('drag-over');
+    });
+  });
+  ['dragleave', 'drop'].forEach((eventName) => {
+    autoVideoDropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      autoVideoDropzone.classList.remove('drag-over');
+    });
+  });
+  autoVideoDropzone.addEventListener('drop', (event) => {
+    const file = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files[0] : null;
+    if (!file) return;
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    autoVideoFileInput.files = transfer.files;
+    syncAutoVideoDropzone();
+  });
+  syncAutoVideoDropzone();
+}
+
+const autoFramesZipInput = document.getElementById('autoFramesZip');
+const autoFramesZipDropzone = document.getElementById('autoFramesZipDropzone');
+const autoFramesZipDropTitle = document.getElementById('autoFramesZipDropTitle');
+
+function syncAutoFramesZipDropzone() {
+  const file = autoFramesZipInput && autoFramesZipInput.files ? autoFramesZipInput.files[0] : null;
+  if (autoFramesZipDropTitle) {
+    autoFramesZipDropTitle.textContent = file ? file.name : 'Перетащите или выберите ZIP с кадрами';
+  }
+}
+
+if (autoFramesZipInput && autoFramesZipDropzone) {
+  autoFramesZipInput.addEventListener('change', syncAutoFramesZipDropzone);
+  ['dragenter', 'dragover'].forEach((eventName) => {
+    autoFramesZipDropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      autoFramesZipDropzone.classList.add('drag-over');
+    });
+  });
+  ['dragleave', 'drop'].forEach((eventName) => {
+    autoFramesZipDropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      autoFramesZipDropzone.classList.remove('drag-over');
+    });
+  });
+  autoFramesZipDropzone.addEventListener('drop', (event) => {
+    const file = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files[0] : null;
+    if (!file) return;
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    autoFramesZipInput.files = transfer.files;
+    syncAutoFramesZipDropzone();
+  });
+  syncAutoFramesZipDropzone();
+}
+
+applyAutoChannelAndTab();
+
+/* ---- Plotly initialization ---- */
+function initAutoPlots() {
+  const layout3d = {
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    margin: { l: 0, r: 0, t: 0, b: 0 },
+    scene: {
+      xaxis: { title: 'X', color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.15)' },
+      yaxis: { title: 'Y', color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.15)' },
+      zaxis: { title: 'Z', color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.15)' },
+      bgcolor: 'rgba(12,18,34,0.6)',
+    },
+    showlegend: false,
+  };
+  Plotly.newPlot('autoPlot3d', [{
+    x: [], y: [], z: [],
+    type: 'scatter3d', mode: 'lines+markers',
+    line: { color: '#f97316', width: 4 },
+    marker: { size: 3, color: '#fb923c' },
+  }], layout3d, { displayModeBar: false, responsive: true });
+
+  const flatLayout = (xTitle, yTitle) => ({
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(12,18,34,0.6)',
+    margin: { l: 40, r: 10, t: 8, b: 32 },
+    xaxis: { title: xTitle, color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.12)' },
+    yaxis: { title: yTitle, color: '#94a3b8', gridcolor: 'rgba(148,163,184,0.12)' },
+    showlegend: false,
+  });
+  Plotly.newPlot('autoPlotXY', [{
+    x: [], y: [], mode: 'lines+markers',
+    line: { color: '#22d3ee', width: 2 },
+    marker: { size: 4, color: '#38bdf8' },
+  }], flatLayout('X', 'Y'), { displayModeBar: false, responsive: true });
+  Plotly.newPlot('autoPlotZ', [{
+    x: [], y: [], mode: 'lines',
+    line: { color: '#f97316', width: 2 },
+  }], flatLayout('t, сек', 'Z'), { displayModeBar: false, responsive: true });
+  AUTO.plots.initialized = true;
+}
+
+function resizeAutoPlots() {
+  if (!AUTO.plots.initialized || !window.Plotly) return;
+  ['autoPlot3d', 'autoPlotXY', 'autoPlotZ'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) Plotly.Plots.resize(el);
+  });
+}
+
+function resetAutoPlots() {
+  AUTO.traj = { x: [], y: [], z: [], ts: [] };
+  if (!AUTO.plots.initialized) return;
+  Plotly.restyle('autoPlot3d', { x: [[]], y: [[]], z: [[]] });
+  Plotly.restyle('autoPlotXY', { x: [[]], y: [[]] });
+  Plotly.restyle('autoPlotZ', { x: [[]], y: [[]] });
+}
+
+// Mirror of rescue_ai.domain.geo.relative_to_absolute (x=East, y=North, m).
+function relativeToAbsolute(x, y, originLat, originLon) {
+  const R = 6378137.0, DEG = 180 / Math.PI;
+  const dLat = (y / R) * DEG;
+  const cosLat = Math.cos(originLat * Math.PI / 180);
+  const dLon = Math.abs(cosLat) < 1e-12 ? 0 : (x / (R * cosLat)) * DEG;
+  return { lat: originLat + dLat, lon: originLon + dLon };
+}
+
+function pushTrajectoryPoint(point) {
+  if (!point) return;
+  AUTO.traj.x.push(point.x);
+  AUTO.traj.y.push(point.y);
+  AUTO.traj.z.push(point.z);
+  AUTO.traj.ts.push(point.ts_sec);
+  // When a start point was given, show the live position in absolute coords.
+  const readout = document.getElementById('autoCoordsReadout');
+  if (readout) {
+    if (AUTO.origin) {
+      const c = relativeToAbsolute(point.x, point.y, AUTO.origin.lat, AUTO.origin.lon);
+      readout.textContent = `абс: ${c.lat.toFixed(6)}, ${c.lon.toFixed(6)} · H ${point.z.toFixed(1)} м`;
+    } else {
+      readout.textContent = `отн: x ${point.x.toFixed(1)}, y ${point.y.toFixed(1)} · H ${point.z.toFixed(1)} м`;
+    }
+  }
+  if (!AUTO.plots.initialized) return;
+  Plotly.restyle('autoPlot3d', { x: [AUTO.traj.x], y: [AUTO.traj.y], z: [AUTO.traj.z] });
+  Plotly.restyle('autoPlotXY', { x: [AUTO.traj.x], y: [AUTO.traj.y] });
+  Plotly.restyle('autoPlotZ', { x: [AUTO.traj.ts], y: [AUTO.traj.z] });
+}
+
+/* ---- Event log ---- */
+function autoLog(message) {
+  const box = document.getElementById('autoEventLog');
+  const ts = new Date().toLocaleTimeString('ru-RU');
+  const line = `[${ts}] ${message}`;
+  if (box.textContent === 'Ожидание запуска сессии...' || !box.textContent) {
+    box.textContent = line;
+  } else {
+    box.textContent = `${line}\n${box.textContent}`;
+  }
+}
+
+function setAutoSessionStatus(text) {
+  document.getElementById('autoSessionStatus').textContent = text;
+}
+
+/* ---- Start / stop ---- */
+async function startAutoSession() {
+  if (AUTO.session) {
+    autoLog('Сессия уже активна.');
+    return;
+  }
+  const detector = document.getElementById('autoDetector').value;
+  const navMode = document.getElementById('autoNavMode').value;
+  const fps = parseFloat(document.getElementById('autoFps').value) || 6;
+  const channel = AUTO.nsuChannel || 'local';
+  const stream = channel === 'stream';
+  const detectEnabled = document.getElementById('autoDetectEnabled').checked;
+  const saveVideo = document.getElementById('autoSaveVideo').checked;
+  const demoLoop = document.getElementById('autoDemoLoop').checked;
+
+  const formData = new FormData();
+  formData.append('source_kind', AUTO.sourceKind);
+  formData.append('detector_name', detector);
+  formData.append('nav_mode', navMode);
+  formData.append('fps', String(fps));
+  formData.append('nsu_channel', channel);
+  formData.append('detect_enabled', detectEnabled ? 'true' : 'false');
+  formData.append('save_video', saveVideo ? 'true' : 'false');
+  formData.append('demo_loop', demoLoop ? 'true' : 'false');
+
+  // Optional absolute start point → report/UI switch to geographic coords.
+  const originLatStr = document.getElementById('autoOriginLat').value.trim();
+  const originLonStr = document.getElementById('autoOriginLon').value.trim();
+  AUTO.origin = null;
+  if (originLatStr !== '' || originLonStr !== '') {
+    const oLat = parseFloat(originLatStr), oLon = parseFloat(originLonStr);
+    if (!Number.isFinite(oLat) || !Number.isFinite(oLon)
+        || oLat < -90 || oLat > 90 || oLon < -180 || oLon > 180) {
+      autoLog('Некорректная точка старта: укажите широту [-90;90] и долготу [-180;180].');
+      setAutoSessionStatus('ошибка ввода');
+      return;
+    }
+    formData.append('origin_lat', String(oLat));
+    formData.append('origin_lon', String(oLon));
+    AUTO.origin = { lat: oLat, lon: oLon };
+  }
+
+  if (AUTO.sourceKind === 'video') {
+    if (stream) {
+      const missionId = document.getElementById('autoVideoMission').value;
+      if (!missionId) { autoLog('Выберите миссию RaspberryPi.'); return; }
+      formData.append('rpi_mission_id', missionId);
+    } else {
+      const fileInput = document.getElementById('autoVideoFile');
+      if (!fileInput.files || !fileInput.files[0]) {
+        autoLog('Выберите видео файл.');
+        return;
+      }
+      formData.append('file', fileInput.files[0]);
+    }
+  } else if (AUTO.sourceKind === 'rtsp') {
+    if (stream) { autoLog('RTSP недоступен в потоковом режиме.'); return; }
+    const url = document.getElementById('autoRtspUrl').value.trim();
+    if (!url) { autoLog('Укажите RTSP URL.'); return; }
+    formData.append('source_value', url);
+  } else if (AUTO.sourceKind === 'frames') {
+    if (stream) {
+      const missionId = document.getElementById('autoFramesMission').value;
+      if (!missionId) { autoLog('Выберите миссию RaspberryPi.'); return; }
+      formData.append('rpi_mission_id', missionId);
+    } else if (window.DEPLOYMENT_MODE === 'cloud') {
+      // Cloud: re-run a mission archived in S3 (frames pulled server-side).
+      const ref = document.getElementById('autoS3Mission').value;
+      if (!ref) { autoLog('Выберите миссию в облаке (S3).'); return; }
+      formData.set('source_kind', 's3');
+      formData.append('source_value', ref);
+    } else {
+      // Offline: upload a ZIP of frames (no server-side paths).
+      const zipInput = document.getElementById('autoFramesZip');
+      if (!zipInput.files || !zipInput.files[0]) {
+        autoLog('Выберите ZIP-архив с кадрами.');
+        return;
+      }
+      formData.append('file', zipInput.files[0]);
+    }
+  }
+
+  autoLog('Запуск сессии...');
+  setAutoSessionStatus('запуск...');
+  resetAutoPlots();
+  AUTO.persons = 0;
+  AUTO.alerts = 0;
+  AUTO.dropped = 0;
+  updateAutoChips({});
+
+  try {
+    const resp = await fetch('/auto-sessions/start', { method: 'POST', body: formData });
+    if (!resp.ok) {
+      if (resp.status === 409) {
+        // Single-active-session demo: another mission is running.
+        autoLog('Система сейчас занята другой миссией. Попробуйте позже.');
+        setAutoSessionStatus('занято');
+      } else if (resp.status === 429) {
+        autoLog('Слишком много запросов. Подождите минуту и повторите.');
+        setAutoSessionStatus('лимит запросов');
+      } else {
+        const text = await resp.text();
+        autoLog(`Ошибка ${resp.status}: ${text}`);
+        setAutoSessionStatus('ошибка запуска');
+      }
+      return;
+    }
+    const info = await resp.json();
+    AUTO.session = info;
+    AUTO.lastMissionId = info.mission_id || AUTO.lastMissionId;
+    autoLog(`Сессия ${info.session_id} запущена (mission=${info.mission_id}).`);
+    setAutoSessionStatus('запущена');
+    document.getElementById('autoStartBtn').disabled = true;
+    document.getElementById('autoStopBtn').disabled = false;
+    connectAutoStream(info.session_id);
+  } catch (err) {
+    autoLog(`Сетевая ошибка: ${err}`);
+    setAutoSessionStatus('ошибка сети');
+  }
+}
+
+async function stopAutoSession() {
+  if (!AUTO.session) { autoLog('Нет активной сессии.'); return; }
+  const sessionId = AUTO.session.session_id;
+  autoLog(`Остановка сессии ${sessionId}...`);
+  try {
+    const resp = await fetch(`/auto-sessions/${encodeURIComponent(sessionId)}/stop`, { method: 'POST' });
+    if (!resp.ok) {
+      autoLog(`Ошибка остановки: ${resp.status}`);
+      return;
+    }
+    const data = await resp.json();
+    autoLog(`Сессия остановлена. Кадров: ${data.frames_consumed}, алертов: ${data.alerts_total}.`);
+  } catch (err) {
+    autoLog(`Ошибка остановки: ${err}`);
+  }
+}
+
+function connectAutoStream(sessionId) {
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = `${protocol}://${window.location.host}/auto-sessions/${encodeURIComponent(sessionId)}/stream`;
+  try {
+    AUTO.ws = new WebSocket(wsUrl);
+  } catch (err) {
+    autoLog(`Не удалось открыть WebSocket: ${err}`);
+    return;
+  }
+  AUTO.ws.onopen = () => autoLog('WebSocket подключён.');
+  AUTO.ws.onmessage = (event) => {
+    let msg;
+    try { msg = JSON.parse(event.data); } catch { return; }
+    handleAutoEvent(msg);
+  };
+  AUTO.ws.onclose = () => {
+    autoLog('WebSocket закрыт.');
+    finalizeAutoSession();
+  };
+  AUTO.ws.onerror = () => autoLog('Ошибка WebSocket.');
+}
+
+function handleAutoEvent(msg) {
+  if (!msg || !msg.type) return;
+  if (msg.type === 'ready') {
+    autoLog('Готов к приёму кадров.');
+    return;
+  }
+  if (msg.type === 'frame') {
+    if (msg.frame_jpeg_b64) {
+      const img = document.getElementById('autoVideoImg');
+      img.src = `data:image/jpeg;base64,${msg.frame_jpeg_b64}`;
+      img.classList.add('active');
+      document.getElementById('autoVideoEmpty').style.display = 'none';
+    }
+    AUTO.persons = msg.person_count || 0;
+    AUTO.alerts += (msg.alerts || []).length;
+    if (msg.stats) AUTO.dropped = msg.stats.frames_dropped || AUTO.dropped;
+    pushTrajectoryPoint(msg.trajectory_point);
+    updateAutoChips({
+      frame_id: msg.frame_id,
+      avg_fps: msg.stats ? msg.stats.avg_stream_fps : null,
+      z: msg.trajectory_point ? msg.trajectory_point.z : null,
+      stream_stats: msg.stream_stats || null,
+    });
+    if (msg.alerts && msg.alerts.length) {
+      msg.alerts.forEach(a =>
+        autoLog(`АЛЕРТ frame=${a.frame_id} score=${(a.score || 0).toFixed(2)}`));
+    }
+    return;
+  }
+  if (msg.type === 'done') {
+    autoLog(`Сессия завершена. Всего кадров: ${msg.frames_consumed}, алертов: ${msg.alerts_total}.`);
+    setAutoSessionStatus('завершена');
+    if (msg.mission_id) {
+      AUTO.lastMissionId = msg.mission_id;
+    }
+    if (msg.report && msg.report.mission_id) {
+      renderAutoReport(msg.report);
+    } else if (AUTO.lastMissionId) {
+      loadAutoReport({ silent: true });
+    }
+    finalizeAutoSession();
+    return;
+  }
+  if (msg.type === 'error') {
+    autoLog(`Ошибка: ${msg.message || '—'}`);
+    setAutoSessionStatus('ошибка');
+    return;
+  }
+}
+
+function updateAutoChips(partial) {
+  document.getElementById('autoChipPeople').textContent = String(AUTO.persons);
+  document.getElementById('autoChipAlerts').textContent = String(AUTO.alerts);
+  document.getElementById('autoChipDropped').textContent = String(AUTO.dropped);
+  if (partial.frame_id !== undefined && partial.frame_id !== null) {
+    document.getElementById('autoChipFrameId').textContent = String(partial.frame_id);
+  }
+  if (partial.avg_fps !== undefined && partial.avg_fps !== null) {
+    document.getElementById('autoChipAvgFps').textContent = Number(partial.avg_fps).toFixed(2);
+  }
+  if (partial.z !== undefined && partial.z !== null) {
+    document.getElementById('autoChipZ').textContent = Number(partial.z).toFixed(2);
+  }
+  if (partial.stream_stats && typeof partial.stream_stats === 'object') {
+    const ss = partial.stream_stats;
+    const rpiFps = ss.avg_emit_fps != null
+      ? ss.avg_emit_fps
+      : (ss.target_fps != null ? ss.target_fps : null);
+    if (rpiFps != null && !Number.isNaN(Number(rpiFps))) {
+      document.getElementById('autoChipRpiFps').textContent = Number(rpiFps).toFixed(2);
+    }
+    const rpiDropped = ss.frames_dropped != null ? ss.frames_dropped : null;
+    if (rpiDropped != null) {
+      document.getElementById('autoChipRpiDropped').textContent = String(rpiDropped);
+    }
+  }
+}
+
+function finalizeAutoSession() {
+  AUTO.session = null;
+  if (AUTO.ws) {
+    try { AUTO.ws.close(); } catch {}
+    AUTO.ws = null;
+  }
+  document.getElementById('autoStartBtn').disabled = false;
+  document.getElementById('autoStopBtn').disabled = true;
+}
+
+async function refreshActiveAutoSession() {
+  try {
+    const resp = await fetch('/auto-sessions/active');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data.running && data.session_id) {
+      AUTO.session = {
+        session_id: data.session_id,
+        mission_id: data.mission_id,
+      };
+      AUTO.lastMissionId = data.mission_id || AUTO.lastMissionId;
+      setAutoSessionStatus('активна (переподключение)');
+      autoLog(`Обнаружена активная сессия ${data.session_id}. Подключаемся...`);
+      document.getElementById('autoStartBtn').disabled = true;
+      document.getElementById('autoStopBtn').disabled = false;
+      if (!AUTO.ws) connectAutoStream(data.session_id);
+    } else {
+      setAutoSessionStatus('не запущено');
+    }
+  } catch (err) {
+    // Auto mode may not be configured — that's fine.
+  }
+}
+
+function setReportCell(id, value, formatter) {
+  const cell = document.getElementById(id);
+  if (!cell) return;
+  if (value === undefined || value === null || value === '') {
+    cell.textContent = '—';
+    return;
+  }
+  cell.textContent = formatter ? formatter(value) : String(value);
+}
+
+function renderAutoReport(report) {
+  if (!report || typeof report !== 'object') return;
+  const card = document.getElementById('autoReportCard');
+  card.style.display = '';
+  setReportCell('arMissionId', report.mission_id);
+  setReportCell('arStatus', report.status);
+  setReportCell('arSource', report.source_name);
+  setReportCell('arFps', report.fps, v => Number(v).toFixed(2));
+  setReportCell('arFrames', report.frames_processed);
+  setReportCell('arAlerts', report.alerts_total);
+  const traj = report.trajectory || {};
+  setReportCell('arPoints', traj.points_total);
+  const coordSys = (traj.coordinate_system === 'absolute' && traj.origin)
+    ? `абсолютные (старт ${Number(traj.origin.lat).toFixed(6)}, ${Number(traj.origin.lon).toFixed(6)})`
+    : 'относительные (метры от старта)';
+  setReportCell('arCoordSystem', coordSys);
+  setReportCell('arDuration', traj.duration_sec, v => Number(v).toFixed(2));
+  const decisions = report.decisions || {};
+  const decisionEntries = Object.entries(decisions);
+  setReportCell(
+    'arDecisions',
+    decisionEntries.length
+      ? decisionEntries.map(([k, v]) => `${k}: ${v}`).join(', ')
+      : null,
+  );
+  setReportCell('arGeneratedAt', report.generated_at);
+
+  const mid = report.mission_id || AUTO.lastMissionId;
+  if (mid) {
+    const csvLink = document.getElementById('arDownloadCsv');
+    csvLink.href = `/auto-missions/${encodeURIComponent(mid)}/trajectory.csv`;
+    const jsonLink = document.getElementById('arDownloadJson');
+    jsonLink.href = `/auto-missions/${encodeURIComponent(mid)}/report`;
+
+    const img = document.getElementById('arPlotImg');
+    const empty = document.getElementById('arPlotEmpty');
+    img.onload = () => { img.style.display = ''; empty.style.display = 'none'; };
+    img.onerror = () => { img.style.display = 'none'; empty.style.display = ''; };
+    img.src = `/auto-missions/${encodeURIComponent(mid)}/trajectory-plot.png?ts=${Date.now()}`;
+  }
+}
+
+async function loadAutoReport(options = {}) {
+  const mid = AUTO.lastMissionId;
+  if (!mid) {
+    if (!options.silent) autoLog('Нет завершённой миссии для отчёта.');
+    return;
+  }
+  if (!options.silent) autoLog(`Загружаем отчёт миссии ${mid}...`);
+  try {
+    const resp = await fetch(`/auto-missions/${encodeURIComponent(mid)}/report`);
+    if (!resp.ok) {
+      autoLog(`Ошибка загрузки отчёта (${resp.status}).`);
+      return;
+    }
+    const report = await resp.json();
+    renderAutoReport(report);
+    if (!options.silent) autoLog('Отчёт загружен.');
+  } catch (err) {
+    autoLog(`Сетевая ошибка отчёта: ${err}`);
+  }
+}
+
+document.getElementById('autoStartBtn').addEventListener('click', startAutoSession);
+document.getElementById('autoStopBtn').addEventListener('click', stopAutoSession);
+document.getElementById('autoReportBtn').addEventListener('click', () => loadAutoReport());
 </script>
 </body>
 </html>

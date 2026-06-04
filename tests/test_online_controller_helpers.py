@@ -14,14 +14,16 @@ from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.config import (
     ApiSettings,
     AppSettings,
+    AutoStreamSettings,
     DatabaseSettings,
     DetectionSettings,
     RpiSettings,
     Settings,
     StorageSettings,
+    UploadSettings,
 )
-from rescue_ai.domain.entities import Detection
-from rescue_ai.domain.value_objects import AlertRuleConfig
+from rescue_ai.domain.entities import Detection, TrajectoryPoint
+from rescue_ai.domain.value_objects import AlertRuleConfig, TrajectorySource
 from rescue_ai.interfaces.cli import online as online_main
 from tests.support.in_memory_repositories import (
     InMemoryAlertRepository,
@@ -29,6 +31,7 @@ from tests.support.in_memory_repositories import (
     InMemoryDatabase,
     InMemoryFrameEventRepository,
     InMemoryMissionRepository,
+    InMemoryTrajectoryRepository,
 )
 
 
@@ -61,7 +64,7 @@ class _FakePilotService:
 
 
 class _FakeDetector:
-    def detect(self, image_uri: str) -> list[Detection]:
+    def detect(self, image_uri: object) -> list[Detection]:
         _ = image_uri
         return []
 
@@ -72,8 +75,33 @@ class _FakeDetector:
         return "fake"
 
 
+class _FakeNavigationEngine:
+    def __init__(self) -> None:
+        self.reset_calls: list[tuple[object, object]] = []
+        self.closed = False
+
+    def reset(self, *, nav_mode=None, fps=None) -> None:
+        self.reset_calls.append((nav_mode, fps))
+
+    def step(self, frame_bgr, ts_sec: float, frame_id: int | None = None):
+        _ = frame_bgr
+        return TrajectoryPoint(
+            mission_id="nav-session",
+            seq=99,
+            ts_sec=ts_sec,
+            x=1.0,
+            y=2.0,
+            z=3.0,
+            source=TrajectorySource.OPTICAL_FLOW,
+            frame_id=frame_id,
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class _TypeErrorDetector:
-    def detect(self, image_uri: str) -> list[Detection]:
+    def detect(self, image_uri: object) -> list[Detection]:
         if isinstance(image_uri, str):
             return []
         raise TypeError("source must be string")
@@ -136,6 +164,8 @@ def _settings() -> Settings:
             RPI_RTSP_PATH_PREFIX="live",
         ),
         detection=DetectionSettings(),
+        uploads=UploadSettings(),
+        auto_stream=AutoStreamSettings(),
     )
 
 
@@ -245,6 +275,44 @@ def test_process_frame_updates_counters(monkeypatch, tmp_path) -> None:
     assert ctx.frame_id == 1
     assert state.processed_frames == 1
     assert state.alerts_created == 1
+
+
+def test_process_frame_persists_operator_trajectory(monkeypatch, tmp_path) -> None:
+    nav = _FakeNavigationEngine()
+    trajectory_repo = InMemoryTrajectoryRepository()
+    controller = online_main.DetectionStreamController(
+        _settings(),
+        pilot_service=_pilot_service(),
+        detector=_FakeDetector(),
+        navigation_factory=lambda _mission_id: nav,
+        trajectory_repository=trajectory_repo,
+    )
+    state = _state()
+    ctx = online_main._LoopContext(
+        mission_id="m1",
+        state=state,
+        stop_event=threading.Event(),
+        target_fps=2.0,
+        frame_interval=0.5,
+        gt_tracker=online_main._GtTracker(sequence=[False]),
+        source_filenames=None,
+        capture=_FakeCapture([np.zeros((2, 2, 3), dtype=np.uint8)]),
+        tmp_dir=tmp_path,
+        navigation_engine=nav,
+        trajectory_repository=trajectory_repo,
+    )
+    monkeypatch.setattr(controller, "_detect_frame_or_empty", lambda **kwargs: [])
+    monkeypatch.setattr(controller, "_ingest_event", lambda **kwargs: None)
+
+    controller._process_frame(ctx, np.zeros((2, 2, 3), dtype=np.uint8))
+
+    stored = trajectory_repo.list_by_mission("m1")
+    assert len(stored) == 1
+    assert stored[0].mission_id == "m1"
+    assert stored[0].seq == 1
+    assert stored[0].frame_id == 0
+    assert state.trajectory_points == 1
+    assert controller.list_trajectory("m1") == stored
 
 
 def test_ingest_event_updates_error_on_failure() -> None:
@@ -446,6 +514,7 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
         config_hash = "hash"
         config_path = "configs/test.yaml"
         service_version = "dev"
+        dataset_fps = 6.0
         inference = _Inference()
         alert_rules = AlertRuleConfig(0.5, 1.0, 1, 0.0, 1.0, 1.0, 1.0)
 
@@ -461,6 +530,7 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
             InMemoryAlertRepository(db),
             InMemoryFrameEventRepository(db),
             lambda: None,
+            None,
         ),
     )
     monkeypatch.setattr(
@@ -474,15 +544,24 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
 
     monkeypatch.setattr(online_main, "_build_detector", _build_detector)
 
-    pilot_service, stream_controller, reset_hook, detector, artifact_storage = (
-        online_main.build_api_runtime()
-    )
+    (
+        pilot_service,
+        stream_controller,
+        reset_hook,
+        detector,
+        artifact_storage,
+        auto_mission_service,
+        auto_session_manager,
+    ) = online_main.build_api_runtime()
 
     assert pilot_service is not None
     assert stream_controller is not None
     assert callable(reset_hook)
     assert detector is not None
     assert artifact_storage is not None
+    # auto_mission_service is None because _build_repositories returned no auto_repos.
+    assert auto_mission_service is None
+    assert auto_session_manager is None
 
     calls: dict[str, object] = {}
     monkeypatch.setattr(
@@ -499,6 +578,8 @@ def test_build_api_runtime_and_main(monkeypatch) -> None:
             reset_hook,
             detector,
             artifact_storage,
+            auto_mission_service,
+            auto_session_manager,
         ),
     )
     monkeypatch.setattr(

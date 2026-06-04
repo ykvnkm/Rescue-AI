@@ -1,0 +1,65 @@
+{{- if .Values.grafana.enabled }}
+# Datasource — указывает на наш Prometheus по FQDN ClusterIP-сервиса.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "obs.grafana.name" . }}-datasources
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: grafana
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: PBFA97CFB590B2093
+        type: prometheus
+        access: proxy
+        url: http://{{ include "obs.prometheus.name" . }}.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.prometheus.service.port }}
+        isDefault: true
+        editable: false
+---
+# Provisioning: какие папки с JSON-дашбордами подгружать.
+# В k8s в каждый Grafana-pod монтируется ровно одна папка —
+# соответствующая .Values.contour. Это отличает k8s от docker-compose,
+# где смонтированы обе папки (для удобства одновременных скриншотов).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "obs.grafana.name" . }}-provisioning
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: grafana
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: rescue-ai-{{ .Values.contour }}
+        type: file
+        folder: Rescue-AI · {{ eq .Values.contour "station" | ternary "Станция" "Центр" }}
+        disableDeletion: false
+        editable: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards
+---
+# Dashboards — JSON файлы из files/grafana/dashboards/<contour>/.
+# Каждый файл становится отдельным ключом ConfigMap'а; Grafana читает
+# их через provisioning-провайдер выше.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "obs.grafana.name" . }}-dashboards
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: grafana
+data:
+  {{- $contour := .Values.contour }}
+  {{- range $path, $_ := .Files.Glob (printf "files/grafana/dashboards/%s/*.json" $contour) }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+  {{- end }}
+{{- end }}

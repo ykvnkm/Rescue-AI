@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from rescue_ai.application.inference_config import InferenceConfig
-from rescue_ai.infrastructure.yolo_detector import YoloDetector
+from rescue_ai.infrastructure.detectors.yolo_detector import YoloDetector
 
 np = __import__("pytest").importorskip("numpy")
 
@@ -35,7 +35,8 @@ def _fake_result(
 
 def test_yolo_detector_detect(monkeypatch) -> None:
     config = InferenceConfig(
-        model_url="http://example.com/model.pt",
+        runtime="pt",
+        pt_model_url="http://example.com/model.pt",
         device="cpu",
         imgsz=960,
         nms_iou=0.75,

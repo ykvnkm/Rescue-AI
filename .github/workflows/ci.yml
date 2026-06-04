@@ -48,8 +48,31 @@ jobs:
       - name: Run pylint
         run: uv run pylint rescue_ai tests scripts
 
-      - name: Compile-check Airflow DAGs
-        run: python -m py_compile infra/airflow/dags/rescue_batch_daily.py
+      - name: Import-check Airflow DAGs
+        # py_compile проверяет только синтаксис и не запускает код модуля,
+        # поэтому, например, ошибочный BaseHook.get_connection(...) на
+        # уровне модуля DAG не отловится. Поднимаем настоящий Airflow
+        # окружением (in-memory SQLite — достаточно для парсинга DAG-файла),
+        # импортируем DAG и проверяем, что объект rescue_batch_pipeline
+        # действительно зарегистрирован.
+        env:
+          AIRFLOW_HOME: /tmp/airflow-home
+          AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+          AIRFLOW__CORE__UNIT_TEST_MODE: "true"
+          AIRFLOW_CONN_RESCUE_APP_DB: "postgresql://test:test@localhost:5432/rescue_test"
+          AIRFLOW_CONN_RESCUE_S3: '{"conn_type":"aws","login":"x","password":"x","extra":{"endpoint_url":"http://localhost:9000","region_name":"us-east-1","bucket":"b","prefix":"p"}}'
+        run: |
+          uv pip install \
+              "apache-airflow==2.9.3" \
+              "apache-airflow-providers-cncf-kubernetes==8.3.3" \
+              --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.3/constraints-3.12.txt"
+          uv run airflow db migrate
+          uv run python - <<'PY'
+          from airflow.models.dagbag import DagBag
+          bag = DagBag(dag_folder="infra/airflow/dags", include_examples=False)
+          assert not bag.import_errors, bag.import_errors
+          assert "rescue_batch_pipeline" in bag.dags, list(bag.dags)
+          PY
 
   test:
     runs-on: ubuntu-latest
@@ -82,7 +105,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra batch --extra postgres
+        run: uv sync --extra dev
 
       - name: Run tests
         run: uv run pytest --cov=rescue_ai --cov-report=term-missing --cov-fail-under=70

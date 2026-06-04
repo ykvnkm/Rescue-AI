@@ -1,0 +1,109 @@
+replicaCount: 1
+
+# Чарт включается только в offline-профиле (наземная станция).
+# Umbrella-чарт ставит enabled=true только в offline.yaml.
+enabled: false
+
+image:
+  repository: rescue-ai-sync-worker
+  pullPolicy: IfNotPresent
+  tag: "local"
+
+deployment:
+  logLevel: INFO
+  appEnv: field
+  serviceVersion: dev
+
+# hostNetwork даёт воркеру сетевой namespace ноды — нужно на станциях, где
+# masquerade'нутый egress подовой сети до УДАЛЁННОГО Postgres/S3 режется по
+# пути, а host-стек ноды до него доходит. По умолчанию выключено; включается
+# в offline.yaml при такой топологии. dnsPolicy переключается автоматически.
+hostNetwork:
+  enabled: false
+
+# Тюнинг sync-worker — мапится 1:1 на DEPLOYMENT_SYNC_* env-vars.
+sync:
+  batchSize: 50
+  intervalSec: 10
+  maxAttempts: 10
+  processingTimeoutSec: 120
+
+# Источник секретов — те же варианты, что у API. См. rescue-ai-api/values.yaml.
+secrets:
+  source: kube
+  kube:
+    existingSecret: ""
+    inline:
+      DB_DSN: ""
+      DEPLOYMENT_REMOTE_DB_DSN: ""
+      DEPLOYMENT_REMOTE_S3_ACCESS_KEY_ID: ""
+      DEPLOYMENT_REMOTE_S3_SECRET_ACCESS_KEY: ""
+  vault:
+    role: rescue-ai-sync-worker
+    secretPath: rescue-ai/sync-worker
+
+config:
+  remoteS3:
+    endpoint: ""
+    region: ru-central1
+    bucket: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# sync-worker — CLI-loop без HTTP. Probe через exec: проверяем, что
+# процесс выполняется. Без probe k8s не заметит livelock loop'а.
+probes:
+  liveness:
+    exec:
+      command:
+        - /bin/sh
+        - -c
+        - "pgrep -f sync_worker.run_service >/dev/null"
+    periodSeconds: 30
+    failureThreshold: 3
+  # readiness не задаём — sync-worker не служит trafic'у;
+  # «готовность» = «жив», и для этого достаточно liveness.
+
+# При SIGTERM воркер успевает закрыть текущий outbox-батч.
+# processingTimeoutSec выше = 120s, поэтому даём с запасом.
+terminationGracePeriodSeconds: 150
+lifecycle: {}   # нет HTTP-эндпоинта — preStop sleep не нужен
+
+# Init-контейнер ждёт локальную Postgres (offline). На станции
+# Postgres поднимается рядом и инициализируется ~30 секунд.
+initContainers:
+  waitForPostgres:
+    enabled: true
+    image: postgres:16-alpine
+    timeoutSec: 180
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 0   # для 1 реплики drain заблокируется — но это
+                      # то, что нужно: sync-worker нельзя терять при
+                      # drain ноды, иначе outbox разъедется.
+
+networkPolicy:
+  enabled: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

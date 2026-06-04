@@ -1,0 +1,16 @@
+{{- if .Values.createNamespace }}
+# Namespace создаётся самим Helm-релизом для declarative полного
+# управления контуром через `helm install`. Если оператор уже создал
+# namespace через kubectl — установи createNamespace=false в values,
+# чтобы Helm не пытался его перезаписать.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "rescue-batch.labels" . | nindent 4 }}
+    # Label для kubernetes.io/metadata.name — это стандартный селектор
+    # в NetworkPolicy для namespaceSelector. k8s обычно ставит его сам,
+    # но дублируем явно для cases когда namespace создан до v1.21.
+    kubernetes.io/metadata.name: {{ .Values.namespace | quote }}
+{{- end }}

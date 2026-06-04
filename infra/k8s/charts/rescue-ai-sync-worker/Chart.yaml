@@ -1,0 +1,10 @@
+apiVersion: v2
+name: rescue-ai-sync-worker
+description: |
+  Offline-profile sync-worker (ADR-0007 §3). Дрейнит local
+  replication_outbox в remote Postgres + S3 при наличии связи.
+  Включается только при profile=offline в umbrella values;
+  в cloud-профиле принимающая сторона, sync-worker не нужен.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

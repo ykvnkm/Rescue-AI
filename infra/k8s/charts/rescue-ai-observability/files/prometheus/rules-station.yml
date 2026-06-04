@@ -1,0 +1,56 @@
+# Правила алертинга Prometheus для **наземной станции** (offline).
+#
+# Содержат только операционные правила: задержки, доступность
+# бортового модуля, технические сбои детектора. ML-качества и
+# дрейф здесь не отслеживаются — для этого нужен аккумулированный
+# набор миссий, который доступен только в центральном кластере
+# (см. rules-central.yml).
+#
+# Пороги взяты из раздела 2.7 пояснительной записки.
+
+groups:
+  - name: rescue-ai-realtime
+    interval: 30s
+    rules:
+      - alert: InferenceP95Slow
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, model) (rate(rescue_ai_inference_duration_seconds_bucket[5m]))
+          ) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+          contour: realtime
+        annotations:
+          summary: "p95 времени запуска модели выше 0.2 с"
+          description: |
+            p95-задержка модели {{ printf "%.3f" $value }} с дольше 5
+            минут превышает порог 0.2 с. Возможна перегрузка сервиса
+            обнаружения или проблема с источником кадров.
+
+      - alert: RpiConnectivityLost
+        expr: rescue_ai_rpi_connectivity_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          contour: realtime
+        annotations:
+          summary: "Потеря связи с бортовым модулем Raspberry Pi"
+          description: |
+            Связь с бортовым модулем отсутствует более 30 секунд.
+            Миссия не может получать кадры и должна быть приостановлена
+            оператором.
+
+      - alert: DetectorRuntimeErrors
+        expr: |
+          increase(rescue_ai_detector_errors_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          contour: realtime
+        annotations:
+          summary: "Ошибки запуска модели обнаружения в реальном времени"
+          description: |
+            За последние 5 минут модель обнаружения дала сбой
+            {{ $value }} раз. Проверить логи rescue-ai-detection.

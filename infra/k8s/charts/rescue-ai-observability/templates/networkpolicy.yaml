@@ -1,0 +1,160 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default-deny + явные allow для namespace `monitoring` (CIS K8s
+# Benchmark §5.3.2). Ingress только из явно разрешённых namespace-ов,
+# egress — только туда, куда нужно scrape'ить и отправлять алерты.
+
+# (1) Default-deny: всё закрыто.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-default-deny
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# (2) DNS — иначе резолв kubernetes.default.svc / FQDN не работает.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-allow-dns
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# (3) Prometheus → rescue-ai (api/detection/nav-engine /metrics).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-prom-scrape-app
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.prometheus.scrape.appNamespace }}
+      ports:
+        - port: 8000          # api
+          protocol: TCP
+        - port: 8001          # nav-engine
+          protocol: TCP
+        - port: 8002          # detection
+          protocol: TCP
+{{- if eq .Values.contour "central" }}
+---
+# (4) Prometheus → rescue-batch batch-exporter (только в cloud).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-prom-scrape-batch
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.prometheus.scrape.batchNamespace }}
+      ports:
+        - port: 8003
+          protocol: TCP
+{{- end }}
+---
+# (5) Prometheus → Alertmanager (внутри namespace).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-prom-to-alertmanager
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 9093
+          protocol: TCP
+---
+# (6) Grafana ← запросы пользователя (через Ingress controller или
+# port-forward; на этапе дипломки разрешаем весь ingress на 3000).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-grafana-ingress
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 3000
+          protocol: TCP
+---
+# (7) Grafana → Prometheus (для datasource-запросов).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-grafana-to-prom
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 9090
+          protocol: TCP
+{{- end }}

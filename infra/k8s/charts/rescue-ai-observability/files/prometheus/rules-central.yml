@@ -1,0 +1,123 @@
+# Правила алертинга Prometheus для **центрального кластера** (cloud).
+#
+# В центральном кластере выполняются собственные миссии (стендовые,
+# потоковые, демонстрационные), поэтому включён полный набор
+# операционных правил, идентичный rules-station.yml. Дополнительно
+# присутствуют правила качества модели и дрейфа данных, которые
+# имеют смысл только над аккумулированным корпусом миссий со всех
+# станций.
+#
+# Пороги взяты из раздела 2.7 пояснительной записки.
+
+groups:
+  # ── Операционные правила (те же, что и на станции). ──
+  - name: rescue-ai-realtime
+    interval: 30s
+    rules:
+      - alert: InferenceP95Slow
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, model) (rate(rescue_ai_inference_duration_seconds_bucket[5m]))
+          ) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+          contour: realtime
+        annotations:
+          summary: "p95 времени запуска модели выше 0.2 с"
+          description: |
+            p95-задержка модели {{ printf "%.3f" $value }} с дольше 5
+            минут превышает порог 0.2 с. Возможна перегрузка сервиса
+            обнаружения или проблема с источником кадров.
+
+      - alert: RpiConnectivityLost
+        expr: rescue_ai_rpi_connectivity_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          contour: realtime
+        annotations:
+          summary: "Потеря связи с бортовым модулем Raspberry Pi"
+          description: |
+            Связь с бортовым модулем отсутствует более 30 секунд.
+            Миссия не может получать кадры и должна быть приостановлена
+            оператором.
+
+      - alert: DetectorRuntimeErrors
+        expr: |
+          increase(rescue_ai_detector_errors_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          contour: realtime
+        annotations:
+          summary: "Ошибки запуска модели обнаружения в реальном времени"
+          description: |
+            За последние 5 минут модель обнаружения дала сбой
+            {{ $value }} раз. Проверить логи rescue-ai-detection.
+
+  # ── Качество модели (только в центральном кластере). ──
+  - name: rescue-ai-model-quality
+    interval: 1m
+    rules:
+      - alert: BatchRecallBelowTarget
+        expr: rescue_ai_batch_recall < 0.90
+        for: 5m
+        labels:
+          severity: warning
+          contour: batch
+        annotations:
+          summary: "Полнота обнаружения ниже целевого уровня 0.90"
+          description: |
+            Покадровая полнота {{ printf "%.3f" $value }} опустилась ниже
+            целевого значения 0.90. Проверить последний прогон batch-DAG
+            и состояние датасета.
+
+      - alert: BatchRecallCriticallyLow
+        expr: rescue_ai_batch_recall < 0.85
+        for: 5m
+        labels:
+          severity: critical
+          contour: batch
+        annotations:
+          summary: "Критическая деградация полноты обнаружения"
+          description: |
+            Полнота обнаружения {{ printf "%.3f" $value }} опустилась
+            ниже жёсткого порога 0.85. Возможна деградация модели или
+            существенное смещение данных.
+
+      - alert: BatchDetectorErrors
+        expr: rescue_ai_batch_detector_errors > 0
+        for: 0m
+        labels:
+          severity: warning
+          contour: batch
+        annotations:
+          summary: "Технические сбои инференса в последнем batch-прогоне"
+          description: |
+            На последнем batch-прогоне модель не смогла обработать
+            {{ $value }} кадров. Проверить логи DAG и состояние
+            окружения инференса.
+
+  # ── Дрейф данных (только в центральном кластере). ──
+  - name: rescue-ai-drift
+    interval: 5m
+    rules:
+      - alert: InputDistributionDrift
+        # Критерий дрейфа (2.12) пояснительной записки: PSI > 0.2 либо
+        # CSI любого контролируемого признака превышает 0.2.
+        expr: |
+          rescue_ai_drift_psi_score > 0.2
+          or
+          max(rescue_ai_drift_csi) > 0.2
+        for: 15m
+        labels:
+          severity: warning
+          contour: drift
+        annotations:
+          summary: "Значимый дрейф распределения входных данных"
+          description: |
+            Зафиксирован выход PSI или CSI выше порога 0.2 более 15
+            минут. Проверить условия эксплуатации (высота полёта, угол
+            камеры, время суток, освещённость, рельеф).

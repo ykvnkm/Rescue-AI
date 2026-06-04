@@ -5,10 +5,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+from typing import Any
 
 import httpx
 
-from rescue_ai.config import RpiSettings
+from rescue_ai.config import RpiSettings, SecuritySettings
 
 
 @dataclass(frozen=True)
@@ -40,26 +41,108 @@ class RpiStreamSession:
 class RpiClient:
     """Communicates with the RPi source service over HTTP."""
 
-    def __init__(self, settings: RpiSettings) -> None:
+    def __init__(
+        self,
+        settings: RpiSettings,
+        security: SecuritySettings | None = None,
+    ) -> None:
         self._base_url = settings.base_url.rstrip("/")
         self._missions_dir = settings.missions_dir.strip()
         self._rtsp_port = settings.rtsp_port
         self._rtsp_path_prefix = settings.rtsp_path_prefix
+        # mTLS material is forwarded to httpx as ``verify=ca_path`` and
+        # ``cert=(crt, key)``. ``None``/empty disables both — preserving
+        # cloud-mode HTTP behaviour.
+        self._verify: str | bool = True
+        self._cert: tuple[str, str] | None = None
+        if security is not None and security.tls_mode == "mtls":
+            self._verify = security.ca_cert_path
+            self._cert = (security.client_cert_path, security.client_key_path)
+
+    @property
+    def tls_verify(self) -> str | bool:
+        """CA bundle path (mTLS) or ``True`` for default verification.
+
+        Exposed so a sibling transport (HTTP MJPEG fallback decoded outside
+        httpx) can reuse the same trust material for its own connection.
+        """
+        return self._verify
+
+    @property
+    def tls_cert(self) -> tuple[str, str] | None:
+        """Client ``(cert, key)`` pair for mTLS, or ``None`` in cloud/HTTP."""
+        return self._cert
+
+    def _http_get(
+        self,
+        url: str,
+        *,
+        timeout_sec: float,
+        params: (
+            dict[
+                str,
+                str | int | float | bool | None | list[str | int | float | bool | None],
+            ]
+            | None
+        ) = None,
+    ) -> httpx.Response:
+        if self._cert is None:
+            if params is None:
+                return httpx.get(url, timeout=timeout_sec)
+            return httpx.get(url, timeout=timeout_sec, params=params)
+        if params is None:
+            return httpx.get(
+                url,
+                timeout=timeout_sec,
+                verify=self._verify,
+                cert=self._cert,
+            )
+        return httpx.get(
+            url,
+            timeout=timeout_sec,
+            params=params,
+            verify=self._verify,
+            cert=self._cert,
+        )
+
+    def _http_post(
+        self,
+        url: str,
+        *,
+        timeout_sec: float,
+        json: dict[str, Any] | None = None,
+    ) -> httpx.Response:
+        if self._cert is None:
+            return httpx.post(url, timeout=timeout_sec, json=json)
+        return httpx.post(
+            url,
+            timeout=timeout_sec,
+            json=json,
+            verify=self._verify,
+            cert=self._cert,
+        )
 
     def health(self, timeout_sec: float = 5.0) -> dict[str, object]:
         """Check RPi service health. Raises on connection failure."""
-        response = httpx.get(
-            f"{self._base_url}/health",
-            timeout=timeout_sec,
-        )
-        response.raise_for_status()
+        from rescue_ai.application.metrics import RPI_CONNECTIVITY_UP
+
+        try:
+            response = self._http_get(
+                f"{self._base_url}/health",
+                timeout_sec=timeout_sec,
+            )
+            response.raise_for_status()
+        except Exception:
+            RPI_CONNECTIVITY_UP.set(0)
+            raise
+        RPI_CONNECTIVITY_UP.set(1)
         return response.json()
 
     def catalog(self, timeout_sec: float = 10.0) -> RpiCatalog:
         """Fetch the mission catalog from RPi."""
-        response = httpx.get(
+        response = self._http_get(
             f"{self._base_url}/mission/catalog",
-            timeout=timeout_sec,
+            timeout_sec=timeout_sec,
         )
         response.raise_for_status()
         data = response.json()
@@ -83,8 +166,9 @@ class RpiClient:
     ) -> RpiStreamSession:
         """Start a streaming session on the RPi."""
         mission_path = self._resolve_mission_path(mission_id=mission_id)
-        response = httpx.post(
+        response = self._http_post(
             f"{self._base_url}/source/start",
+            timeout_sec=timeout_sec,
             json={
                 "mode": "frames",
                 "source": mission_path,
@@ -93,7 +177,6 @@ class RpiClient:
                 "loop": False,
                 "target_fps": target_fps,
             },
-            timeout=timeout_sec,
         )
         if response.status_code == 404:
             raise ValueError(f"RPi mission not found: {mission_id}")
@@ -134,9 +217,9 @@ class RpiClient:
         self, session_id: str, timeout_sec: float = 10.0
     ) -> dict[str, object]:
         """Stop an active streaming session."""
-        response = httpx.post(
+        response = self._http_post(
             f"{self._base_url}/source/stop/{session_id}",
-            timeout=timeout_sec,
+            timeout_sec=timeout_sec,
         )
         response.raise_for_status()
         return response.json()
@@ -145,9 +228,9 @@ class RpiClient:
         self, session_id: str, timeout_sec: float = 5.0
     ) -> dict[str, object]:
         """Get statistics for an active session."""
-        response = httpx.get(
+        response = self._http_get(
             f"{self._base_url}/source/session/{session_id}",
-            timeout=timeout_sec,
+            timeout_sec=timeout_sec,
         )
         response.raise_for_status()
         return response.json()
@@ -180,10 +263,10 @@ class RpiClient:
         if mission is None or not mission.annotations_json:
             return None
 
-        response = httpx.get(
+        response = self._http_get(
             f"{self._base_url}/source/raw_file",
+            timeout_sec=timeout_sec,
             params={"path": mission.annotations_json},
-            timeout=timeout_sec,
         )
         response.raise_for_status()
         payload = response.json()

@@ -1,0 +1,9 @@
+dependencies:
+- name: airflow
+  repository: https://airflow.apache.org
+  version: 1.15.0
+- name: rescue-ai-batch-exporter
+  repository: file://../rescue-ai-batch-exporter
+  version: 0.1.0
+digest: sha256:eef7357277d815e04d4540f3342a19f48cb9bbebb54cb2c7d424b020e937c7d1
+generated: "2026-06-04T13:31:27.721406+03:00"

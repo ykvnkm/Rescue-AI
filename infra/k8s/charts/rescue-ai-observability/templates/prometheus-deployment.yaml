@@ -1,0 +1,121 @@
+{{- if .Values.prometheus.enabled }}
+# Prometheus standalone. Одна реплика (для дипломной нагрузки достаточно).
+# PVC хранит tsdb; retention управляется через --storage.tsdb.retention.time.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "obs.prometheus.name" . }}
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: prometheus
+---
+{{- if .Values.prometheus.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "obs.prometheus.name" . }}-data
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: prometheus
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.prometheus.persistence.size | quote }}
+  {{- if .Values.prometheus.persistence.storageClass }}
+  storageClassName: {{ .Values.prometheus.persistence.storageClass | quote }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "obs.prometheus.name" . }}
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: prometheus
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate            # PVC RWO — нельзя двум подам параллельно
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "obs.labels" . | nindent 8 }}
+        app.kubernetes.io/name: prometheus
+      annotations:
+        # Rolling restart при изменении конфига:
+        checksum/config: {{ include (print $.Template.BasePath "/prometheus-configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "obs.prometheus.name" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534      # nobody — это пользователь по умолчанию в prom/prometheus
+        fsGroup: 65534
+      containers:
+        - name: prometheus
+          image: "{{ .Values.prometheus.image.repository }}:{{ .Values.prometheus.image.tag }}"
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time={{ .Values.prometheus.retentionTime }}
+            - --web.console.libraries=/usr/share/prometheus/console_libraries
+            - --web.console.templates=/usr/share/prometheus/consoles
+          ports:
+            - name: http
+              containerPort: 9090
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+          livenessProbe:
+            httpGet: { path: /-/healthy, port: http }
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /-/ready, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.prometheus.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "obs.prometheus.name" . }}-config
+        - name: data
+          {{- if .Values.prometheus.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "obs.prometheus.name" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "obs.prometheus.name" . }}
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: prometheus
+spec:
+  type: {{ .Values.prometheus.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.prometheus.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

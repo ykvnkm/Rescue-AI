@@ -1,0 +1,21 @@
+{{- if .Values.alertmanager.enabled }}
+# ConfigMap c alertmanager.yml.
+#
+# Содержимое берётся из files/alertmanager/. По умолчанию используется
+# alertmanager.local.yml (receiver `local-dev` без внешних каналов),
+# что подходит для offline-станции. В cloud-профиле values переопределяет
+# .Values.alertmanager.configFile на alertmanager.yml — это даёт прод-
+# роутинг с SMTP/Slack, который ожидает env-переменные из k8s Secret.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "obs.alertmanager.name" . }}-config
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: alertmanager
+data:
+  alertmanager.yml: |
+{{- $file := default "alertmanager.local.yml" .Values.alertmanager.configFile }}
+{{ .Files.Get (printf "files/alertmanager/%s" $file) | indent 4 }}
+{{- end }}

@@ -11,8 +11,10 @@ import importlib
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
+from rescue_ai.application.auto_mission_service import AutoMissionService
+from rescue_ai.application.auto_session_manager import AutoSessionManager
 from rescue_ai.application.pilot_service import PilotService
-from rescue_ai.domain.entities import Detection
+from rescue_ai.domain.entities import Detection, TrajectoryPoint
 from rescue_ai.domain.ports import ArtifactStorage
 
 
@@ -35,11 +37,13 @@ class StreamControllerPort(Protocol):
 
     def list_rpi_missions(self) -> list[dict[str, str]]: ...
 
+    def list_trajectory(self, mission_id: str) -> list[TrajectoryPoint]: ...
+
 
 class DetectorPort(Protocol):
     """Single-frame detector contract consumed by /predict endpoint."""
 
-    def detect(self, image_uri: str) -> list[Detection]: ...
+    def detect(self, image_uri: object) -> list[Detection]: ...
 
 
 class StreamStopState(Protocol):
@@ -59,6 +63,8 @@ class ApiRuntime:
     reset_hook: Callable[[], None]
     detector: DetectorPort | None = field(default=None)
     artifact_storage: ArtifactStorage | None = field(default=None)
+    auto_mission_service: AutoMissionService | None = field(default=None)
+    auto_session_manager: AutoSessionManager | None = field(default=None)
 
 
 @dataclass
@@ -81,10 +87,12 @@ def _ensure_runtime() -> ApiRuntime:
             "build_api_runtime",
         )
         runtime_parts = build_api_runtime()
+        auto_mission_service: AutoMissionService | None = None
+        auto_session_manager: AutoSessionManager | None = None
         if len(runtime_parts) == 4:
             pilot_service, stream_controller, reset_hook, detector = runtime_parts
             artifact_storage = None
-        else:
+        elif len(runtime_parts) == 5:
             (
                 pilot_service,
                 stream_controller,
@@ -92,12 +100,33 @@ def _ensure_runtime() -> ApiRuntime:
                 detector,
                 artifact_storage,
             ) = runtime_parts
+        elif len(runtime_parts) == 6:
+            (
+                pilot_service,
+                stream_controller,
+                reset_hook,
+                detector,
+                artifact_storage,
+                auto_mission_service,
+            ) = runtime_parts
+        else:
+            (
+                pilot_service,
+                stream_controller,
+                reset_hook,
+                detector,
+                artifact_storage,
+                auto_mission_service,
+                auto_session_manager,
+            ) = runtime_parts
         _STATE.runtime = ApiRuntime(
             pilot_service=pilot_service,
             stream_controller=stream_controller,
             reset_hook=reset_hook,
             detector=detector,
             artifact_storage=artifact_storage,
+            auto_mission_service=auto_mission_service,
+            auto_session_manager=auto_session_manager,
         )
     return _STATE.runtime
 
@@ -124,6 +153,16 @@ def get_artifact_storage() -> ArtifactStorage | None:
     return _ensure_runtime().artifact_storage
 
 
+def get_auto_mission_service() -> AutoMissionService | None:
+    """Return :class:`AutoMissionService`, if automatic mode is wired in."""
+    return _ensure_runtime().auto_mission_service
+
+
+def get_auto_session_manager() -> AutoSessionManager | None:
+    """Return :class:`AutoSessionManager`, if automatic mode is wired in."""
+    return _ensure_runtime().auto_session_manager
+
+
 def reset_state() -> None:
     """Reset mutable runtime state used by tests and local sessions."""
     if _STATE.runtime is None:
@@ -138,6 +177,8 @@ __all__ = [
     "DetectorPort",
     "StreamControllerPort",
     "get_artifact_storage",
+    "get_auto_mission_service",
+    "get_auto_session_manager",
     "get_container",
     "get_detector",
     "get_pilot_service",

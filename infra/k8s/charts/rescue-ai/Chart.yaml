@@ -1,0 +1,51 @@
+apiVersion: v2
+name: rescue-ai
+description: |
+  Umbrella-чарт online контура Rescue-AI.
+
+  Включает application-чарты (api, sync-worker, detection, nav-engine)
+  и offline-prod templates для локальных Postgres/MinIO, которые
+  получают credentials через Vault Agent.
+
+  Сам Vault разворачивается отдельным helm release ДО umbrella
+  (`rescue-ai-vault`, см. infra/k8s/vault/values-offline.yaml |
+  values-cloud.yaml).
+
+  Batch-контур (Airflow + batch-exporter + drift-stage) живёт в
+  ОТДЕЛЬНОМ namespace `rescue-batch`, разворачивается отдельным helm
+  release `rescue-batch` (см. infra/k8s/charts/rescue-batch/ и
+  infra/k8s/values/rescue-batch-cloud.yaml).
+
+  ADR-0008 §1, §4.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: Maxim Yakovenko
+
+dependencies:
+  - name: rescue-ai-api
+    version: 0.1.0
+    repository: file://../rescue-ai-api
+    condition: rescue-ai-api.enabled
+
+  - name: rescue-ai-sync-worker
+    version: 0.1.0
+    repository: file://../rescue-ai-sync-worker
+    condition: rescue-ai-sync-worker.enabled
+
+  # ADR-0008 §1: out-of-process navigation engine + detector. Опционально:
+  # включаются только если в values стоит `<chart>.enabled: true`. По
+  # умолчанию монолит (api тащит навигацию и yolo сам).
+  - name: rescue-ai-nav-engine
+    version: 0.1.0
+    repository: file://../rescue-ai-nav-engine
+    condition: rescue-ai-nav-engine.enabled
+
+  - name: rescue-ai-detection
+    version: 0.1.0
+    repository: file://../rescue-ai-detection
+    condition: rescue-ai-detection.enabled
+
+  # batch-exporter и Airflow вынесены в umbrella rescue-batch (живут
+  # в отдельном namespace `rescue-batch`). Здесь их зависимостей нет.

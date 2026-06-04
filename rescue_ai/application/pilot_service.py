@@ -9,6 +9,7 @@ from typing import Protocol, cast
 from urllib.parse import urlparse
 from uuid import NAMESPACE_URL, uuid5
 
+from rescue_ai.application.metrics import ALERTS_CREATED_TOTAL
 from rescue_ai.domain.alert_policy import MissionAlertState, evaluate_alert
 from rescue_ai.domain.entities import Alert, Detection, FrameEvent, Mission
 from rescue_ai.domain.mission_metrics import (
@@ -113,9 +114,6 @@ class PilotService:
             fps=fps,
         )
         self._deps.mission_repository.create(mission)
-        # Register slug in artifact storage so S3 paths use it
-        if mission.slug and hasattr(self._deps.artifact_storage, "register_slug"):
-            self._deps.artifact_storage.register_slug(mission.mission_id, mission.slug)
         return mission
 
     def get_mission(self, mission_id: str) -> Mission | None:
@@ -215,20 +213,24 @@ class PilotService:
             detections=detections,
         )
 
-        stored_image_uri = frame_event.image_uri
-        if alerts:
-            stored_image_uri = self._deps.artifact_storage.store_frame(
-                mission_id=frame_event.mission_id,
-                frame_id=frame_event.frame_id,
-                source_uri=frame_event.image_uri,
-                ds=_mission_ds(mission),
-            )
+        # Archive EVERY frame to S3 (not only alert frames) so the mission
+        # is a complete, re-runnable dataset. Manual/RPi frames are already
+        # on disk (image_uri is a file path), so the file branch handles
+        # them; the deterministic key (frame_{id:06d}.jpg) overwrites on
+        # rerun.
+        stored_image_uri = self._deps.artifact_storage.store_frame(
+            mission_id=frame_event.mission_id,
+            frame_id=frame_event.frame_id,
+            source_uri=frame_event.image_uri,
+            ds=_mission_ds(mission),
+        )
         frame_event.image_uri = stored_image_uri
         self._deps.frame_event_repository.add(frame_event)
 
         for alert in alerts:
             alert.image_uri = stored_image_uri
             self._deps.alert_repository.add(alert)
+            ALERTS_CREATED_TOTAL.labels(mission_mode="manual").inc()
         return alerts
 
     def list_alerts(

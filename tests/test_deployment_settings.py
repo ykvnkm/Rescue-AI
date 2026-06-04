@@ -1,0 +1,106 @@
+"""Tests for DeploymentSettings / SecuritySettings (ADR-0007)."""
+
+from __future__ import annotations
+
+from typing import Any, cast
+
+import pytest
+
+from rescue_ai.config import (
+    ApiSettings,
+    AppSettings,
+    AutoStreamSettings,
+    DatabaseSettings,
+    DeploymentSettings,
+    DetectionSettings,
+    RpiSettings,
+    SecuritySettings,
+    Settings,
+    StorageSettings,
+    UploadSettings,
+)
+
+
+def _make(
+    *,
+    deployment: DeploymentSettings,
+    security: SecuritySettings,
+    env: str = "dev",
+    rpi_base_url: str = "",
+) -> Settings:
+    return Settings(
+        app=AppSettings(APP_ENV=env),
+        api=ApiSettings(),
+        database=DatabaseSettings(DB_DSN="postgresql://x/y"),
+        storage=StorageSettings(),
+        rpi=RpiSettings(RPI_BASE_URL=rpi_base_url),
+        detection=DetectionSettings(),
+        uploads=UploadSettings(),
+        auto_stream=AutoStreamSettings(),
+        deployment=deployment,
+        security=security,
+    )
+
+
+def test_default_mode_is_cloud_and_outbox_disabled() -> None:
+    deployment = DeploymentSettings()
+    assert deployment.mode == "cloud"
+    assert deployment.outbox_enabled is False
+    assert deployment.is_offline_first is False
+
+
+def test_offline_profile_is_offline_first() -> None:
+    assert DeploymentSettings(DEPLOYMENT_MODE="offline").is_offline_first is True
+
+
+def test_outbox_enabled_in_offline() -> None:
+    # The offline profile produces outbox rows for the sync-worker to
+    # drain to the remote contour when connectivity is available.
+    assert DeploymentSettings(DEPLOYMENT_MODE="offline").outbox_enabled is True
+    assert DeploymentSettings(DEPLOYMENT_MODE="cloud").outbox_enabled is False
+
+
+def test_security_mtls_requires_paths() -> None:
+    with pytest.raises(ValueError):
+        cast(Any, SecuritySettings)(TLS_MODE="mtls", _env_file=None)
+
+
+def test_security_mtls_accepts_paths() -> None:
+    sec = cast(Any, SecuritySettings)(
+        TLS_MODE="mtls",
+        TLS_CA_CERT_PATH="/etc/ca.crt",
+        TLS_CLIENT_CERT_PATH="/etc/client.crt",
+        TLS_CLIENT_KEY_PATH="/etc/client.key",
+        _env_file=None,
+    )
+    assert sec.tls_mode == "mtls"
+
+
+def test_offline_profile_in_dev_allows_tls_off() -> None:
+    settings = _make(
+        deployment=DeploymentSettings(DEPLOYMENT_MODE="offline"),
+        security=cast(Any, SecuritySettings)(TLS_MODE="off", _env_file=None),
+        env="dev",
+    )
+    assert str(getattr(settings.deployment, "mode", "")) == "offline"
+
+
+def test_offline_profile_outside_dev_rejects_tls_off_with_rpi_link() -> None:
+    with pytest.raises(ValueError):
+        _make(
+            deployment=DeploymentSettings(DEPLOYMENT_MODE="offline"),
+            security=cast(Any, SecuritySettings)(TLS_MODE="off", _env_file=None),
+            env="field",
+            rpi_base_url="https://rpi.local",
+        )
+
+
+def test_cloud_profile_allows_tls_off_anywhere() -> None:
+    # Cloud profile keeps current behaviour — RPi link sits behind a
+    # public tunnel, mTLS is optional.
+    settings = _make(
+        deployment=DeploymentSettings(DEPLOYMENT_MODE="cloud"),
+        security=cast(Any, SecuritySettings)(TLS_MODE="off", _env_file=None),
+        env="prod",
+    )
+    assert str(getattr(settings.security, "tls_mode", "")) == "off"

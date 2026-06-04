@@ -1,0 +1,159 @@
+{{- if .Values.alertmanager.enabled }}
+# ServiceAccount, под которым Alertmanager проходит Vault k8s-auth
+# (нужен в cloud-профиле для подъёма SMTP credentials). В offline
+# Vault Agent просто не инжектирует sidecar, и SA остаётся неиспользованной
+# для Vault — это нормально, под всё равно работает.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "obs.alertmanager.name" . }}
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: alertmanager
+---
+{{- if .Values.alertmanager.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "obs.alertmanager.name" . }}-data
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: alertmanager
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.alertmanager.persistence.size | quote }}
+  {{- if .Values.alertmanager.persistence.storageClass }}
+  storageClassName: {{ .Values.alertmanager.persistence.storageClass | quote }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "obs.alertmanager.name" . }}
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: alertmanager
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "obs.labels" . | nindent 8 }}
+        app.kubernetes.io/name: alertmanager
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/alertmanager-configmap.yaml") . | sha256sum }}
+        {{- if .Values.alertmanager.vaultAgent.enabled }}
+        # Vault Agent Injector рендерит SMTP creds (и адреса получателей)
+        # в /vault/secrets/alertmanager.env. Startup-скрипт source-ит файл
+        # и подставляет переменные в alertmanager.yml через sed —
+        # alertmanager сам env-substitution не делает. См.
+        # ADR-0008 §3, диплом §3.5.4.
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "rescue-ai-alertmanager"
+        vault.hashicorp.com/agent-inject-secret-alertmanager.env: "secret/data/rescue-ai/alertmanager"
+        vault.hashicorp.com/agent-inject-template-alertmanager.env: |
+          {{`{{- with secret "secret/data/rescue-ai/alertmanager" -}}`}}
+          ALERT_EMAIL_FROM={{`{{ .Data.data.smtp_from }}`}}
+          ALERT_EMAIL_SMARTHOST={{`{{ .Data.data.smtp_smarthost }}`}}
+          ALERT_EMAIL_USERNAME={{`{{ .Data.data.smtp_username }}`}}
+          ALERT_EMAIL_PASSWORD={{`{{ .Data.data.smtp_password }}`}}
+          ALERT_EMAIL_WARNING={{`{{ .Data.data.warning_recipient }}`}}
+          ALERT_EMAIL_CRITICAL={{`{{ .Data.data.critical_recipient }}`}}
+          {{`{{- end }}`}}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "obs.alertmanager.name" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+        - name: alertmanager
+          image: "{{ .Values.alertmanager.image.repository }}:{{ .Values.alertmanager.image.tag }}"
+          # Sourcing Vault-rendered env + sed-substitution в config
+          # (alertmanager сам не поддерживает env-vars в yaml). Если
+          # файла Vault нет (offline без SMTP) — sed просто оставляет
+          # неподставленные ${...} без эффекта; конфиг local-режима их
+          # и не содержит, всё корректно работает.
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              if [ -f /vault/secrets/alertmanager.env ]; then
+                set -a; . /vault/secrets/alertmanager.env; set +a
+              fi
+              sed \
+                -e "s#\${ALERT_EMAIL_FROM}#${ALERT_EMAIL_FROM:-}#g" \
+                -e "s#\${ALERT_EMAIL_SMARTHOST}#${ALERT_EMAIL_SMARTHOST:-}#g" \
+                -e "s#\${ALERT_EMAIL_USERNAME}#${ALERT_EMAIL_USERNAME:-}#g" \
+                -e "s#\${ALERT_EMAIL_PASSWORD}#${ALERT_EMAIL_PASSWORD:-}#g" \
+                -e "s#\${ALERT_EMAIL_WARNING}#${ALERT_EMAIL_WARNING:-}#g" \
+                -e "s#\${ALERT_EMAIL_CRITICAL}#${ALERT_EMAIL_CRITICAL:-}#g" \
+                /etc/alertmanager/alertmanager.yml > /tmp/alertmanager.yml
+              exec /bin/alertmanager \
+                --config.file=/tmp/alertmanager.yml \
+                --storage.path=/alertmanager
+          ports:
+            - name: http
+              containerPort: 9093
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+              readOnly: true
+            - name: data
+              mountPath: /alertmanager
+          livenessProbe:
+            httpGet: { path: /-/healthy, port: http }
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /-/ready, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.alertmanager.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "obs.alertmanager.name" . }}-config
+        - name: data
+          {{- if .Values.alertmanager.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "obs.alertmanager.name" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "obs.alertmanager.name" . }}
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: alertmanager
+spec:
+  type: {{ .Values.alertmanager.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.alertmanager.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

@@ -1,7 +1,5 @@
 """Online API server entry point."""
 
-# pylint: disable=too-many-lines
-
 from __future__ import annotations
 
 import logging
@@ -16,27 +14,41 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import uvicorn
 from uvicorn.config import LOGGING_CONFIG as UVICORN_LOGGING_CONFIG
 
+from rescue_ai.application.auto_mission_service import AutoMissionService
+from rescue_ai.application.auto_session_manager import (
+    AutoSessionManager,
+    VideoSourceFactory,
+)
 from rescue_ai.application.pilot_service import PilotService
 from rescue_ai.config import Settings, get_settings
-from rescue_ai.domain.entities import Detection, FrameEvent
-from rescue_ai.domain.ports import AlertRepository, ArtifactStorage
+from rescue_ai.domain.entities import Detection, FrameEvent, TrajectoryPoint
+from rescue_ai.domain.ports import (
+    AlertRepository,
+    ArtifactStorage,
+    AutoDecisionRepository,
+    AutoMissionConfigRepository,
+)
 from rescue_ai.domain.ports import DetectorPort as DomainDetectorPort
 from rescue_ai.domain.ports import (
     FrameEventRepository,
     MissionRepository,
+    NavigationEnginePort,
     ReportMetadataPayload,
+    TrajectoryRepository,
 )
+from rescue_ai.domain.value_objects import AlertRuleConfig, NavMode
 from rescue_ai.infrastructure.artifact_storage import build_s3_storage
 from rescue_ai.infrastructure.contract_loader import load_stream_contract
 from rescue_ai.infrastructure.postgres_connection import wait_for_postgres
 from rescue_ai.infrastructure.rpi_client import RpiClient
 from rescue_ai.interfaces.api.dependencies import ApiRuntime, set_runtime
+from rescue_ai.interfaces.cli.auto_video_source_factory import auto_video_source_factory
 
 logger = logging.getLogger(__name__)
 _URL_RE = re.compile(r"\b(?:https?|rtsp)://[^\s\"')]+", re.IGNORECASE)
@@ -90,6 +102,8 @@ class RpiStreamState:
     gt_sequence_total: int | None = None
     source_frames_total: int | None = None
     read_failures: int = 0
+    trajectory_points: int = 0
+    navigation_failures: int = 0
     end_reason: str | None = None
     last_stats: dict[str, object] | None = None
     error: str | None = None
@@ -125,6 +139,9 @@ class _LoopContext:
     capture: _FrameCapture
     tmp_dir: Path
     frame_id: int = 0
+    trajectory_seq: int = 0
+    navigation_engine: NavigationEnginePort | None = None
+    trajectory_repository: TrajectoryRepository | None = None
     consecutive_read_failures: int = 0
     last_rpi_check: float = 0.0
 
@@ -287,13 +304,24 @@ class DetectionStreamController:
         settings: Settings,
         pilot_service: PilotService | None = None,
         detector: DomainDetectorPort | None = None,
+        navigation_factory: Callable[[str], NavigationEnginePort] | None = None,
+        trajectory_repository: TrajectoryRepository | None = None,
     ) -> None:
         self._rpi_settings = settings.rpi
+        # Security/TLS settings travel separately from RpiSettings so a
+        # single mTLS material can protect every outbound RPi call. The
+        # RpiClient wraps httpx with verify=ca + cert=(crt,key) when
+        # tls_mode=mtls (ADR-0007 §4); off → plain HTTP, kept for dev.
+        self._security_settings = settings.security
         self._sessions: dict[str, RpiStreamState] = {}
         self._stop_events: dict[str, threading.Event] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._pilot_service = pilot_service
         self._detector = detector
+        self._navigation_factory = navigation_factory
+        self._trajectory_repository = trajectory_repository
+        self._trajectory_points: dict[str, list[TrajectoryPoint]] = {}
+        self._trajectory_lock = threading.RLock()
 
     def start(
         self,
@@ -322,6 +350,8 @@ class DetectionStreamController:
             started_at=datetime.now(timezone.utc).isoformat(),
         )
         self._sessions[mission_id] = state
+        with self._trajectory_lock:
+            self._trajectory_points[mission_id] = []
         logger.info(
             "Stream started: mission=%s rpi_mission=%s fps=%.1f",
             mission_id[:8],
@@ -436,8 +466,23 @@ class DetectionStreamController:
             for mission in catalog.missions
         ]
 
+    def list_trajectory(self, mission_id: str) -> list[TrajectoryPoint]:
+        if self._trajectory_repository is not None:
+            try:
+                points = self._trajectory_repository.list_by_mission(mission_id)
+                if points:
+                    return points
+            except (RuntimeError, ValueError, OSError) as error:
+                logger.warning(
+                    "Cannot load operator trajectory from repository: mission=%s %s",
+                    mission_id,
+                    type(error).__name__,
+                )
+        with self._trajectory_lock:
+            return list(self._trajectory_points.get(mission_id, []))
+
     def _client(self) -> RpiClient:
-        return RpiClient(self._rpi_settings)
+        return RpiClient(self._rpi_settings, security=self._security_settings)
 
     # ── Background RTSP → YOLO → ingest pipeline ──────────────────
 
@@ -484,6 +529,11 @@ class DetectionStreamController:
             state.end_reason = "loop_exception"
             logger.exception("Detection loop crashed: %s", loop_err)
         finally:
+            if ctx.navigation_engine is not None:
+                close = getattr(ctx.navigation_engine, "close", None)
+                if callable(close):
+                    with suppress(Exception):
+                        close()
             with suppress(Exception):
                 ctx.capture.release()
             state.running = False
@@ -618,6 +668,11 @@ class DetectionStreamController:
         state.capture_backend = (
             "rtsp" if isinstance(capture, _RtspFrameCapture) else "http"
         )
+        navigation_engine = self._build_operator_navigation_engine(
+            mission_id=mission_id,
+            fps=target_fps,
+            state=state,
+        )
         return _LoopContext(
             mission_id=mission_id,
             state=state,
@@ -628,7 +683,33 @@ class DetectionStreamController:
             source_filenames=source_filenames,
             capture=capture,
             tmp_dir=Path(tempfile.mkdtemp(prefix="rescue_frames_")),
+            navigation_engine=navigation_engine,
+            trajectory_repository=self._trajectory_repository,
         )
+
+    def _build_operator_navigation_engine(
+        self,
+        *,
+        mission_id: str,
+        fps: float,
+        state: RpiStreamState,
+    ) -> NavigationEnginePort | None:
+        if self._navigation_factory is None or self._trajectory_repository is None:
+            return None
+        try:
+            engine = self._navigation_factory(mission_id)
+            engine.reset(nav_mode=NavMode.AUTO, fps=fps)
+            return engine
+        except (RuntimeError, ValueError, OSError) as error:
+            state.navigation_failures += 1
+            state.error = f"navigation disabled: {type(error).__name__}: {error}"
+            logger.warning(
+                "Operator navigation unavailable mission=%s: %s: %s",
+                mission_id,
+                type(error).__name__,
+                error,
+            )
+            return None
 
     def _read_frame_with_recovery(
         self,
@@ -685,6 +766,7 @@ class DetectionStreamController:
             ctx.frame_id / ctx.target_fps if ctx.target_fps > 0 else ctx.frame_id * 0.5
         )
         gt_present, gt_episode_id = ctx.gt_tracker.evaluate(ctx.frame_id)
+        self._run_operator_navigation(ctx=ctx, frame=frame, ts_sec=ts_sec)
 
         t0 = time.monotonic()
         detections = self._detect_frame_or_empty(
@@ -731,6 +813,71 @@ class DetectionStreamController:
             )
         ctx.frame_id += 1
         ctx.state.processed_frames = ctx.frame_id
+
+    def _run_operator_navigation(
+        self,
+        *,
+        ctx: _LoopContext,
+        frame: object,
+        ts_sec: float,
+    ) -> None:
+        if ctx.navigation_engine is None or ctx.trajectory_repository is None:
+            return
+        try:
+            raw_point = ctx.navigation_engine.step(
+                self._frame_for_navigation(frame),
+                ts_sec=ts_sec,
+                frame_id=ctx.frame_id,
+            )
+        except (RuntimeError, ValueError, TypeError, OSError) as error:
+            ctx.state.navigation_failures += 1
+            logger.warning(
+                "Navigation error: mission=%s frame=%d error=%s",
+                ctx.mission_id[:8],
+                ctx.frame_id,
+                type(error).__name__,
+            )
+            return
+        if raw_point is None:
+            return
+
+        ctx.trajectory_seq += 1
+        point = TrajectoryPoint(
+            mission_id=ctx.mission_id,
+            seq=ctx.trajectory_seq,
+            ts_sec=raw_point.ts_sec,
+            x=raw_point.x,
+            y=raw_point.y,
+            z=raw_point.z,
+            source=raw_point.source,
+            frame_id=ctx.frame_id if raw_point.frame_id is None else raw_point.frame_id,
+        )
+        try:
+            ctx.trajectory_repository.add(point)
+            with self._trajectory_lock:
+                self._trajectory_points.setdefault(ctx.mission_id, []).append(point)
+            ctx.state.trajectory_points += 1
+        except (RuntimeError, ValueError, OSError) as error:
+            ctx.state.navigation_failures += 1
+            logger.warning(
+                "Trajectory persist error: mission=%s frame=%d error=%s",
+                ctx.mission_id[:8],
+                ctx.frame_id,
+                type(error).__name__,
+            )
+
+    @staticmethod
+    def _frame_for_navigation(frame: object) -> object:
+        if isinstance(frame, bytes):
+            import numpy as np
+
+            cv2 = import_module("cv2")
+            arr = np.frombuffer(frame, dtype=np.uint8)
+            decoded = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if decoded is None:
+                raise ValueError("Cannot decode JPEG frame for navigation")
+            return decoded
+        return frame
 
     @staticmethod
     def _resolve_frame_filename(ctx: _LoopContext) -> str:
@@ -959,22 +1106,40 @@ class DetectionStreamController:
 
 
 def _build_detector() -> DomainDetectorPort | None:
-    """Create YoloDetector from stream contract config (lazy, optional)."""
-    try:
-        from rescue_ai.infrastructure.yolo_detector import YoloDetector
+    """Wire the HTTP adapter to the standalone detection microservice.
 
-        settings = get_settings()
-        contract = load_stream_contract(
-            service_version=settings.app.service_version,
+    Composition root подключает реализацию ``DetectorPort`` ровно одним
+    адаптером — ``HttpDetector`` к сервису ``rescue-ai-detection``.
+    Адрес сервиса задаётся переменной окружения ``DETECTOR_URL``;
+    при её отсутствии или при недоступности сервиса детектор не
+    подключается, и зависящие от него подсистемы помечаются как
+    неактивные на уровне точки сборки зависимостей.
+    """
+    settings = get_settings()
+    detector_url = str(getattr(settings.detection, "service_url", "")).strip()
+    if not detector_url:
+        logger.warning(
+            "Detection microservice URL is not configured; detector is unavailable."
         )
-        detector = YoloDetector(config=contract.inference)
+        return None
+
+    try:
+        from rescue_ai.infrastructure.http_detector import HttpDetector
+
+        timeout = float(getattr(settings.detection, "service_timeout_sec", 5.0))
+        detector = HttpDetector(base_url=detector_url, timeout_sec=timeout)
+        detector.warmup()
         logger.info(
-            "YoloDetector initialized (model_url=%s)", contract.inference.model_url
+            "Detector initialized: url=%s runtime=%s",
+            detector_url,
+            detector.runtime_name(),
         )
         return detector
-    except (ImportError, RuntimeError, ValueError, TypeError, OSError) as error:
+    except (ImportError, RuntimeError, OSError) as error:
         logger.warning(
-            "YoloDetector not available: %s: %s", type(error).__name__, error
+            "HttpDetector unavailable: %s: %s",
+            type(error).__name__,
+            error,
         )
         return None
 
@@ -985,6 +1150,8 @@ def build_api_runtime() -> tuple[
     Callable[[], None],
     DomainDetectorPort | None,
     ArtifactStorage,
+    AutoMissionService | None,
+    AutoSessionManager | None,
 ]:
     """Assemble API runtime dependencies (composition root)."""
     settings = get_settings()
@@ -1003,11 +1170,66 @@ def build_api_runtime() -> tuple[
     if contract.inference.model_sha256:
         report_metadata["model_sha256"] = contract.inference.model_sha256
 
-    mission_repository, alert_repository, frame_repository, reset_hook = (
-        _build_repositories(settings=settings)
-    )
+    (
+        mission_repository,
+        alert_repository,
+        frame_repository,
+        reset_hook,
+        auto_repos,
+    ) = _build_repositories(settings=settings)
 
-    artifact_storage = build_s3_storage(settings.storage)
+    artifact_storage: ArtifactStorage = build_s3_storage(settings.storage)
+
+    # Offline-профиль: обернуть artifact_storage в OutboxArtifactStorage,
+    # который дополнительно ставит outbox-запись на каждый upload в
+    # локальный MinIO. Sync-worker потом скопирует объект в remote S3
+    # через S3-to-S3 GET/PUT (см. ADR-0007 §3, диплом §3.5.1).
+    if str(getattr(settings.deployment, "mode", "cloud")) == "offline":
+        from rescue_ai.infrastructure.postgres_connection import (  # noqa: PLC0415
+            PostgresDatabase,
+        )
+
+        # pylint: disable=import-outside-toplevel
+        from rescue_ai.infrastructure.sync.outbox_artifact_storage import (
+            OutboxArtifactStorage,
+        )
+        from rescue_ai.infrastructure.sync.sync_outbox_repository import (
+            PostgresSyncOutboxRepository,
+        )
+
+        _local_bucket = settings.storage.s3_bucket
+        _remote_bucket = str(
+            getattr(settings.deployment, "remote_s3_bucket", "")
+        ).strip()
+        _local_prefix = settings.storage.s3_prefix
+        if _local_bucket and _remote_bucket:
+            outbox_for_storage = PostgresSyncOutboxRepository(
+                PostgresDatabase(settings.database.dsn)
+            )
+            artifact_storage = OutboxArtifactStorage(
+                inner=artifact_storage,
+                outbox=outbox_for_storage,
+                local_bucket=_local_bucket,
+                remote_bucket=_remote_bucket,
+                local_prefix=_local_prefix,
+                remote_prefix=_local_prefix,
+            )
+            logger.info(
+                "Offline profile: artifact_storage wrapped с outbox-репликацией "
+                "(local=%s/%s → remote=%s/%s)",
+                _local_bucket,
+                _local_prefix,
+                _remote_bucket,
+                _local_prefix,
+            )
+        else:
+            logger.warning(
+                "Offline profile: S3-репликация артефактов выключена "
+                "(local_bucket=%r, remote_bucket=%r). Реплицируются только "
+                "DB-метаданные через outbox.",
+                _local_bucket,
+                _remote_bucket,
+            )
 
     pilot_service = PilotService(
         dependencies=PilotService.Dependencies(
@@ -1021,13 +1243,155 @@ def build_api_runtime() -> tuple[
     pilot_service.set_report_metadata(report_metadata)
 
     detector = _build_detector()
+    operator_navigation_factory = _build_operator_navigation_factory(settings)
 
     stream_controller = DetectionStreamController(
         settings=settings,
         pilot_service=pilot_service,
         detector=detector,
+        navigation_factory=operator_navigation_factory,
+        trajectory_repository=(
+            auto_repos.trajectory_repository if auto_repos is not None else None
+        ),
     )
-    return pilot_service, stream_controller, reset_hook, detector, artifact_storage
+
+    auto_mission_service = _build_auto_mission_service(
+        settings=settings,
+        alert_rules=alert_rules,
+        mission_repository=mission_repository,
+        alert_repository=alert_repository,
+        frame_repository=frame_repository,
+        auto_repos=auto_repos,
+        artifact_storage=artifact_storage,
+        detector=detector,
+    )
+
+    auto_session_manager: AutoSessionManager | None = None
+    if auto_mission_service is not None:
+        auto_session_manager = AutoSessionManager(
+            service=auto_mission_service,
+            source_factory=cast(VideoSourceFactory, auto_video_source_factory),
+            ws_jpeg_quality=settings.auto_stream.ws_jpeg_quality,
+            ws_max_width=settings.auto_stream.ws_max_width,
+            ws_emit_max_fps=settings.auto_stream.ws_emit_max_fps,
+            save_video_dir=settings.auto_stream.save_video_dir,
+        )
+
+    return (
+        pilot_service,
+        stream_controller,
+        reset_hook,
+        detector,
+        artifact_storage,
+        auto_mission_service,
+        auto_session_manager,
+    )
+
+
+def _build_operator_navigation_factory(
+    settings: Settings,
+) -> Callable[[str], NavigationEnginePort] | None:
+    nav_engine_url = str(
+        getattr(getattr(settings, "navigation_service", None), "service_url", "")
+    ).strip()
+    if not nav_engine_url:
+        logger.warning(
+            "Navigation microservice URL is not configured; "
+            "operator trajectories are disabled."
+        )
+        return None
+
+    from rescue_ai.infrastructure.http_navigation_engine import HttpNavigationEngine
+
+    nav_timeout = float(
+        getattr(settings.navigation_service, "service_timeout_sec", 5.0)
+    )
+
+    def _factory(mission_id: str) -> NavigationEnginePort:
+        return HttpNavigationEngine(
+            base_url=nav_engine_url,
+            mission_id=mission_id,
+            timeout_sec=nav_timeout,
+        )
+
+    return _factory
+
+
+def _build_auto_mission_service(
+    *,
+    settings: Settings,
+    alert_rules: AlertRuleConfig,
+    mission_repository: MissionRepository,
+    alert_repository: AlertRepository,
+    frame_repository: FrameEventRepository,
+    auto_repos: "_AutoRepoBundle | None",
+    artifact_storage: ArtifactStorage,
+    detector: DomainDetectorPort | None,
+) -> AutoMissionService | None:
+    """Compose :class:`AutoMissionService` if all its dependencies are available."""
+    if auto_repos is None or detector is None:
+        logger.info(
+            "AutoMissionService not wired: detector=%s auto_repos=%s",
+            detector is not None,
+            auto_repos is not None,
+        )
+        return None
+    try:
+        from rescue_ai.infrastructure.trajectory_plot import (
+            build_trajectory_plot_renderer,
+        )
+    except ImportError as err:
+        logger.warning("AutoMissionService disabled (missing deps): %s", err)
+        return None
+
+    try:
+        plot_renderer = build_trajectory_plot_renderer()
+    except RuntimeError as err:
+        logger.warning("TrajectoryPlotRenderer unavailable: %s", err)
+        plot_renderer = None
+
+    # Composition root подключает реализацию ``NavigationEnginePort``
+    # ровно одним адаптером — ``HttpNavigationEngine`` к сервису
+    # ``rescue-ai-nav-engine``. Адрес сервиса задаётся переменной
+    # окружения ``NAV_ENGINE_URL``; при её отсутствии автоматический
+    # режим миссии помечается как неактивный.
+    nav_engine_url = str(
+        getattr(getattr(settings, "navigation_service", None), "service_url", "")
+    ).strip()
+    if not nav_engine_url:
+        logger.warning(
+            "Navigation microservice URL is not configured; "
+            "AutoMissionService is disabled."
+        )
+        return None
+
+    from rescue_ai.infrastructure.http_navigation_engine import HttpNavigationEngine
+
+    nav_timeout = float(
+        getattr(settings.navigation_service, "service_timeout_sec", 5.0)
+    )
+    nav_engine = HttpNavigationEngine(
+        base_url=nav_engine_url,
+        mission_id="api-auto",
+        timeout_sec=nav_timeout,
+    )
+    logger.info("NavigationEngine initialized: url=%s", nav_engine_url)
+
+    return AutoMissionService(
+        dependencies=AutoMissionService.Dependencies(
+            mission_repository=mission_repository,
+            alert_repository=alert_repository,
+            frame_event_repository=frame_repository,
+            trajectory_repository=auto_repos.trajectory_repository,
+            auto_decision_repository=auto_repos.auto_decision_repository,
+            auto_mission_config_repository=auto_repos.auto_mission_config_repository,
+            artifact_storage=artifact_storage,
+            detector=detector,
+            navigation_engine=nav_engine,
+            trajectory_plot_renderer=plot_renderer,
+        ),
+        alert_rules=alert_rules,
+    )
 
 
 def main() -> None:
@@ -1048,9 +1412,14 @@ def main() -> None:
         settings.api.port,
     )
     _prepare_postgres_backend()
-    pilot_service, stream_controller, reset_hook, detector, artifact_storage = (
-        build_api_runtime()
-    )
+    runtime_parts = build_api_runtime()
+    pilot_service = runtime_parts[0]
+    stream_controller = runtime_parts[1]
+    reset_hook = runtime_parts[2]
+    detector = runtime_parts[3]
+    artifact_storage = runtime_parts[4]
+    auto_mission_service = runtime_parts[5] if len(runtime_parts) > 5 else None
+    auto_session_manager = runtime_parts[6] if len(runtime_parts) > 6 else None
     set_runtime(
         ApiRuntime(
             pilot_service=pilot_service,
@@ -1058,6 +1427,8 @@ def main() -> None:
             reset_hook=reset_hook,
             detector=detector,
             artifact_storage=artifact_storage,
+            auto_mission_service=auto_mission_service,
+            auto_session_manager=auto_session_manager,
         )
     )
     uvicorn.run(
@@ -1089,6 +1460,15 @@ def _build_uvicorn_log_config() -> dict[str, Any]:
     return config
 
 
+@dataclass
+class _AutoRepoBundle:
+    """Bundle of automatic-mode repositories sharing one ``PostgresDatabase``."""
+
+    trajectory_repository: TrajectoryRepository
+    auto_decision_repository: AutoDecisionRepository
+    auto_mission_config_repository: AutoMissionConfigRepository
+
+
 def _build_repositories(
     *,
     settings: Settings,
@@ -1097,6 +1477,7 @@ def _build_repositories(
     AlertRepository,
     FrameEventRepository,
     Callable[[], None],
+    _AutoRepoBundle | None,
 ]:
     from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
     from rescue_ai.infrastructure.postgres_repositories import (
@@ -1110,11 +1491,75 @@ def _build_repositories(
         raise ValueError("DB_DSN is required")
 
     postgres_db = PostgresDatabase(dsn=dsn, schema="app")
+    try:
+        from rescue_ai.infrastructure.postgres_auto_repositories import (
+            PostgresAutoDecisionRepository,
+            PostgresAutoMissionConfigRepository,
+            PostgresTrajectoryRepository,
+        )
+
+        auto_repos: _AutoRepoBundle | None = _AutoRepoBundle(
+            trajectory_repository=PostgresTrajectoryRepository(postgres_db),
+            auto_decision_repository=PostgresAutoDecisionRepository(postgres_db),
+            auto_mission_config_repository=PostgresAutoMissionConfigRepository(
+                postgres_db
+            ),
+        )
+    except ImportError as err:
+        logger.warning("Automatic-mode repositories unavailable: %s", err)
+        auto_repos = None
+
+    mission_repo: MissionRepository = PostgresMissionRepository(postgres_db)
+    alert_repo: AlertRepository = PostgresAlertRepository(
+        postgres_db, episode_settings=None
+    )
+    frame_event_repo: FrameEventRepository = PostgresFrameEventRepository(
+        postgres_db, episode_settings=None
+    )
+
+    # Offline profile (ADR-0007 §3): wrap every write-side repository
+    # in an offline-first decorator that emits a `replication_outbox`
+    # row alongside the local write. The sync-worker drains those
+    # rows into the remote Postgres / S3 when connectivity is available.
+    if str(getattr(settings.deployment, "mode", "cloud")) == "offline":
+        from rescue_ai.infrastructure.sync.offline_first_repositories import (
+            OfflineFirstAlertRepository,
+            OfflineFirstAutoDecisionRepository,
+            OfflineFirstAutoMissionConfigRepository,
+            OfflineFirstFrameEventRepository,
+            OfflineFirstMissionRepository,
+            OfflineFirstTrajectoryRepository,
+        )
+        from rescue_ai.infrastructure.sync.sync_outbox_repository import (
+            PostgresSyncOutboxRepository,
+        )
+
+        outbox = PostgresSyncOutboxRepository(postgres_db)
+        mission_repo = OfflineFirstMissionRepository(mission_repo, outbox)
+        alert_repo = OfflineFirstAlertRepository(alert_repo, outbox)
+        frame_event_repo = OfflineFirstFrameEventRepository(frame_event_repo, outbox)
+        if auto_repos is not None:
+            auto_repos = _AutoRepoBundle(
+                trajectory_repository=OfflineFirstTrajectoryRepository(
+                    auto_repos.trajectory_repository, outbox
+                ),
+                auto_decision_repository=OfflineFirstAutoDecisionRepository(
+                    auto_repos.auto_decision_repository, outbox
+                ),
+                auto_mission_config_repository=(
+                    OfflineFirstAutoMissionConfigRepository(
+                        auto_repos.auto_mission_config_repository, outbox
+                    )
+                ),
+            )
+        logger.info("Hybrid profile active: outbox-wrapped repositories enabled")
+
     return (
-        PostgresMissionRepository(postgres_db),
-        PostgresAlertRepository(postgres_db, episode_settings=None),
-        PostgresFrameEventRepository(postgres_db, episode_settings=None),
+        mission_repo,
+        alert_repo,
+        frame_event_repo,
         postgres_db.truncate_all,
+        auto_repos,
     )
 
 

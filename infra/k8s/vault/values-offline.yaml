@@ -1,0 +1,49 @@
+# Helm values for the offline k3s Vault release.
+#
+# Install before the rescue-ai umbrella chart:
+#   helm install rescue-ai-vault hashicorp/vault \
+#     -n rescue-ai \
+#     --version 0.30.0 \
+#     -f infra/k8s/vault/values-offline.yaml
+
+global:
+  tlsDisable: true
+
+server:
+  dev:
+    enabled: false
+  ha:
+    enabled: false
+  standalone:
+    enabled: true
+    config: |
+      ui = true
+      listener "tcp" {
+        tls_disable = 1
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+      storage "file" {
+        path = "/vault/data"
+      }
+
+  dataStorage:
+    enabled: true
+    size: 1Gi
+    storageClass: null
+
+  auditStorage:
+    enabled: true
+    size: 1Gi
+    storageClass: null
+
+  serviceAccount:
+    create: true
+    name: rescue-ai-vault
+
+ui:
+  enabled: true
+  serviceType: ClusterIP
+
+injector:
+  enabled: true

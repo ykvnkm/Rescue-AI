@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DeploymentMode = Literal["cloud", "offline"]
+TlsMode = Literal["off", "mtls"]
 
 
 class BaseEnvSettings(BaseSettings):
@@ -35,6 +39,10 @@ class ApiSettings(BaseEnvSettings):
         default=30.0,
         alias="APP_POSTGRES_READY_TIMEOUT_SEC",
     )
+    # Per-client request cap for an open public demo (requests/minute/IP).
+    # 0 disables the limiter (controlled deployments rely on the bearer gate
+    # / ingress instead). Probes, metrics and the UI shell are never limited.
+    rate_limit_per_min: int = Field(default=0, alias="APP_RATE_LIMIT_PER_MIN")
 
 
 class DatabaseSettings(BaseEnvSettings):
@@ -67,9 +75,136 @@ class RpiSettings(BaseEnvSettings):
 
 
 class DetectionSettings(BaseEnvSettings):
-    """Detection inference timeout settings."""
+    """Detection inference timeout settings.
+
+    ``service_url`` — опциональный URL отдельного rescue-ai-detection
+    сервиса (ADR-0008 §1). Если задан, API использует HTTP-адаптер
+    ``HttpDetector``; если пуст — тот же in-process YoloDetector
+    (поведение до P3.A).
+    """
 
     http_timeout_sec: float = Field(default=1.0, alias="DETECTION_HTTP_TIMEOUT_SEC")
+    service_url: str = Field(default="", alias="DETECTOR_URL")
+    service_timeout_sec: float = Field(default=5.0, alias="DETECTOR_TIMEOUT_SEC")
+
+
+class NavigationServiceSettings(BaseEnvSettings):
+    """Optional out-of-process navigation engine."""
+
+    service_url: str = Field(default="", alias="NAV_ENGINE_URL")
+    service_timeout_sec: float = Field(default=5.0, alias="NAV_ENGINE_TIMEOUT_SEC")
+
+
+class UploadSettings(BaseEnvSettings):
+    """Local storage for UI-uploaded video files (stand-mode auto sessions)."""
+
+    uploads_dir: str = Field(
+        default="/tmp/rescue-ai/uploads",
+        alias="UPLOAD_DIR",
+    )
+    max_upload_mb: int = Field(default=512, alias="UPLOAD_MAX_MB")
+
+
+class AutoStreamSettings(BaseEnvSettings):
+    """Auto-mode WebSocket stream encoding defaults."""
+
+    ws_jpeg_quality: int = Field(default=55, alias="AUTO_WS_JPEG_QUALITY")
+    ws_max_width: int = Field(default=640, alias="AUTO_WS_MAX_WIDTH")
+    ws_emit_max_fps: float = Field(default=8.0, alias="AUTO_WS_EMIT_MAX_FPS")
+    save_video_dir: str = Field(
+        default="artifacts/auto_recordings",
+        alias="AUTO_SAVE_VIDEO_DIR",
+    )
+
+
+class DeploymentSettings(BaseEnvSettings):
+    """Deployment profile (offline / cloud).
+
+    See ADR-0007. Selects which Postgres/S3 endpoints are authoritative
+    and whether the transactional outbox + sync-worker are enabled.
+    The application code is identical across modes; only DSNs and the
+    enable flag differ.
+
+    * ``offline``: ground station deployment. Local Postgres + MinIO +
+      Vault, sync-worker drains the transactional outbox to the remote
+      contour whenever connectivity is available. The same profile is
+      used both for fully air-gapped stations (sync-worker idles
+      indefinitely) and for stations with intermittent connectivity.
+    * ``cloud``: central managed contour that *receives* synchronised
+      data. No local infra subcharts, no sync-worker.
+    """
+
+    mode: DeploymentMode = Field(default="cloud", alias="DEPLOYMENT_MODE")
+
+    # Remote (cloud) targets — used directly in `cloud` profile, and
+    # as the sync target by the sync-worker in `offline` profile when
+    # connectivity is available.
+    remote_db_dsn: str = Field(default="", alias="DEPLOYMENT_REMOTE_DB_DSN")
+    remote_s3_endpoint: str = Field(default="", alias="DEPLOYMENT_REMOTE_S3_ENDPOINT")
+    remote_s3_region: str = Field(
+        default="ru-central1", alias="DEPLOYMENT_REMOTE_S3_REGION"
+    )
+    remote_s3_access_key_id: str = Field(
+        default="", alias="DEPLOYMENT_REMOTE_S3_ACCESS_KEY_ID"
+    )
+    remote_s3_secret_access_key: str = Field(
+        default="", alias="DEPLOYMENT_REMOTE_S3_SECRET_ACCESS_KEY"
+    )
+    remote_s3_bucket: str = Field(default="", alias="DEPLOYMENT_REMOTE_S3_BUCKET")
+
+    # Sync-worker tuning (offline profile only).
+    sync_batch_size: int = Field(default=50, alias="DEPLOYMENT_SYNC_BATCH_SIZE")
+    sync_interval_sec: float = Field(default=10.0, alias="DEPLOYMENT_SYNC_INTERVAL_SEC")
+    sync_max_attempts: int = Field(default=10, alias="DEPLOYMENT_SYNC_MAX_ATTEMPTS")
+    sync_processing_timeout_sec: float = Field(
+        default=120.0, alias="DEPLOYMENT_SYNC_PROCESSING_TIMEOUT_SEC"
+    )
+
+    @property
+    def is_offline_first(self) -> bool:
+        """Local Postgres/MinIO is the primary store."""
+        return self.mode == "offline"
+
+    @property
+    def outbox_enabled(self) -> bool:
+        """Offline profile produces outbox rows; sync-worker drains them."""
+        return self.mode == "offline"
+
+
+class SecuritySettings(BaseEnvSettings):
+    """Transport security (mTLS for the RPi link).
+
+    See ADR-0007. ``off`` is dev-only; the offline profile must run
+    with ``mtls`` because the RPi link traverses an untrusted local
+    network with no public tunnel in front of it.
+    """
+
+    tls_mode: TlsMode = Field(default="off", alias="TLS_MODE")
+    ca_cert_path: str = Field(default="", alias="TLS_CA_CERT_PATH")
+    client_cert_path: str = Field(default="", alias="TLS_CLIENT_CERT_PATH")
+    client_key_path: str = Field(default="", alias="TLS_CLIENT_KEY_PATH")
+    # Shared-secret bearer token for the HTTP API (cloud profile). When set,
+    # every API request must carry ``Authorization: Bearer <token>``; probes
+    # and the UI shell stay open (see interfaces/api/auth.py). Empty disables
+    # the gate so offline/dev keep working without a token. Source it from
+    # Vault/env in production.
+    api_auth_token: str = Field(default="", alias="API_AUTH_TOKEN")
+
+    @model_validator(mode="after")
+    def _validate_paths(self) -> "SecuritySettings":
+        if self.tls_mode == "mtls":
+            missing = [
+                name
+                for name, value in (
+                    ("TLS_CA_CERT_PATH", self.ca_cert_path),
+                    ("TLS_CLIENT_CERT_PATH", self.client_cert_path),
+                    ("TLS_CLIENT_KEY_PATH", self.client_key_path),
+                )
+                if not value
+            ]
+            if missing:
+                raise ValueError("TLS_MODE=mtls requires: " + ", ".join(missing))
+        return self
 
 
 class Settings(BaseSettings):
@@ -81,6 +216,39 @@ class Settings(BaseSettings):
     storage: StorageSettings
     rpi: RpiSettings
     detection: DetectionSettings
+    uploads: UploadSettings
+    auto_stream: AutoStreamSettings
+    # Defaults keep cloud-mode wiring valid for callers that still
+    # construct ``Settings(app=..., api=..., ...)`` without the new
+    # sub-settings (legacy tests, scripts).
+    deployment: DeploymentSettings = Field(default_factory=DeploymentSettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
+    navigation_service: NavigationServiceSettings = Field(
+        default_factory=NavigationServiceSettings
+    )
+
+    @model_validator(mode="after")
+    def _validate_profile(self) -> "Settings":
+        deployment_mode = str(getattr(self.deployment, "mode", "cloud"))
+        tls_mode = str(getattr(self.security, "tls_mode", "off"))
+        app_env = str(getattr(self.app, "env", "dev"))
+        rpi_base_url = str(getattr(getattr(self, "rpi", None), "base_url", "") or "")
+        # ADR-0007 §4: when the offline station actually drives the RPi link,
+        # that link MUST be mTLS (no public tunnel protects it in the field).
+        # The guard is scoped to services that talk to the RPi (they have
+        # ``rpi.base_url`` set); sync-worker / batch have no RPi link and are
+        # exempt — requiring mTLS from them would be a false positive.
+        if (
+            deployment_mode == "offline"
+            and tls_mode == "off"
+            and app_env != "dev"
+            and rpi_base_url.strip()
+        ):
+            raise ValueError(
+                "TLS_MODE=off is not allowed when DEPLOYMENT_MODE="
+                f"{deployment_mode} outside dev with an RPi link configured"
+            )
+        return self
 
 
 @lru_cache(maxsize=1)
@@ -92,4 +260,9 @@ def get_settings() -> Settings:
         storage=StorageSettings(),
         rpi=RpiSettings(),
         detection=DetectionSettings(),
+        uploads=UploadSettings(),
+        auto_stream=AutoStreamSettings(),
+        deployment=DeploymentSettings(),
+        security=SecuritySettings(),
+        navigation_service=NavigationServiceSettings(),
     )

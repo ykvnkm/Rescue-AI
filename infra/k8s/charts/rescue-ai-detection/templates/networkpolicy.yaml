@@ -1,0 +1,62 @@
+{{- if and .Values.enabled .Values.networkPolicy.enabled }}
+# NetworkPolicy для detection: единственный legitimate caller — api.
+# Egress нужен только для скачивания весов модели из S3.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "rescue-ai-detection.fullname" . }}
+  labels:
+    {{- include "rescue-ai-detection.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "rescue-ai-detection.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # api — единственный клиент detection.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rescue-ai-api
+      ports:
+        - port: 8002
+          protocol: TCP
+    # Prometheus собирает /metrics.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8002
+          protocol: TCP
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # S3 (MinIO в offline, Yandex Object Storage в cloud) — для
+    # скачивания весов модели при старте.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: minio
+      ports:
+        - port: 9000
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16
+      ports:
+        - port: 443    # внешний S3 (https://storage.yandexcloud.net)
+          protocol: TCP
+{{- end }}

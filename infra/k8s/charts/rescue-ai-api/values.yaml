@@ -1,0 +1,200 @@
+# Дефолты под dev-кластер (kind / minikube). Профили cloud и offline
+# переопределяют то, что отличается, через umbrella values-файлы.
+
+replicaCount: 1
+
+image:
+  repository: rescue-ai-api
+  pullPolicy: IfNotPresent
+  tag: "local"
+
+imagePullSecrets: []
+
+deployment:
+  # Профиль ADR-0007. Меняется в values/<profile>.yaml.
+  deploymentMode: cloud
+  # Уровень логирования API. DEBUG включает navigation logs.
+  logLevel: INFO
+  appEnv: dev
+  serviceVersion: dev
+
+# Конфиг через ConfigMap. Секреты идут отдельно — либо через Vault
+# Agent Injector, либо через kube-Secret (см. secrets.* ниже).
+config:
+  api:
+    # Public-demo per-IP request cap (requests/min). 0 disables the limiter
+    # (controlled deployments rely on the bearer gate instead). The bearer
+    # token itself (API_AUTH_TOKEN) is a Vault secret, not set here.
+    rateLimitPerMin: 0
+  rpi:
+    baseUrl: ""
+    missionsDir: ""
+    rtspPort: 8554
+    rtspPathPrefix: live
+    timeoutSec: 10
+  storage:
+    s3Endpoint: ""
+    s3Region: ru-central1
+    s3Bucket: ""
+    s3Prefix: missions
+  detection:
+    httpTimeoutSec: 1.0
+
+  # ADR-0008 §1: если развёрнуты сервисы rescue-ai-nav-engine /
+  # rescue-ai-detection, проставь сюда их Service-URL — API
+  # переключится на HTTP-адаптеры портов. Пустые строки = монолит.
+  services:
+    navEngineUrl: ""
+    navEngineTimeoutSec: 30.0
+    detectorUrl: ""
+    detectorTimeoutSec: 30.0
+
+# Канал до Raspberry Pi. mTLS управляется на уровне самого пода
+# (см. ADR-0007 §4). Для cloud-профиля можно ставить tlsMode: off.
+security:
+  tlsMode: "off"
+  ca:
+    # Source for mTLS material when tlsMode=mtls: kube | vault.
+    source: kube
+    # Имя secret'а в кластере с cert-материалом, если tlsMode=mtls.
+    # Вытащит ключи: ca.crt, client.crt, client.key.
+    existingSecret: ""
+    vault:
+      role: rescue-ai-api
+      secretPath: rescue-ai/rpi-mtls
+
+# Источник секретов: vault | kube | none.
+#
+# vault — Vault Agent Injector рендерит файлы в /vault/secrets, init-script
+#         подгружает их как env (см. шаблон deployment).
+# kube  — обычный k8s Secret, монтируется через envFrom.
+# none  — секреты не монтируются (для голого dev/CI).
+secrets:
+  source: kube
+  kube:
+    # Имя существующего Secret. Если оставить пустым, чарт создаст
+    # rescue-ai-api-secret из inline-полей ниже (только dev!).
+    existingSecret: ""
+    inline:
+      DB_DSN: ""
+      ARTIFACTS_S3_ACCESS_KEY_ID: ""
+      ARTIFACTS_S3_SECRET_ACCESS_KEY: ""
+  vault:
+    role: rescue-ai-api
+    # Путь в KV v2: secret/data/<path>.
+    secretPath: rescue-ai/api
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: rescue-ai.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+probes:
+  # liveness — "под жив?" (если фейлится, kubelet перезапускает контейнер)
+  liveness:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 30
+    failureThreshold: 3
+  # readiness — "под готов принимать трафик?" (если фейлится, Service
+  # убирает его из endpoints, но контейнер не перезапускается).
+  readiness:
+    httpGet:
+      path: /ready
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  # startupProbe — отдельная фаза для медленного старта (загрузка
+  # моделей, выкачивание весов из S3). Пока startupProbe идёт,
+  # liveness/readiness ОТКЛЮЧЕНЫ — иначе долгая инициализация
+  # выглядела бы как зависший под и kubelet бесконечно перезапускал
+  # бы его. failureThreshold × periodSeconds = бюджет на старт.
+  startup:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 5
+    failureThreshold: 60   # 60 * 5s = 5 минут на запуск
+
+# Графусное завершение. При rollout/scale-down/drain k8s посылает
+# SIGTERM, ждёт preStop, ждёт terminationGracePeriodSeconds, потом
+# SIGKILL. preStop sleep даёт Service время удалить под из endpoints
+# до того, как uvicorn начнёт отказывать в коннектах.
+terminationGracePeriodSeconds: 30
+lifecycle:
+  preStop:
+    exec:
+      command: ["/bin/sh", "-c", "sleep 5"]
+
+# initContainers (учебная норма для прод-API с DB-зависимостью).
+# wait-for-postgres блокирует старт api, пока DB не отвечает —
+# без него под крашится при первом запросе и kubectl rollout видит
+# CrashLoopBackOff вместо предсказуемого Init.
+initContainers:
+  waitForPostgres:
+    enabled: false        # включается в offline.yaml (там Postgres
+                          # поднимается рядом и может ещё инициализироваться)
+    image: postgres:16-alpine
+    timeoutSec: 120
+
+# Кластер k8s следит за тем, чтобы при добровольном выселении подов
+# (drain ноды, перекатка) одновременно недоступно было не более
+# maxUnavailable штук. enabled=false по умолчанию (1 реплика — PDB
+# с maxUnavailable=0 заблокировал бы drain ноды совсем).
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+# HPA — масштабирование api по CPU (включается в cloud.yaml).
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+nodeSelector: {}
+tolerations: []
+# Дефолт пустой; cloud.yaml ставит podAntiAffinity (replicas > 1
+# не должны жить на одной ноде) и topologySpreadConstraints.
+affinity: {}
+topologySpreadConstraints: []
+
+# NetworkPolicy включается в обоих прод-профилях (см. cloud/offline
+# umbrella values). По умолчанию выключена для совместимости с dev
+# kind-кластерами без CNI, поддерживающим NetworkPolicy.
+networkPolicy:
+  enabled: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  # api пишет временные файлы (uvicorn access-log буфер,
+  # tempfile artifact storage download). Полностью readOnly включить
+  # не получится без `emptyDir` томов; оставляем false до миграции
+  # путей записи в /tmp.
+  readOnlyRootFilesystem: false

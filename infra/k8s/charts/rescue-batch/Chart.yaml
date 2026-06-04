@@ -1,0 +1,45 @@
+apiVersion: v2
+name: rescue-batch
+description: |
+  Umbrella-чарт batch-контура Rescue-AI.
+
+  Развёртывается ОТДЕЛЬНЫМ helm release в отдельном namespace
+  `rescue-batch` — изолированно от прикладного `rescue-ai`. Это даёт:
+
+  * ресурсные квоты только для batch-нагрузки (ML-стадии берут много
+    CPU/RAM эпизодически), не мешают онлайн-обработке миссий;
+  * NetworkPolicy default-deny с явными правилами «к managed Postgres
+    и S3» — batch-контур не должен ходить никуда в `rescue-ai`;
+  * независимый цикл обновлений: можно обновить Airflow или DAG'и,
+    не трогая прод-API;
+  * отдельные RBAC и ServiceAccount.
+
+  Batch включает:
+   * apache-airflow (stock) — KubernetesExecutor, scheduler + webserver
+     + workers создаются ephemeral на каждую таску из этого namespace;
+   * rescue-ai-batch-exporter — мост batch_pipeline_metrics + drift
+     metrics в Prometheus gauges.
+
+  ADR-0008 §1, §4.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: Maxim Yakovenko
+
+dependencies:
+  # Apache Airflow. Stock-образ apache/airflow:2.9.3 + DAG'и через
+  # git-sync. На каждой ML-таске KubernetesPodOperator поднимает
+  # ephemeral под из нашего rescue-ai-batch-worker (см. cloud values).
+  - name: airflow
+    version: "1.15.0"
+    repository: https://airflow.apache.org
+    condition: airflow.enabled
+
+  # batch-exporter — наш микросервис, читает batch_pipeline_metrics +
+  # drift_observations из managed Postgres и публикует Prometheus
+  # gauges. Включается в обоих профилях batch-контура.
+  - name: rescue-ai-batch-exporter
+    version: 0.1.0
+    repository: file://../rescue-ai-batch-exporter
+    condition: rescue-ai-batch-exporter.enabled

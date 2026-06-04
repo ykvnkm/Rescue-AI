@@ -21,7 +21,7 @@ class _FakeDetector:
     def warmup(self) -> None:
         return None
 
-    def detect(self, image_uri: str) -> list[Detection]:
+    def detect(self, image_uri: object) -> list[Detection]:
         _ = image_uri
         return [
             Detection(
@@ -37,7 +37,7 @@ class _FakeDetector:
 
 
 class _FailingDetector(_FakeDetector):
-    def detect(self, image_uri: str) -> list[Detection]:
+    def detect(self, image_uri: object) -> list[Detection]:
         _ = image_uri
         raise RuntimeError("detector error")
 
@@ -63,7 +63,8 @@ def _build_config(frame_files: list[Path], mission_id: str = "m1") -> StreamConf
         api_base="http://localhost:8000",
         annotations=_FakeAnnotationIndex(),
         inference=InferenceConfig(
-            model_url="s3://bucket/model.pt",
+            runtime="pt",
+            pt_model_url="s3://bucket/model.pt",
             device="cpu",
             imgsz=640,
             nms_iou=0.5,

@@ -1,0 +1,13 @@
+{{- if and .Values.enabled .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "rescue-ai-batch-exporter.fullname" . }}
+  labels:
+    {{- include "rescue-ai-batch-exporter.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "rescue-ai-batch-exporter.selectorLabels" . | nindent 6 }}
+{{- end }}

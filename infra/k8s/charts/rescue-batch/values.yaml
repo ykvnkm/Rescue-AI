@@ -1,0 +1,56 @@
+# Дефолты umbrella-чарта rescue-batch.
+#
+# Релиз ставится в namespace `rescue-batch`:
+#   helm upgrade --install rescue-batch infra/k8s/charts/rescue-batch \
+#     -n rescue-batch --create-namespace \
+#     -f infra/k8s/values/rescue-batch-cloud.yaml
+#
+# Минимальный профиль (defaults ниже) разворачивает контур пустым:
+# реальные значения задаются в profile values.
+
+# Включает создание Namespace объекта чартом. Полезно для declarative
+# install; если namespace уже создаёт оператор (например через
+# kubectl create), оставь false.
+createNamespace: false
+
+# Имя namespace, в котором запускается весь batch контур. Менять
+# нельзя без согласованной правки vault_bootstrap.sh (там же
+# bound_service_account_namespaces).
+namespace: rescue-batch
+
+# ResourceQuota — потолок на ВЕСЬ namespace. Сделан с запасом для
+# ephemeral batch-worker подов KubernetesPodOperator'а (на каждой
+# стадии поднимается под ~1.5 CPU / ~3 GiB).
+resourceQuota:
+  enabled: true
+  hard:
+    requests.cpu: "8"
+    requests.memory: "16Gi"
+    limits.cpu: "16"
+    limits.memory: "32Gi"
+    persistentvolumeclaims: "5"
+    pods: "20"
+
+# LimitRange — дефолтные requests/limits для подов без явных значений
+# (например ad-hoc-debug pod через kubectl exec).
+limitRange:
+  enabled: true
+  defaultRequest:
+    cpu: 100m
+    memory: 128Mi
+  default:
+    cpu: 500m
+    memory: 512Mi
+
+# NetworkPolicy по умолчанию выключена (можно включить в cloud).
+# default-deny + явные allow правила.
+networkPolicy:
+  enabled: false
+
+# Airflow и batch-exporter — субчарты. По умолчанию выключены;
+# enabled=true ставится в profile values.
+airflow:
+  enabled: false
+
+rescue-ai-batch-exporter:
+  enabled: false

@@ -1,0 +1,15 @@
+dependencies:
+- name: rescue-ai-api
+  repository: file://../rescue-ai-api
+  version: 0.1.0
+- name: rescue-ai-sync-worker
+  repository: file://../rescue-ai-sync-worker
+  version: 0.1.0
+- name: rescue-ai-nav-engine
+  repository: file://../rescue-ai-nav-engine
+  version: 0.1.0
+- name: rescue-ai-detection
+  repository: file://../rescue-ai-detection
+  version: 0.1.0
+digest: sha256:33211ffd71ce1482aa43b729c4a183ec9caac528852e85d0b01575bd80ca5459
+generated: "2026-05-30T14:04:46.051013+03:00"
