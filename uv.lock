@@ -248,7 +248,7 @@ wheels = [
 
 [[package]]
 name = "apache-airflow-providers-cncf-kubernetes"
-version = "8.3.4"
+version = "8.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -259,9 +259,9 @@ dependencies = [
     { name = "kubernetes" },
     { name = "kubernetes-asyncio" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d9/31/aa0d37511dcf431ea548e92a09ff49240753e9523388f2ecd80c2b4b5df7/apache_airflow_providers_cncf_kubernetes-8.3.4.tar.gz", hash = "sha256:b0463b22712c5d69b629139baad06e2496e81d2c1f4422a5ea7ed2321f9df133", size = 97860, upload-time = "2024-08-06T20:31:55.301Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/43/95/77ca069f03f1a452fbb6fbb6f873a959764bc8739dc070d9584915aaf365/apache_airflow_providers_cncf_kubernetes-8.3.3.tar.gz", hash = "sha256:a680e0e659e73da12c44a2878875b22b2c535bcfc1025c3d97f942eb0bf094b1", size = 97620, upload-time = "2024-07-12T12:36:59.463Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cb/25/51c14417bf485f6d8d55fe0166492f6ff388aa1431dad984556944313193/apache_airflow_providers_cncf_kubernetes-8.3.4-py3-none-any.whl", hash = "sha256:020d44a5aaa6d06034980bdc991e76f53253d7d43657eaee2a5055cde839e013", size = 145362, upload-time = "2024-08-06T20:30:37.876Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/8a/1433372a122d69b90fe8569bfd7c728370892891103bc00b9fd7b0dd3669/apache_airflow_providers_cncf_kubernetes-8.3.3-py3-none-any.whl", hash = "sha256:559e19a124f851347900eaff154c2680c30e7839b25dd4878a05a835f1825de5", size = 145165, upload-time = "2024-07-12T12:36:26.017Z" },
 ]
 
 [[package]]
@@ -3636,7 +3636,7 @@ sync-worker = [
 [package.metadata]
 requires-dist = [
     { name = "apache-airflow", marker = "extra == 'airflow'", specifier = "==2.9.3" },
-    { name = "apache-airflow-providers-cncf-kubernetes", marker = "extra == 'airflow'", specifier = "==8.3.4" },
+    { name = "apache-airflow-providers-cncf-kubernetes", marker = "extra == 'airflow'", specifier = "==8.3.3" },
     { name = "apache-airflow-providers-hashicorp", marker = "extra == 'airflow'", specifier = "==4.0.0" },
     { name = "black", marker = "extra == 'dev'", specifier = "==24.10.0" },
     { name = "boto3", marker = "extra == 'api'", specifier = "==1.42.65" },

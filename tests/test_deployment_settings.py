@@ -26,13 +26,14 @@ def _make(
     deployment: DeploymentSettings,
     security: SecuritySettings,
     env: str = "dev",
+    rpi_base_url: str = "",
 ) -> Settings:
     return Settings(
         app=AppSettings(APP_ENV=env),
         api=ApiSettings(),
         database=DatabaseSettings(DB_DSN="postgresql://x/y"),
         storage=StorageSettings(),
-        rpi=RpiSettings(),
+        rpi=RpiSettings(RPI_BASE_URL=rpi_base_url),
         detection=DetectionSettings(),
         uploads=UploadSettings(),
         auto_stream=AutoStreamSettings(),
@@ -84,12 +85,13 @@ def test_offline_profile_in_dev_allows_tls_off() -> None:
     assert str(getattr(settings.deployment, "mode", "")) == "offline"
 
 
-def test_offline_profile_outside_dev_rejects_tls_off() -> None:
+def test_offline_profile_outside_dev_rejects_tls_off_with_rpi_link() -> None:
     with pytest.raises(ValueError):
         _make(
             deployment=DeploymentSettings(DEPLOYMENT_MODE="offline"),
             security=cast(Any, SecuritySettings)(TLS_MODE="off", _env_file=None),
             env="field",
+            rpi_base_url="https://rpi.local",
         )
 
 

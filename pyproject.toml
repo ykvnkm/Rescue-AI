@@ -79,7 +79,7 @@ batch-exporter = [
 # `python -c "import airflow"` и для линтинга DAG-файлов в CI.
 airflow = [
   "apache-airflow==2.9.3",
-  "apache-airflow-providers-cncf-kubernetes==8.3.4",
+  "apache-airflow-providers-cncf-kubernetes==8.3.3",
   "apache-airflow-providers-hashicorp==4.0.0",
   "psycopg2-binary==2.9.10",
 ]
