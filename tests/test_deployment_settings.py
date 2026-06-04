@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from rescue_ai.config import (
@@ -59,15 +61,16 @@ def test_outbox_enabled_in_offline() -> None:
 
 def test_security_mtls_requires_paths() -> None:
     with pytest.raises(ValueError):
-        SecuritySettings(TLS_MODE="mtls")
+        cast(Any, SecuritySettings)(TLS_MODE="mtls", _env_file=None)
 
 
 def test_security_mtls_accepts_paths() -> None:
-    sec = SecuritySettings(
+    sec = cast(Any, SecuritySettings)(
         TLS_MODE="mtls",
         TLS_CA_CERT_PATH="/etc/ca.crt",
         TLS_CLIENT_CERT_PATH="/etc/client.crt",
         TLS_CLIENT_KEY_PATH="/etc/client.key",
+        _env_file=None,
     )
     assert sec.tls_mode == "mtls"
 
@@ -75,7 +78,7 @@ def test_security_mtls_accepts_paths() -> None:
 def test_offline_profile_in_dev_allows_tls_off() -> None:
     settings = _make(
         deployment=DeploymentSettings(DEPLOYMENT_MODE="offline"),
-        security=SecuritySettings(TLS_MODE="off"),
+        security=cast(Any, SecuritySettings)(TLS_MODE="off", _env_file=None),
         env="dev",
     )
     assert str(getattr(settings.deployment, "mode", "")) == "offline"
@@ -85,7 +88,7 @@ def test_offline_profile_outside_dev_rejects_tls_off() -> None:
     with pytest.raises(ValueError):
         _make(
             deployment=DeploymentSettings(DEPLOYMENT_MODE="offline"),
-            security=SecuritySettings(TLS_MODE="off"),
+            security=cast(Any, SecuritySettings)(TLS_MODE="off", _env_file=None),
             env="field",
         )
 
@@ -95,7 +98,7 @@ def test_cloud_profile_allows_tls_off_anywhere() -> None:
     # public tunnel, mTLS is optional.
     settings = _make(
         deployment=DeploymentSettings(DEPLOYMENT_MODE="cloud"),
-        security=SecuritySettings(TLS_MODE="off"),
+        security=cast(Any, SecuritySettings)(TLS_MODE="off", _env_file=None),
         env="prod",
     )
     assert str(getattr(settings.security, "tls_mode", "")) == "off"

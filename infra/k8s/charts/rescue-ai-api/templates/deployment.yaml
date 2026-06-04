@@ -5,7 +5,11 @@ metadata:
   labels:
     {{- include "rescue-ai-api.labels" . | nindent 4 }}
 spec:
+  # При включённом HPA replicas-поле не задаём — иначе helm и HPA
+  # бесконечно перебивают друг друга при каждом helm upgrade.
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "rescue-ai-api.selectorLabels" . | nindent 6 }}
@@ -20,6 +24,7 @@ spec:
         # Vault Agent Injector подмешивает sidecar'ы и пишет файлы
         # в /vault/secrets/. См. ADR-0008 §3.
         vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-init-first: "true"
         vault.hashicorp.com/role: {{ .Values.secrets.vault.role | quote }}
         # Один шаблон секрета — экспортируется как KV v2 объект и
         # читается приложением через init-loader (см. command ниже).
@@ -30,6 +35,23 @@ spec:
           {{`{{ $k }}={{ $v }}`}}
           {{`{{- end }}`}}
           {{`{{- end }}`}}
+        {{- if and (eq (.Values.security.tlsMode | toString) "mtls") (eq .Values.security.ca.source "vault") }}
+        vault.hashicorp.com/agent-inject-secret-station-root-ca.crt: {{ printf "secret/data/%s" .Values.security.ca.vault.secretPath | quote }}
+        vault.hashicorp.com/agent-inject-template-station-root-ca.crt: |
+          {{`{{- with secret "`}}{{ printf "secret/data/%s" .Values.security.ca.vault.secretPath }}{{`" -}}`}}
+          {{`{{ .Data.data.ca_crt }}`}}
+          {{`{{- end }}`}}
+        vault.hashicorp.com/agent-inject-secret-gcs-client.crt: {{ printf "secret/data/%s" .Values.security.ca.vault.secretPath | quote }}
+        vault.hashicorp.com/agent-inject-template-gcs-client.crt: |
+          {{`{{- with secret "`}}{{ printf "secret/data/%s" .Values.security.ca.vault.secretPath }}{{`" -}}`}}
+          {{`{{ .Data.data.client_crt }}`}}
+          {{`{{- end }}`}}
+        vault.hashicorp.com/agent-inject-secret-gcs-client.key: {{ printf "secret/data/%s" .Values.security.ca.vault.secretPath | quote }}
+        vault.hashicorp.com/agent-inject-template-gcs-client.key: |
+          {{`{{- with secret "`}}{{ printf "secret/data/%s" .Values.security.ca.vault.secretPath }}{{`" -}}`}}
+          {{`{{ .Data.data.client_key }}`}}
+          {{`{{- end }}`}}
+        {{- end }}
         {{- end }}
     spec:
       serviceAccountName: {{ include "rescue-ai-api.serviceAccountName" . }}
@@ -37,14 +59,59 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.initContainers.waitForPostgres.enabled }}
+      # wait-for-postgres init-контейнер — pg_isready в цикле до
+      # таймаута. Использует образ postgres только ради клиента;
+      # стартует под одним SA с основным контейнером, поэтому
+      # читает DB_DSN тем же envFrom-ом (см. ниже).
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ .Values.initContainers.waitForPostgres.image | quote }}
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: {{ include "rescue-ai-api.fullname" . }}-config
+            {{- if eq .Values.secrets.source "kube" }}
+            - secretRef:
+                name: {{ include "rescue-ai-api.kubeSecretName" . }}
+            {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              # DB_DSN либо из Vault Agent (файл), либо из env.
+              if [ -f /vault/secrets/app.env ]; then
+                set -a; . /vault/secrets/app.env; set +a
+              fi
+              deadline=$(( $(date +%s) + {{ .Values.initContainers.waitForPostgres.timeoutSec }} ))
+              until pg_isready -d "$DB_DSN" -q; do
+                if [ $(date +%s) -gt $deadline ]; then
+                  echo "wait-for-postgres: timeout"
+                  exit 1
+                fi
+                echo "wait-for-postgres: still waiting"
+                sleep 2
+              done
+              echo "wait-for-postgres: ready"
+          {{- if eq .Values.secrets.source "vault" }}
+          # Init-контейнеру тоже нужен файл /vault/secrets/app.env —
+          # Vault Agent Injector рендерит его всем контейнерам пода.
+          {{- end }}
+      {{- end }}
       containers:
         - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- with .Values.lifecycle }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- if eq .Values.secrets.source "vault" }}
           # Vault Agent Injector положил KV-секрет в /vault/secrets/app.env.
           # Source грузит его в окружение перед стартом приложения.
@@ -84,7 +151,7 @@ spec:
               value: "0.0.0.0"
             - name: APP_PORT
               value: "8000"
-          {{- if and (eq (.Values.security.tlsMode | toString) "mtls") .Values.security.ca.existingSecret }}
+          {{- if and (eq (.Values.security.tlsMode | toString) "mtls") (eq .Values.security.ca.source "kube") .Values.security.ca.existingSecret }}
           volumeMounts:
             - name: rpi-mtls
               mountPath: /app/certs
@@ -94,9 +161,13 @@ spec:
             {{- toYaml .Values.probes.liveness | nindent 12 }}
           readinessProbe:
             {{- toYaml .Values.probes.readiness | nindent 12 }}
+          {{- with .Values.probes.startup }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-      {{- if and (eq (.Values.security.tlsMode | toString) "mtls") .Values.security.ca.existingSecret }}
+      {{- if and (eq (.Values.security.tlsMode | toString) "mtls") (eq .Values.security.ca.source "kube") .Values.security.ca.existingSecret }}
       volumes:
         - name: rpi-mtls
           secret:
@@ -116,6 +187,10 @@ spec:
       {{- end }}
       {{- with .Values.affinity }}
       affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.tolerations }}

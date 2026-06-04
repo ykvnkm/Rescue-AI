@@ -716,6 +716,12 @@
 <body>
 <header>
   <h1>Наземная станция мониторинга</h1>
+  <div id="apiTokenBox" style="display:none;align-items:center;gap:6px;">
+    <label for="apiTokenInput" style="font-size:12px;color:var(--muted);">API-токен</label>
+    <input type="password" id="apiTokenInput" class="input-strong" style="width:200px;"
+           placeholder="Bearer-токен сервиса" autocomplete="off" />
+    <button type="button" class="btn secondary" id="apiTokenSave">Сохранить</button>
+  </div>
 </header>
 
 <div class="mode-tabs">
@@ -768,21 +774,6 @@
       </div>
     </div>
 
-    <div class="operator-plots">
-      <div class="auto-plot operator-plot-3d">
-        <h4>Траектория 3D</h4>
-        <div id="operatorPlot3d" class="auto-plot-body" style="width:100%;height:100%;"></div>
-      </div>
-      <div class="auto-plot operator-plot">
-        <h4>Плоскость XY</h4>
-        <div id="operatorPlotXY" class="auto-plot-body" style="width:100%;height:100%;"></div>
-      </div>
-      <div class="auto-plot operator-plot">
-        <h4>Высота Z(t)</h4>
-        <div id="operatorPlotZ" class="auto-plot-body" style="width:100%;height:100%;"></div>
-      </div>
-    </div>
-
     <div class="meta-row">
       <div class="meta-item">
         <span class="k">Время алерта</span>
@@ -801,6 +792,21 @@
     <div class="actions">
       <button class="action-btn confirm" onclick="reviewCurrent('confirm')">Подтвердить</button>
       <button class="action-btn reject" onclick="reviewCurrent('reject')">Отклонить</button>
+    </div>
+
+    <div class="operator-plots">
+      <div class="auto-plot operator-plot-3d">
+        <h4>Траектория 3D</h4>
+        <div id="operatorPlot3d" class="auto-plot-body" style="width:100%;height:100%;"></div>
+      </div>
+      <div class="auto-plot operator-plot">
+        <h4>Плоскость XY</h4>
+        <div id="operatorPlotXY" class="auto-plot-body" style="width:100%;height:100%;"></div>
+      </div>
+      <div class="auto-plot operator-plot">
+        <h4>Высота Z(t)</h4>
+        <div id="operatorPlotZ" class="auto-plot-body" style="width:100%;height:100%;"></div>
+      </div>
     </div>
 
     <div class="card" style="padding:12px; margin-top:4px;">
@@ -879,10 +885,19 @@
             <input type="text" id="autoRtspUrl" class="input-strong" placeholder="rtsp://host:8554/live/session" />
           </div>
 
-          <!-- FRAMES source: local = путь к папке, stream = миссия RPi -->
-          <div class="field" data-src-field="frames" data-channel="local" style="display:none;">
-            <label class="form-label" for="autoFramesDir">Путь к директории с кадрами</label>
-            <input type="text" id="autoFramesDir" class="input-strong" placeholder="/data/missions/forest-2026" />
+          <!-- FRAMES source (local): offline = ZIP upload, cloud = re-run from S3 -->
+          <div class="field" data-src-field="frames" data-channel="local" data-profile="offline" style="display:none;">
+            <label class="form-label" for="autoFramesZip">ZIP-архив кадров</label>
+            <input type="file" id="autoFramesZip" accept=".zip,application/zip" class="auto-file-input" />
+            <label class="auto-file-dropzone" id="autoFramesZipDropzone" for="autoFramesZip">
+              <span class="auto-file-drop-title" id="autoFramesZipDropTitle">Перетащите или выберите ZIP миссии</span>
+              <span class="auto-file-drop-hint">Структура как в S3: frames/*.jpg + опционально labels.json</span>
+            </label>
+          </div>
+          <div class="field" data-src-field="frames" data-channel="local" data-profile="cloud" style="display:none;">
+            <label class="form-label" for="autoS3Mission">Миссия в облаке (S3)</label>
+            <select id="autoS3Mission" class="select-strong"><option value="">Загрузка миссий из S3...</option></select>
+            <small style="color:var(--muted);font-size:11px;">Кадры подтянутся из S3 и прогонятся заново; результат перезапишет ту же миссию.</small>
           </div>
           <div class="field" data-src-field="frames" data-channel="stream" style="display:none;">
             <label class="form-label" for="autoFramesMission">Миссия RaspberryPi</label>
@@ -908,6 +923,14 @@
           <div class="field">
             <label class="form-label" for="autoFps">FPS</label>
             <input type="number" id="autoFps" class="input-strong" value="6" min="1" max="60" step="1" />
+          </div>
+          <div class="field">
+            <label class="form-label" for="autoOriginLat">Точка старта (необязательно)</label>
+            <div style="display:flex;gap:8px;">
+              <input type="number" id="autoOriginLat" class="input-strong" style="flex:1;" placeholder="широта" step="any" min="-90" max="90" />
+              <input type="number" id="autoOriginLon" class="input-strong" style="flex:1;" placeholder="долгота" step="any" min="-180" max="180" />
+            </div>
+            <small style="color:var(--muted);font-size:11px;">Если задана — траектория и отчёт будут в абсолютных координатах (иначе — в метрах от старта).</small>
           </div>
 
           <div class="auto-toggle-row">
@@ -973,7 +996,7 @@
           <div id="autoPlot3d" class="auto-plot-body" style="width:100%;height:100%;"></div>
         </div>
         <div class="auto-plot">
-          <h4>Плоскость XY</h4>
+          <h4>Плоскость XY <span id="autoCoordsReadout" style="font-weight:400;font-size:11px;color:var(--muted);"></span></h4>
           <div id="autoPlotXY" class="auto-plot-body" style="width:100%;height:100%;"></div>
         </div>
         <div class="auto-plot">
@@ -993,6 +1016,7 @@
             <tr><td>Кадров обработано</td><td id="arFrames">&mdash;</td></tr>
             <tr><td>Алертов всего</td><td id="arAlerts">&mdash;</td></tr>
             <tr><td>Точек траектории</td><td id="arPoints">&mdash;</td></tr>
+            <tr><td>Система координат</td><td id="arCoordSystem">&mdash;</td></tr>
             <tr><td>Длительность (с)</td><td id="arDuration">&mdash;</td></tr>
             <tr><td>Решения</td><td id="arDecisions">&mdash;</td></tr>
             <tr><td>Сгенерирован</td><td id="arGeneratedAt">&mdash;</td></tr>
@@ -1015,6 +1039,54 @@
 </div><!-- /#autoMode -->
 
 <script>
+// Injected by build_ui_html() — selects the frames source UX per profile
+// (offline → ZIP upload, cloud → re-run from S3) and whether to show the API
+// token box. Defaults to cloud when served without substitution.
+window.DEPLOYMENT_MODE = "__DEPLOYMENT_MODE__".indexOf("DEPLOYMENT_MODE") >= 0
+  ? "cloud" : "__DEPLOYMENT_MODE__";
+
+/* ---- API auth: attach the shared-secret bearer token to same-origin calls.
+   Installed before any fetch() runs so every API request carries the token
+   the operator saved. No-op when no token is stored (gate disabled). ---- */
+const API_TOKEN_KEY = 'rescueApiToken';
+function getApiToken() {
+  try { return localStorage.getItem(API_TOKEN_KEY) || ''; } catch (e) { return ''; }
+}
+(function installAuthFetch() {
+  const origFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    init = init || {};
+    const token = getApiToken();
+    let sameOrigin = true;
+    try {
+      const ref = (typeof input === 'string' || input instanceof URL) ? input : input.url;
+      sameOrigin = new URL(ref, window.location.origin).origin === window.location.origin;
+    } catch (e) { sameOrigin = true; }
+    if (token && sameOrigin) {
+      const headers = new Headers(init.headers || (input && input.headers) || {});
+      if (!headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + token);
+      init = Object.assign({}, init, { headers });
+    }
+    return origFetch(input, init);
+  };
+})();
+
+(function setupApiTokenBox() {
+  const box = document.getElementById('apiTokenBox');
+  const input = document.getElementById('apiTokenInput');
+  const save = document.getElementById('apiTokenSave');
+  if (!box || !input || !save) return;
+  // The cloud profile is where the gate is typically enabled; offline/dev
+  // run without a token, so keep the box hidden there to avoid confusion.
+  if (window.DEPLOYMENT_MODE === 'cloud') box.style.display = 'flex';
+  input.value = getApiToken();
+  save.addEventListener('click', () => {
+    try { localStorage.setItem(API_TOKEN_KEY, input.value.trim()); } catch (e) {}
+    save.textContent = 'Сохранено';
+    setTimeout(() => { save.textContent = 'Сохранить'; }, 1500);
+  });
+})();
+
 const alertSeenAt = new Map();
 let currentAlert = null;
 let currentMissionId = '';
@@ -1664,6 +1736,7 @@ loadMissionCatalog(false);
 
 const AUTO = {
   sourceKind: 'video',
+  origin: null,
   session: null,
   ws: null,
   plots: { initialized: false },
@@ -1717,13 +1790,17 @@ function applyAutoChannelAndTab() {
     });
   }
 
-  // Field visibility: only fields whose data-src-field matches current tab,
-  // AND whose data-channel is empty or matches current channel.
+  // Field visibility: a field shows when its data-src-field matches the
+  // current tab, its data-channel matches the channel (or is empty), and its
+  // data-profile matches the deployment profile (or is empty). The last rule
+  // swaps the frames source between offline (ZIP upload) and cloud (S3 picker).
   document.querySelectorAll('[data-src-field]').forEach(field => {
     const kindMatch = field.getAttribute('data-src-field') === AUTO.sourceKind;
     const fieldChannel = field.getAttribute('data-channel');
     const channelMatch = !fieldChannel || fieldChannel === channel;
-    field.style.display = (kindMatch && channelMatch) ? '' : 'none';
+    const fieldProfile = field.getAttribute('data-profile');
+    const profileMatch = !fieldProfile || fieldProfile === window.DEPLOYMENT_MODE;
+    field.style.display = (kindMatch && channelMatch && profileMatch) ? '' : 'none';
   });
 
   // Stream-only chips.
@@ -1739,8 +1816,42 @@ document.querySelectorAll('#autoSourceTabs .sub-tab').forEach(btn => {
       b.classList.toggle('active', b === btn);
     });
     applyAutoChannelAndTab();
+    // Cloud profile: the frames tab re-runs an archived mission → load list.
+    if (AUTO.sourceKind === 'frames' && AUTO.nsuChannel === 'local'
+        && window.DEPLOYMENT_MODE === 'cloud') {
+      loadS3Missions();
+    }
   });
 });
+
+async function loadS3Missions() {
+  const sel = document.getElementById('autoS3Mission');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Загрузка миссий из S3...</option>';
+  let missions = [];
+  try {
+    const resp = await fetch('/s3-missions');
+    if (resp.ok) {
+      const data = await resp.json();
+      missions = Array.isArray(data.missions) ? data.missions : [];
+    }
+  } catch (err) {
+    autoLog(`Не удалось получить список миссий из S3: ${err}`);
+  }
+  sel.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  placeholder.textContent = missions.length ? 'Выберите миссию' : 'Миссии в S3 не найдены';
+  sel.appendChild(placeholder);
+  for (const m of missions) {
+    const opt = document.createElement('option');
+    opt.value = `${m.ds}/${m.mission_id}`;
+    opt.textContent = `${m.ds} · ${String(m.mission_id).slice(0, 8)}`;
+    sel.appendChild(opt);
+  }
+}
 
 const autoNsuChannelSel = document.getElementById('autoNsuChannel');
 if (autoNsuChannelSel) {
@@ -1859,6 +1970,42 @@ if (autoVideoFileInput && autoVideoDropzone) {
   syncAutoVideoDropzone();
 }
 
+const autoFramesZipInput = document.getElementById('autoFramesZip');
+const autoFramesZipDropzone = document.getElementById('autoFramesZipDropzone');
+const autoFramesZipDropTitle = document.getElementById('autoFramesZipDropTitle');
+
+function syncAutoFramesZipDropzone() {
+  const file = autoFramesZipInput && autoFramesZipInput.files ? autoFramesZipInput.files[0] : null;
+  if (autoFramesZipDropTitle) {
+    autoFramesZipDropTitle.textContent = file ? file.name : 'Перетащите или выберите ZIP с кадрами';
+  }
+}
+
+if (autoFramesZipInput && autoFramesZipDropzone) {
+  autoFramesZipInput.addEventListener('change', syncAutoFramesZipDropzone);
+  ['dragenter', 'dragover'].forEach((eventName) => {
+    autoFramesZipDropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      autoFramesZipDropzone.classList.add('drag-over');
+    });
+  });
+  ['dragleave', 'drop'].forEach((eventName) => {
+    autoFramesZipDropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      autoFramesZipDropzone.classList.remove('drag-over');
+    });
+  });
+  autoFramesZipDropzone.addEventListener('drop', (event) => {
+    const file = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files[0] : null;
+    if (!file) return;
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    autoFramesZipInput.files = transfer.files;
+    syncAutoFramesZipDropzone();
+  });
+  syncAutoFramesZipDropzone();
+}
+
 applyAutoChannelAndTab();
 
 /* ---- Plotly initialization ---- */
@@ -1918,12 +2065,31 @@ function resetAutoPlots() {
   Plotly.restyle('autoPlotZ', { x: [[]], y: [[]] });
 }
 
+// Mirror of rescue_ai.domain.geo.relative_to_absolute (x=East, y=North, m).
+function relativeToAbsolute(x, y, originLat, originLon) {
+  const R = 6378137.0, DEG = 180 / Math.PI;
+  const dLat = (y / R) * DEG;
+  const cosLat = Math.cos(originLat * Math.PI / 180);
+  const dLon = Math.abs(cosLat) < 1e-12 ? 0 : (x / (R * cosLat)) * DEG;
+  return { lat: originLat + dLat, lon: originLon + dLon };
+}
+
 function pushTrajectoryPoint(point) {
   if (!point) return;
   AUTO.traj.x.push(point.x);
   AUTO.traj.y.push(point.y);
   AUTO.traj.z.push(point.z);
   AUTO.traj.ts.push(point.ts_sec);
+  // When a start point was given, show the live position in absolute coords.
+  const readout = document.getElementById('autoCoordsReadout');
+  if (readout) {
+    if (AUTO.origin) {
+      const c = relativeToAbsolute(point.x, point.y, AUTO.origin.lat, AUTO.origin.lon);
+      readout.textContent = `абс: ${c.lat.toFixed(6)}, ${c.lon.toFixed(6)} · H ${point.z.toFixed(1)} м`;
+    } else {
+      readout.textContent = `отн: x ${point.x.toFixed(1)}, y ${point.y.toFixed(1)} · H ${point.z.toFixed(1)} м`;
+    }
+  }
   if (!AUTO.plots.initialized) return;
   Plotly.restyle('autoPlot3d', { x: [AUTO.traj.x], y: [AUTO.traj.y], z: [AUTO.traj.z] });
   Plotly.restyle('autoPlotXY', { x: [AUTO.traj.x], y: [AUTO.traj.y] });
@@ -1971,6 +2137,23 @@ async function startAutoSession() {
   formData.append('save_video', saveVideo ? 'true' : 'false');
   formData.append('demo_loop', demoLoop ? 'true' : 'false');
 
+  // Optional absolute start point → report/UI switch to geographic coords.
+  const originLatStr = document.getElementById('autoOriginLat').value.trim();
+  const originLonStr = document.getElementById('autoOriginLon').value.trim();
+  AUTO.origin = null;
+  if (originLatStr !== '' || originLonStr !== '') {
+    const oLat = parseFloat(originLatStr), oLon = parseFloat(originLonStr);
+    if (!Number.isFinite(oLat) || !Number.isFinite(oLon)
+        || oLat < -90 || oLat > 90 || oLon < -180 || oLon > 180) {
+      autoLog('Некорректная точка старта: укажите широту [-90;90] и долготу [-180;180].');
+      setAutoSessionStatus('ошибка ввода');
+      return;
+    }
+    formData.append('origin_lat', String(oLat));
+    formData.append('origin_lon', String(oLon));
+    AUTO.origin = { lat: oLat, lon: oLon };
+  }
+
   if (AUTO.sourceKind === 'video') {
     if (stream) {
       const missionId = document.getElementById('autoVideoMission').value;
@@ -1994,10 +2177,20 @@ async function startAutoSession() {
       const missionId = document.getElementById('autoFramesMission').value;
       if (!missionId) { autoLog('Выберите миссию RaspberryPi.'); return; }
       formData.append('rpi_mission_id', missionId);
+    } else if (window.DEPLOYMENT_MODE === 'cloud') {
+      // Cloud: re-run a mission archived in S3 (frames pulled server-side).
+      const ref = document.getElementById('autoS3Mission').value;
+      if (!ref) { autoLog('Выберите миссию в облаке (S3).'); return; }
+      formData.set('source_kind', 's3');
+      formData.append('source_value', ref);
     } else {
-      const dir = document.getElementById('autoFramesDir').value.trim();
-      if (!dir) { autoLog('Укажите путь к директории.'); return; }
-      formData.append('source_value', dir);
+      // Offline: upload a ZIP of frames (no server-side paths).
+      const zipInput = document.getElementById('autoFramesZip');
+      if (!zipInput.files || !zipInput.files[0]) {
+        autoLog('Выберите ZIP-архив с кадрами.');
+        return;
+      }
+      formData.append('file', zipInput.files[0]);
     }
   }
 
@@ -2012,9 +2205,18 @@ async function startAutoSession() {
   try {
     const resp = await fetch('/auto-sessions/start', { method: 'POST', body: formData });
     if (!resp.ok) {
-      const text = await resp.text();
-      autoLog(`Ошибка ${resp.status}: ${text}`);
-      setAutoSessionStatus('ошибка запуска');
+      if (resp.status === 409) {
+        // Single-active-session demo: another mission is running.
+        autoLog('Система сейчас занята другой миссией. Попробуйте позже.');
+        setAutoSessionStatus('занято');
+      } else if (resp.status === 429) {
+        autoLog('Слишком много запросов. Подождите минуту и повторите.');
+        setAutoSessionStatus('лимит запросов');
+      } else {
+        const text = await resp.text();
+        autoLog(`Ошибка ${resp.status}: ${text}`);
+        setAutoSessionStatus('ошибка запуска');
+      }
       return;
     }
     const info = await resp.json();
@@ -2204,6 +2406,10 @@ function renderAutoReport(report) {
   setReportCell('arAlerts', report.alerts_total);
   const traj = report.trajectory || {};
   setReportCell('arPoints', traj.points_total);
+  const coordSys = (traj.coordinate_system === 'absolute' && traj.origin)
+    ? `абсолютные (старт ${Number(traj.origin.lat).toFixed(6)}, ${Number(traj.origin.lon).toFixed(6)})`
+    : 'относительные (метры от старта)';
+  setReportCell('arCoordSystem', coordSys);
   setReportCell('arDuration', traj.duration_sec, v => Number(v).toFixed(2));
   const decisions = report.decisions || {};
   const decisionEntries = Object.entries(decisions);

@@ -31,6 +31,7 @@ class FileVideoSource:
         fps_override: float | None = None,
         *,
         loop: bool = False,
+        process_fps: float | None = None,
     ) -> None:
         self._path = str(path)
         if not Path(self._path).is_file():
@@ -39,15 +40,20 @@ class FileVideoSource:
         self._fps_override = fps_override
         self._loop = bool(loop)
         self._closed = False
-        # Resolve effective FPS once so callers (auto-mission tuning,
-        # tests) can read it via the ``fps`` property before iterating.
-        # ``_resolve_fps`` falls back to the file's reported FPS, then to
-        # ``_DEFAULT_FPS`` when override / metadata are unavailable.
-        self._fps = self._resolve_fps()
+        # Native FPS (override or file metadata). ``_resolve_fps`` falls back
+        # to the file's reported FPS, then to ``_DEFAULT_FPS``.
+        self._native_fps = self._resolve_fps()
+        # Effective *processing* FPS. ``process_fps`` lets the caller downsample
+        # a high-FPS file so heavy inference does not run on every native frame
+        # (e.g. a 60 fps clip processed at 6 fps = 10× fewer frames). Timestamps
+        # stay on the native clock, so trajectory timing remains correct.
+        self._fps = self._native_fps
+        if process_fps and 0.0 < process_fps < self._native_fps:
+            self._fps = float(process_fps)
 
     @property
     def fps(self) -> float:
-        """Effective source FPS used for timestamps and navigation tuning."""
+        """Effective processing FPS (used for timestamps and nav tuning)."""
         return self._fps
 
     def frames(self) -> Iterator[tuple[np.ndarray, float, int]]:
@@ -57,9 +63,12 @@ class FileVideoSource:
             raise RuntimeError(f"cannot open video file: {self._path}")
         self._cap = cap
 
-        dt = 1.0 / self._fps
+        dt = 1.0 / self._native_fps
+        # Emit every ``stride``-th native frame to hit the processing FPS.
+        stride = max(1, round(self._native_fps / self._fps)) if self._fps > 0 else 1
 
-        frame_id = 0
+        raw_id = 0  # native frame counter (drives real timestamps)
+        emit_id = 0  # sequential id of emitted frames
         try:
             while not self._closed:
                 ok, frame = cap.read()
@@ -74,8 +83,10 @@ class FileVideoSource:
                         )
                     self._cap = cap
                     continue
-                yield frame, frame_id * dt, frame_id
-                frame_id += 1
+                if raw_id % stride == 0:
+                    yield frame, raw_id * dt, emit_id
+                    emit_id += 1
+                raw_id += 1
         finally:
             self.close()
 

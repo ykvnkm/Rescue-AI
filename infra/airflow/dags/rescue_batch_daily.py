@@ -1,35 +1,28 @@
 """Daily batch DAG: prepare_dataset -> evaluate_model -> publish_metrics.
 
-Целевая реализация — каждая стадия как отдельный pod Kubernetes-кластера
+Каждая стадия запускается в отдельном ephemeral pod-е Kubernetes-кластера
 через :class:`KubernetesPodOperator`. Airflow развёртывается только в
-профиле ``cloud`` (см. infra/k8s/values/cloud.yaml + раздел 3.5 диплома).
+профиле ``cloud`` (см. infra/k8s/values/rescue-batch-cloud.yaml + раздел
+3.5 пояснительной записки).
 
-Для **демо-стенда на docker-compose** DAG переключается на безопасный
-:class:`BashOperator`, который имитирует выполнение стадии (sleep + echo)
-без зависимости от Kubernetes-провайдера и без реального обращения к
-S3/Postgres. Переключение управляется env-переменной
-``BATCH_OPERATOR_MODE``:
-
-  * ``k8s`` (по умолчанию)  — production, KubernetesPodOperator;
-  * ``demo``                — docker-compose демо, BashOperator с заглушкой.
-
-В обоих режимах структура DAG, идентификатор, расписание, параметры
-запуска и порядок стадий одинаковы — это позволяет снимать одинаково
-выглядящие скриншоты Graph View и Grid View, а в проде использовать
-ту же ветку кода без правок.
-
-Передача данных между стадиями (в production) выполняется через S3
-(каждая стадия читает входной JSON предыдущей и пишет собственный
-выходной); демо-режим этой передачи не делает, потому что для
-скриншотов достаточно факта успешного завершения task instance.
+Передача данных между стадиями выполняется через S3 (каждая стадия
+читает входной JSON предыдущей и пишет собственный выходной).
 
 Connection-объекты Airflow:
   * ``rescue_app_db`` — DSN центральной БД приложения;
   * ``rescue_s3``    — учётные данные и адрес объектного хранилища.
 
 Образ ``BATCH_IMAGE`` подаётся в Airflow через env-переменную окружения
-webserver/scheduler-подов (см. cloud.yaml ``airflow.env``); это позволяет
-менять версию контейнера batch-стадий без правки DAG-файла.
+webserver/scheduler-подов (см. rescue-batch-cloud.yaml ``airflow.env``);
+это позволяет менять версию контейнера batch-стадий без правки DAG-файла.
+
+DAG-файл загружается Airflow scheduler-ом в любом режиме (включая
+docker-compose dev-стенд). Однако фактический запуск таски требует
+доступа к Kubernetes API: в docker-compose dev-стенде Airflow UI
+работает (Graph View, Code View), но trigger таски вернёт ошибку
+подключения к kube-apiserver. Это сознательное решение: batch
+запускается только в production-кластере, никакого fallback'а на
+Bash-заглушку или DockerOperator-ветку в коде DAG-а нет.
 """
 
 from __future__ import annotations
@@ -41,25 +34,22 @@ from typing import Any
 
 from airflow import DAG
 from airflow.models.param import Param
-from airflow.operators.bash import BashOperator
 from pendulum import datetime
 
 DAG_ID = "rescue_batch_pipeline"
-BATCH_IMAGE = os.environ.get("BATCH_IMAGE", "rescue-ai-online:local")
+BATCH_IMAGE = os.environ.get("BATCH_IMAGE", "rescue-ai-batch-worker:local")
 NO_DATA_EXIT_CODE = 42
-
-# Режим выбора оператора. В production значение приходит из values-файла
-# Helm-чарта Airflow (cloud.yaml → airflow.env). По умолчанию — k8s.
-OPERATOR_MODE = os.environ.get("BATCH_OPERATOR_MODE", "k8s").strip().lower()
 
 APP_DB_CONN_ID = "rescue_app_db"
 S3_CONN_ID = "rescue_s3"
 
-# Namespace и ServiceAccount, в которых запускаются pod-стадии. Должны
-# совпадать с теми, что используется Airflow-релизом; см. cloud.yaml.
-POD_NAMESPACE = os.environ.get("AIRFLOW_POD_NAMESPACE", "rescue-ai")
+# Namespace и ServiceAccount, в которых запускаются pod-стадии.
+# Дефолт = `rescue-batch` — отдельный namespace batch-контура (ADR-0008
+# §4). Реальные значения задаются helm release rescue-batch через
+# env-переменные пода Airflow (см. infra/k8s/values/rescue-batch-cloud.yaml).
+POD_NAMESPACE = os.environ.get("AIRFLOW_POD_NAMESPACE", "rescue-batch")
 POD_SERVICE_ACCOUNT = os.environ.get(
-    "AIRFLOW_POD_SERVICE_ACCOUNT", "rescue-airflow-worker"
+    "AIRFLOW_POD_SERVICE_ACCOUNT", "rescue-batch-worker"
 )
 
 TARGET_DATE_TEMPLATE = "{{ params.run_ds | default(ds, true) }}"
@@ -73,21 +63,13 @@ default_args = {
 }
 
 
-class DemoKubernetesPodOperator(BashOperator):
-    """Bash-backed demo task that renders as KubernetesPodOperator in Airflow UI."""
-
-    @property
-    def task_type(self) -> str:
-        return "KubernetesPodOperator"
-
-
 def _build_k8s_task(task_id: str, stage: str, timeout: timedelta) -> Any:
-    """Build a production KubernetesPodOperator task.
+    """Build a KubernetesPodOperator task for one stage.
 
     Импорты Kubernetes-провайдера и обращения к Airflow Connection
-    выполняются внутри функции — это нужно, чтобы DAG-файл загружался
-    в Airflow без установленного cncf-kubernetes провайдера (например,
-    в docker-compose демо-стенде).
+    выполняются внутри функции, чтобы DAG-файл загружался Airflow
+    scheduler-ом даже в среде без cncf-kubernetes провайдера (например
+    при первом импорте до установки extras).
     """
     from airflow.hooks.base import BaseHook  # noqa: WPS433
 
@@ -142,53 +124,6 @@ def _build_k8s_task(task_id: str, stage: str, timeout: timedelta) -> Any:
     )
 
 
-def _build_demo_task(task_id: str, stage: str, timeout: timedelta) -> Any:
-    """Build a demo BashOperator task that simulates the stage.
-
-    Используется в docker-compose демо-стенде, где Kubernetes недоступен.
-    Команда печатает реалистичный лог стадии и завершается с кодом 0,
-    что в Grid View Airflow выглядит как зелёный успешный прогон.
-    """
-    # Сообщения подобраны под реальные выходные JSON-файлы стадий —
-    # см. rescue_ai/application/pipeline_stages.py. Числа имитируют
-    # значения, которые в продакшне приходят из обработки реальных
-    # миссий.
-    stage_logs = {
-        "prepare_dataset": (
-            "stage=prepare_dataset ds={{ ds }} "
-            "rows_total=218 rows_positive=86 rows_corrupted=1 "
-            "gt_available=true"
-        ),
-        "evaluate_model": (
-            "stage=evaluate_model ds={{ ds }} "
-            "evaluation_count=217 tp=80 tn=124 fp=7 fn=6 "
-            "detector_errors=0"
-        ),
-        "publish_metrics": (
-            "stage=publish_metrics ds={{ ds }} "
-            "accuracy=0.940 precision=0.920 recall=0.930 "
-            "rows_corrupted=1 detector_errors=0"
-        ),
-    }
-    log_line = stage_logs.get(stage, f"stage={stage} ds={{{{ ds }}}}")
-    return DemoKubernetesPodOperator(
-        task_id=task_id,
-        bash_command=(
-            f'echo "[demo] starting {stage} for ds={{{{ ds }}}}"; '
-            f"sleep $(( RANDOM % 3 + 1 )); "
-            f'echo "{log_line}"; '
-            f'echo "[demo] {stage} done"'
-        ),
-        execution_timeout=timeout,
-    )
-
-
-def _build_task(task_id: str, stage: str, timeout: timedelta) -> Any:
-    if OPERATOR_MODE == "demo":
-        return _build_demo_task(task_id, stage, timeout)
-    return _build_k8s_task(task_id, stage, timeout)
-
-
 with DAG(
     dag_id=DAG_ID,
     description="Daily batch ML pipeline over mission artifacts in S3",
@@ -203,7 +138,7 @@ with DAG(
             type=["null", "string"],
             format="date",
             description=(
-                "Date to process in YYYY-MM-DD. " "Defaults to the run logical date."
+                "Date to process in YYYY-MM-DD. Defaults to the run logical date."
             ),
         ),
         "mission_ids_csv": Param(
@@ -215,11 +150,13 @@ with DAG(
     tags=["rescue-ai", "ml-pipeline", "batch"],
 ) as dag:
 
-    prepare_dataset = _build_task(
+    prepare_dataset = _build_k8s_task(
         "prepare_dataset", "prepare_dataset", timedelta(minutes=30)
     )
-    evaluate_model = _build_task("evaluate_model", "evaluate_model", timedelta(hours=1))
-    publish_metrics = _build_task(
+    evaluate_model = _build_k8s_task(
+        "evaluate_model", "evaluate_model", timedelta(hours=1)
+    )
+    publish_metrics = _build_k8s_task(
         "publish_metrics", "publish_metrics", timedelta(minutes=10)
     )
 

@@ -1,0 +1,25 @@
+apiVersion: v2
+name: rescue-ai-observability
+description: |
+  Контур наблюдаемости Rescue-AI: Prometheus, Alertmanager, Grafana.
+
+  Ставится отдельным helm release в собственном namespace `monitoring`,
+  независимо от прикладного контура (rescue-ai) и batch-контура
+  (rescue-batch). Учебный паттерн прод-K8s — monitoring живёт сам по
+  себе и не зависит от циклов приложения.
+
+  Стек намеренно собран из standalone-Deployment'ов (а не из
+  kube-prometheus-stack), потому что:
+   * конфиги Prometheus / Alertmanager / Grafana уже написаны под нашу
+     задачу (см. files/) — нет смысла прогонять их через CRD-машинерию;
+   * для дипломной защиты «развернули сами» прозрачнее, чем «подключили
+     зависимостью community-chart на 200 объектов»;
+   * нагрузка одной станции / одного cloud-кластера спокойно держится
+     одной репликой Prometheus.
+
+  ADR-0008 §1, ML design doc §2.7 / §3.5.4.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: Maxim Yakovenko

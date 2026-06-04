@@ -3,7 +3,7 @@ enabled: false  # включается в profile values при разделен
 replicaCount: 1
 
 image:
-  repository: rescue-ai-online
+  repository: rescue-ai-detection
   pullPolicy: IfNotPresent
   tag: "local"
 
@@ -36,14 +36,42 @@ probes:
     httpGet:
       path: /health
       port: http
-    initialDelaySeconds: 30
     periodSeconds: 30
+    failureThreshold: 3
   readiness:
+    httpGet:
+      path: /ready
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  # Детекция стартует медленно: качает веса (PT или NCNN) из S3,
+  # инициализирует ultralytics+ncnn-runtime. Бюджет: 120*5s=10 мин.
+  startup:
     httpGet:
       path: /health
       port: http
-    initialDelaySeconds: 10
-    periodSeconds: 10
+    periodSeconds: 5
+    failureThreshold: 120
+
+terminationGracePeriodSeconds: 30
+lifecycle:
+  preStop:
+    exec:
+      command: ["/bin/sh", "-c", "sleep 5"]
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+# HPA. Детекция — самый CPU-нагруженный сервис; включается в cloud.
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+networkPolicy:
+  enabled: false
 
 podSecurityContext:
   runAsNonRoot: true
@@ -59,3 +87,4 @@ securityContext:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+topologySpreadConstraints: []

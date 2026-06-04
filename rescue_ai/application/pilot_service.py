@@ -213,14 +213,17 @@ class PilotService:
             detections=detections,
         )
 
-        stored_image_uri = frame_event.image_uri
-        if alerts:
-            stored_image_uri = self._deps.artifact_storage.store_frame(
-                mission_id=frame_event.mission_id,
-                frame_id=frame_event.frame_id,
-                source_uri=frame_event.image_uri,
-                ds=_mission_ds(mission),
-            )
+        # Archive EVERY frame to S3 (not only alert frames) so the mission
+        # is a complete, re-runnable dataset. Manual/RPi frames are already
+        # on disk (image_uri is a file path), so the file branch handles
+        # them; the deterministic key (frame_{id:06d}.jpg) overwrites on
+        # rerun.
+        stored_image_uri = self._deps.artifact_storage.store_frame(
+            mission_id=frame_event.mission_id,
+            frame_id=frame_event.frame_id,
+            source_uri=frame_event.image_uri,
+            ds=_mission_ds(mission),
+        )
         frame_event.image_uri = stored_image_uri
         self._deps.frame_event_repository.add(frame_event)
 

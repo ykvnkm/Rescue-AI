@@ -3,7 +3,7 @@ enabled: false  # включается в profile values при разделен
 replicaCount: 1
 
 image:
-  repository: rescue-ai-online
+  repository: rescue-ai-nav-engine
   pullPolicy: IfNotPresent
   tag: "local"
 
@@ -28,14 +28,44 @@ probes:
     httpGet:
       path: /health
       port: http
-    initialDelaySeconds: 10
     periodSeconds: 30
+    failureThreshold: 3
   readiness:
+    httpGet:
+      path: /ready
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  # nav-engine стартует быстро (нет тяжёлых импортов модели);
+  # короткий startupProbe — 30 секунд бюджета.
+  startup:
     httpGet:
       path: /health
       port: http
-    initialDelaySeconds: 3
-    periodSeconds: 10
+    periodSeconds: 3
+    failureThreshold: 10
+
+terminationGracePeriodSeconds: 15
+lifecycle:
+  preStop:
+    exec:
+      command: ["/bin/sh", "-c", "sleep 3"]
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+# HPA для nav-engine обычно не нужен (нагрузка прибита к темпу
+# кадров: 6 fps × N миссий). Оставлен для cloud-сценария с большим
+# количеством одновременных миссий.
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 75
+
+networkPolicy:
+  enabled: false
 
 podSecurityContext:
   runAsNonRoot: true
@@ -51,3 +81,4 @@ securityContext:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+topologySpreadConstraints: []

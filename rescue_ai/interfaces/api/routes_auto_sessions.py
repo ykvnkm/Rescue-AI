@@ -16,8 +16,12 @@ across sessions). Uploads land in ``UploadSettings.uploads_dir``.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
+import shutil
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Any, Literal
 
@@ -31,6 +35,7 @@ from rescue_ai.application.auto_session_manager import (
     StartSessionRequest,
 )
 from rescue_ai.config import get_settings
+from rescue_ai.domain.geo import is_valid_lat, is_valid_lon
 from rescue_ai.domain.value_objects import NavMode
 from rescue_ai.interfaces.api.dependencies import get_auto_session_manager
 from rescue_ai.interfaces.api.logging_utils import sanitize_log_text
@@ -38,7 +43,7 @@ from rescue_ai.interfaces.api.logging_utils import sanitize_log_text
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-SourceKind = Literal["video", "rtsp", "frames"]
+SourceKind = Literal["video", "rtsp", "frames", "s3"]
 
 
 class AutoSessionStartResponse(BaseModel):
@@ -101,9 +106,11 @@ def _parse_source_kind(raw_value: object) -> SourceKind:
         return "rtsp"
     if value == "frames":
         return "frames"
+    if value == "s3":
+        return "s3"
     raise HTTPException(
         status_code=400,
-        detail="source_kind must be one of: video, rtsp, frames",
+        detail="source_kind must be one of: video, rtsp, frames, s3",
     )
 
 
@@ -122,6 +129,35 @@ def _parse_positive_fps(raw_value: object) -> float:
     return fps
 
 
+def _parse_origin(raw_lat: object, raw_lon: object) -> tuple[float, float] | None:
+    """Parse an optional absolute start point from the form.
+
+    Returns ``(lat, lon)`` when both are present and valid, ``None`` when both
+    are absent. Raises 400 on a partial/invalid pair.
+    """
+    lat_str = str(raw_lat or "").strip()
+    lon_str = str(raw_lon or "").strip()
+    if not lat_str and not lon_str:
+        return None
+    if not lat_str or not lon_str:
+        raise HTTPException(
+            status_code=400,
+            detail="origin requires both origin_lat and origin_lon",
+        )
+    try:
+        lat, lon = float(lat_str), float(lon_str)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400, detail="origin_lat/origin_lon must be numbers"
+        ) from error
+    if not is_valid_lat(lat) or not is_valid_lon(lon):
+        raise HTTPException(
+            status_code=400,
+            detail="origin out of range (lat ∈ [-90,90], lon ∈ [-180,180])",
+        )
+    return lat, lon
+
+
 def _parse_channel(raw_value: object) -> Literal["local", "stream"]:
     value = str(raw_value or "local")
     if value == "local":
@@ -138,7 +174,14 @@ def _resolve_source_value(
     file: UploadFile | None,
     nsu_channel: Literal["local", "stream"],
     rpi_mission_id: str,
-) -> tuple[str, bool, str]:
+) -> tuple[str, bool, str, str]:
+    """Resolve the concrete cv2 source value and a stable mission identity.
+
+    Returns ``(resolved_value, stream_channel, rpi_mission_id, mission_key)``.
+    ``mission_key`` is content-derived for uploads (sha256) so re-feeding the
+    same file reuses the same mission; for path/url/stream sources it is the
+    (already stable) ``kind:value`` / ``rpi:id`` key.
+    """
     stream_channel = nsu_channel == "stream"
     mission_id_clean = rpi_mission_id.strip()
     if stream_channel:
@@ -152,12 +195,24 @@ def _resolve_source_value(
                 status_code=400,
                 detail="rpi_mission_id is required when nsu_channel=stream",
             )
-        return "", True, mission_id_clean
+        return "", True, mission_id_clean, f"rpi:{mission_id_clean}"
 
     resolved_value = source_value or ""
+    mission_key = ""
     if source_kind == "video" and file is not None:
-        stored = _persist_upload(file)
+        stored, digest = _persist_upload(file)
         resolved_value = str(stored)
+        original = Path(file.filename or "").name or "video"
+        mission_key = f"upload:{original}:{digest[:12]}"
+    elif source_kind == "frames" and file is not None:
+        # Offline profile: a ZIP mission package is uploaded (frames/ +
+        # optional labels.json, mirroring the S3 layout). Extract to a
+        # content-addressable workspace and replay the frames folder; the
+        # workspace dir name is the archive sha256.
+        workspace = _persist_upload_zip(file)
+        resolved_value = str(workspace / "frames")
+        original = Path(file.filename or "").name or "frames.zip"
+        mission_key = f"frames:{original}:{workspace.name[:12]}"
     if not resolved_value:
         raise HTTPException(
             status_code=400,
@@ -166,7 +221,9 @@ def _resolve_source_value(
                 "is required in local channel"
             ),
         )
-    return resolved_value, False, mission_id_clean
+    if not mission_key:
+        mission_key = f"{source_kind}:{resolved_value}"
+    return resolved_value, False, mission_id_clean, mission_key
 
 
 def _require_manager() -> AutoSessionManager:
@@ -190,41 +247,158 @@ def _session_to_start_response(session: AutoSession) -> dict[str, object]:
     }
 
 
-def _persist_upload(upload: UploadFile) -> Path:
-    """Store the incoming file under ``UploadSettings.uploads_dir``.
+def _persist_upload(upload: UploadFile) -> tuple[Path, str]:
+    """Store the incoming file content-addressably under ``uploads_dir``.
 
-    The filename is randomized to avoid collisions while preserving the
-    original suffix (so ``cv2.VideoCapture`` can pick the right backend).
-    Enforces ``UploadSettings.max_upload_mb``.
+    Streams the upload into a staging file while computing its sha256, then
+    renames it to ``<sha256><suffix>``. Re-uploading identical content reuses
+    the existing file (and yields the same mission identity). The suffix is
+    preserved so ``cv2.VideoCapture`` picks the right backend. Enforces
+    ``UploadSettings.max_upload_mb``. Returns ``(path, sha256_hex)``.
     """
     settings = get_settings()
     uploads_dir = Path(settings.uploads.uploads_dir)
     uploads_dir.mkdir(parents=True, exist_ok=True)
 
     suffix = Path(upload.filename or "").suffix.lower() or ".mp4"
-    target = uploads_dir / f"{uuid.uuid4().hex}{suffix}"
-
     max_bytes = settings.uploads.max_upload_mb * 1024 * 1024
+
+    hasher = hashlib.sha256()
+    staging = uploads_dir / f".incoming-{uuid.uuid4().hex}{suffix}"
     written = 0
     chunk_size = 1024 * 1024
-    with target.open("wb") as fh:
-        while True:
-            chunk = upload.file.read(chunk_size)
-            if not chunk:
-                break
-            written += len(chunk)
-            if written > max_bytes:
-                fh.close()
-                target.unlink(missing_ok=True)
-                raise HTTPException(
-                    status_code=413,
-                    detail=(
-                        f"upload exceeds UPLOAD_MAX_MB="
-                        f"{settings.uploads.max_upload_mb}MB"
-                    ),
-                )
-            fh.write(chunk)
-    return target
+    try:
+        with staging.open("wb") as fh:
+            while True:
+                chunk = upload.file.read(chunk_size)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"upload exceeds UPLOAD_MAX_MB="
+                            f"{settings.uploads.max_upload_mb}MB"
+                        ),
+                    )
+                hasher.update(chunk)
+                fh.write(chunk)
+    except BaseException:
+        staging.unlink(missing_ok=True)
+        raise
+
+    digest = hasher.hexdigest()
+    target = uploads_dir / f"{digest}{suffix}"
+    if target.exists():
+        staging.unlink(missing_ok=True)
+    else:
+        staging.replace(target)
+    return target, digest
+
+
+_FRAME_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+
+def _persist_upload_zip(upload: UploadFile) -> Path:
+    """Stream a ZIP mission package and extract it content-addressably.
+
+    The archive mirrors the canonical S3 mission layout — ``frames/<img>``
+    plus an optional ``labels.json`` — so an offline upload lands in S3 in
+    exactly the same shape as a cloud mission. The archive is hashed while
+    streamed and extracted into ``uploads_dir/missions/<sha>/`` (frames into
+    ``frames/`` flattened/zip-slip-guarded, ``labels.json`` at the root).
+    Flat archives (images at the root, no ``frames/``) are also accepted and
+    treated as frames. Re-uploading the same archive reuses the workspace.
+    Returns the mission workspace directory. ``UploadSettings.max_upload_mb``
+    is enforced.
+    """
+    settings = get_settings()
+    uploads_dir = Path(settings.uploads.uploads_dir)
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    max_bytes = settings.uploads.max_upload_mb * 1024 * 1024
+
+    hasher = hashlib.sha256()
+    staging = uploads_dir / f".incoming-{uuid.uuid4().hex}.zip"
+    written = 0
+    chunk_size = 1024 * 1024
+    try:
+        with staging.open("wb") as fh:
+            while True:
+                chunk = upload.file.read(chunk_size)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"upload exceeds UPLOAD_MAX_MB="
+                            f"{settings.uploads.max_upload_mb}MB"
+                        ),
+                    )
+                hasher.update(chunk)
+                fh.write(chunk)
+
+        digest = hasher.hexdigest()
+        workspace = uploads_dir / "missions" / digest
+        frames_dir = workspace / "frames"
+        if frames_dir.is_dir() and any(frames_dir.iterdir()):
+            return workspace  # identical archive already extracted
+
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        _extract_mission_zip(staging, workspace)
+        if not any(frames_dir.iterdir()):
+            raise HTTPException(
+                status_code=400,
+                detail="zip archive contains no frame images (jpg/png/bmp/webp)",
+            )
+        return workspace
+    except zipfile.BadZipFile as error:
+        raise HTTPException(status_code=400, detail="invalid zip archive") from error
+    finally:
+        staging.unlink(missing_ok=True)
+
+
+def _read_zip_labels(workspace: Path) -> dict[str, object] | None:
+    """Return the parsed ``labels.json`` from a ZIP workspace, or None."""
+    labels_file = workspace / "labels.json"
+    if not labels_file.is_file():
+        return None
+    try:
+        payload = json.loads(labels_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise HTTPException(
+            status_code=400, detail="labels.json in archive is not valid JSON"
+        ) from error
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="labels.json must be a JSON object")
+    return payload
+
+
+def _extract_mission_zip(zip_path: Path, workspace: Path) -> None:
+    """Extract a mission package: images → ``frames/``, ``labels.json`` → root.
+
+    Member names are flattened to their basename (guards against zip-slip).
+    Both ``frames/x.jpg`` and a flat ``x.jpg`` map to ``frames/x.jpg``.
+    """
+    frames_dir = workspace / "frames"
+    with zipfile.ZipFile(zip_path) as archive:
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            name = Path(info.filename).name
+            if not name:
+                continue
+            suffix = Path(name).suffix.lower()
+            if suffix in _FRAME_SUFFIXES:
+                target = frames_dir / name
+            elif name == "labels.json":
+                target = workspace / "labels.json"
+            else:
+                continue
+            with archive.open(info) as src, target.open("wb") as out:
+                shutil.copyfileobj(src, out)
 
 
 @router.post(
@@ -259,21 +433,27 @@ async def start_auto_session(
     form_file = form.get("file")
     file: UploadFile | None = form_file if isinstance(form_file, UploadFile) else None
 
-    resolved_value, stream_channel, mission_id_clean = _resolve_source_value(
-        source_kind=source_kind,
-        source_value=source_value,
-        file=file,
-        nsu_channel=nsu_channel,
-        rpi_mission_id=rpi_mission_id,
+    resolved_value, stream_channel, mission_id_clean, mission_key = (
+        _resolve_source_value(
+            source_kind=source_kind,
+            source_value=source_value,
+            file=file,
+            nsu_channel=nsu_channel,
+            rpi_mission_id=rpi_mission_id,
+        )
     )
 
-    # For local video files we let the source report its own FPS so the
-    # mission record matches the file's native frame rate (avoids the
-    # operator's UI default of 6.0 silently overriding 30fps footage).
-    # Streams (rtsp / frames / RPi-stream) keep using the form value.
-    factory_fps: float | None = (
-        None if source_kind == "video" and not stream_channel else fps
-    )
+    # An uploaded ZIP may carry a labels.json next to frames/ (same shape as
+    # an S3 mission); ship it to S3 so the archived mission stays symmetric.
+    labels_payload: dict[str, object] | None = None
+    if source_kind == "frames" and file is not None:
+        labels_payload = _read_zip_labels(Path(resolved_value).parent)
+
+    # The operator FPS is the target *processing* rate for every source. For a
+    # local video file the factory downsamples the file to this rate (native
+    # timestamps preserved) instead of running inference on every frame of a
+    # high-FPS clip; streams use it directly.
+    factory_fps: float | None = fps
 
     try:
         source, canonical_value, source_fps = manager.build_source(
@@ -312,6 +492,16 @@ async def start_auto_session(
     }
     if stream_channel:
         config_json["rpi_mission_id"] = mission_id_clean
+    # Optional absolute start point. When provided, the trajectory is reported
+    # in geographic coordinates instead of meters-relative-to-origin.
+    origin = _parse_origin(form.get("origin_lat"), form.get("origin_lon"))
+    if origin is not None:
+        config_json["origin_lat"], config_json["origin_lon"] = origin
+    # Re-running a mission from S3 pins its existing id so the replay
+    # overwrites that mission in place rather than minting a new one.
+    mission_id_override: str | None = None
+    if source_kind == "s3":
+        mission_id_override = resolved_value.partition("/")[2] or None
     try:
         session = manager.start_session(
             request=StartSessionRequest(
@@ -321,9 +511,17 @@ async def start_auto_session(
                 nav_mode=nav_mode,
                 detector_name=detector_name,
                 fps=effective_fps,
+                # Operator's chosen FPS throttles ONLY the detector; navigation
+                # always runs at the source's real (effective) frame rate. For a
+                # video file effective_fps is the native rate, so detection runs
+                # every round(native/detect_fps)-th frame while nav sees them all.
+                detect_fps=float(fps),
                 config_json=config_json,
                 detect_enabled=bool(detect_enabled),
                 save_video=bool(save_video),
+                mission_key=mission_key,
+                mission_id=mission_id_override,
+                labels_payload=labels_payload,
             ),
         )
     except RuntimeError as error:
@@ -335,6 +533,44 @@ async def start_auto_session(
         session.mission.mission_id,
     )
     return _session_to_start_response(session)
+
+
+@router.get(
+    "/s3-missions",
+    tags=["auto-sessions"],
+    summary="List missions archived in S3 (re-runnable from the cloud)",
+)
+def list_cloud_missions() -> dict[str, object]:
+    """Return ``{ds, mission_id}`` entries for every mission stored in S3.
+
+    Powers the operator UI "Из облака" picker. Returns an empty list (not an
+    error) when S3 is not configured so the UI degrades gracefully.
+    """
+    from rescue_ai.infrastructure.artifact_storage import (  # noqa: PLC0415
+        S3ArtifactBackendSettings,
+    )
+    from rescue_ai.infrastructure.s3_mission_source import (  # noqa: PLC0415
+        list_s3_missions,
+    )
+
+    storage = get_settings().storage
+    if not storage.s3_bucket or not storage.s3_access_key_id:
+        return {"missions": []}
+
+    s3_settings = S3ArtifactBackendSettings(
+        endpoint=storage.s3_endpoint,
+        region=storage.s3_region,
+        access_key_id=storage.s3_access_key_id,
+        secret_access_key=storage.s3_secret_access_key,
+        bucket=storage.s3_bucket,
+        prefix=storage.s3_prefix,
+    )
+    try:
+        missions = list_s3_missions(s3_settings, source_prefix=storage.s3_prefix or "")
+    except (OSError, RuntimeError, ValueError) as error:
+        logger.warning("list_cloud_missions failed: %s", error)
+        raise HTTPException(status_code=502, detail="S3 listing failed") from error
+    return {"missions": missions}
 
 
 @router.post(

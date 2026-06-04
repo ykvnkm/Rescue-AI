@@ -59,6 +59,20 @@ class RpiClient:
             self._verify = security.ca_cert_path
             self._cert = (security.client_cert_path, security.client_key_path)
 
+    @property
+    def tls_verify(self) -> str | bool:
+        """CA bundle path (mTLS) or ``True`` for default verification.
+
+        Exposed so a sibling transport (HTTP MJPEG fallback decoded outside
+        httpx) can reuse the same trust material for its own connection.
+        """
+        return self._verify
+
+    @property
+    def tls_cert(self) -> tuple[str, str] | None:
+        """Client ``(cert, key)`` pair for mTLS, or ``None`` in cloud/HTTP."""
+        return self._cert
+
     def _http_get(
         self,
         url: str,

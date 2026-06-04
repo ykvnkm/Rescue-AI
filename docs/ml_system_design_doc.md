@@ -567,6 +567,43 @@ FP/\min \leq 1
 | **Идемпотентная запись результатов** | Для записей по кадрам и алертам используются уникальные идентификаторы (`mission_id`, `frame_id`, `alert_id`). Повторная обработка после рестарта не создаёт дубликаты, а обновляет уже существующую запись. | После рестартов и повторной обработки система не дублирует события. |
 | **Явные статусы деградации и аварии** | Миссия всегда находится в одном из понятных состояний: `RUNNING`, `DEGRADED`, `SAFE_MODE`, `LINK_LOSS`, `BATTERY_ABORT`, `EMERGENCY_TERMINATE`, `MODEL_FALLBACK`. | Оператор видит, что именно произошло и в каком режиме сейчас работает система. |
 
+##### 4.3.1.1. Чем эти механизмы обеспечиваются в K8s
+
+Изначально §4.3.1 был написан в pre-K8s модели «локальные процессы под
+супервизором». После миграции на k3s (offline) и managed Kubernetes
+(cloud) большая часть механизмов реализуется штатными объектами k8s:
+
+| Механизм из §4.3.1 | K8s-объект, который это обеспечивает |
+| --- | --- |
+| Разделение критического и фоновых сервисов | Отдельные `Deployment`/`StatefulSet` для api, detection, nav-engine, sync-worker, batch-exporter, локальной Postgres и MinIO — каждый со своим жизненным циклом. NetworkPolicy дополнительно изолирует сетевой контур. |
+| Журнал миссии | Прикладные таблицы Postgres `mission`, `frame_event`, `alert`, `trajectory_point` — persistence уровня StatefulSet'а localPostgresql. |
+| Ограниченный локальный буфер кадров | In-process bounded queue в pod-е api (`stream_orchestrator`). При нехватке памяти k8s выключает контейнер по `OOMKilled` и Deployment-restartPolicy его пересоздаёт. |
+| Проверка живости сервисов | `livenessProbe` + `readinessProbe` + `startupProbe` на каждом Deployment'е (httpGet `/health`, `/ready` для api/detection/nav-engine/batch-exporter; exec `pgrep` для sync-worker). |
+| Контроль фактической активности компонентов | Prometheus-метрики (`no_frame_duration_seconds`, `no_inference_result_duration_seconds`) + Alertmanager rules в `infra/k8s/charts/rescue-ai-observability/files/prometheus/rules-station.yml`. |
+| Автоперезапуск сервисов | Deployment + restartPolicy=Always; pod выгоняется и пересоздаётся ReplicaSet'ом при failure liveness-пробы. |
+| Локальный кэш модели + Fallback на последнюю валидную | initContainer + emptyDir с моделью, либо PVC `model-cache` (см. `rescue-ai-detection/values.yaml`). |
+| Локальное сохранение данных при отказе внешних хранилищ | Outbox pattern на стороне приложения (`infrastructure/sync/`) + долгоживущий `Deployment` rescue-ai-sync-worker, который дренирует таблицу `replication_outbox` в remote при наличии связи. |
+| Идемпотентная запись результатов | На уровне приложения (PK `(mission_id, frame_id, alert_id)`); k8s роли тут нет. |
+
+Дополнительно k8s даёт механизмы, которых не было в pre-K8s описании:
+
+| Дополнительный механизм | Чем закрыт |
+| --- | --- |
+| Контролируемое падение при drain ноды / обновлении | `PodDisruptionBudget` на каждом сервисе (maxUnavailable=1 в cloud, =0 в offline где singleton). |
+| Размывание реплик по нодам/зонам | `podAntiAffinity` + `topologySpreadConstraints` (cloud, replicaCount ≥ 2). |
+| Автомасштабирование при росте нагрузки | `HorizontalPodAutoscaler` на api и detection (cloud, target CPU 70 %). |
+| Граф-зависимости стартапа | initContainer `wait-for-postgres` блокирует старт api/sync-worker/batch-exporter, пока Postgres не отвечает `pg_isready`. |
+| Graceful rolling restart | `terminationGracePeriodSeconds` + `lifecycle.preStop` (`sleep 5`) даёт Service-у убрать pod из endpoints до SIGKILL. |
+| Изоляция доступа к секретам | Vault Kubernetes auth + Vault Agent Injector рендерит `/vault/secrets/app.env` в каждый под индивидуально, политика 1:1 с ServiceAccount-ом. |
+| Сетевая сегментация | `NetworkPolicy` per-service: ingress только от api / Prometheus, egress только к нужным контрагентам. |
+| Регулярный backup БД | `CronJob` `rescue-ai-postgresql-backup` (2-stage: initContainer `pg_dump` + main `mc cp` в MinIO bucket). |
+| Retry транзиентных HTTP-ошибок между сервисами | `httpx.HTTPTransport(retries=2)` (connect-fail) + `request_with_retry()` с экспоненциальным backoff + jitter на идемпотентных endpoint'ах. |
+
+Это означает: каждая строка §4.3.1, написанная как «процесс под локальным
+супервизором», в реальном проде превращается в один из стандартных
+объектов k8s — и при защите её можно показать live-командой
+`kubectl get … -o yaml`, не объясняя «верьте, оно само».
+
 #### 4.3.2. Сценарии отказов и действия системы
 
 | Сценарий | Как обнаруживаем | Что делает ML-система | Что делает автопилот | Результат |

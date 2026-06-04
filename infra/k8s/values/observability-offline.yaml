@@ -1,0 +1,69 @@
+# Профиль observability для наземной станции (k3s).
+#
+# Включён station-контур: prometheus + alertmanager + grafana, минимум
+# ресурсов, только station rules и station-дашборд. Alertmanager в
+# local-режиме (receiver `local-dev`, без SMTP/Slack).
+#
+# Install:
+#   kubectl create namespace monitoring
+#   helm install rescue-ai-observability infra/k8s/charts/rescue-ai-observability \
+#     -n monitoring \
+#     -f infra/k8s/values/observability-offline.yaml \
+#     --set grafana.admin.inlinePassword=<station-admin-password>
+
+createNamespace: false
+namespace: monitoring
+contour: station
+
+prometheus:
+  enabled: true
+  retentionTime: 15d
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+  persistence:
+    enabled: true
+    size: 5Gi
+  service:
+    type: ClusterIP
+  scrape:
+    appNamespace: rescue-ai
+    apiService: rescue-ai-rescue-ai-api
+    detectionService: rescue-ai-rescue-ai-detection
+    navEngineService: rescue-ai-rescue-ai-nav-engine
+    # batchExporterService не используется в station — batch там не запускается
+
+alertmanager:
+  enabled: true
+  # local-режим: receiver `local-dev`, без SMTP/Slack. Подходит для
+  # станции без внешней связи; алерты видны только в самом UI
+  # Alertmanager.
+  configFile: alertmanager.local.yml
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  persistence:
+    enabled: true
+    size: 1Gi
+
+grafana:
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  persistence:
+    enabled: true
+    size: 2Gi
+  # admin-credentials лежат в Vault, см. vault_bootstrap.sh с флагом
+  # ENABLE_GRAFANA=true. Никаких inline-паролей или --set здесь нет.
+  ingress:
+    enabled: false   # на станции к Grafana ходят через port-forward
+
+networkPolicy:
+  enabled: true

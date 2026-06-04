@@ -158,11 +158,50 @@ class AutoMissionService:
         nav_mode: NavMode,
         detector_name: str,
         config_json: Mapping[str, object] | None = None,
+        mission_id: str | None = None,
+        labels_payload: Mapping[str, object] | None = None,
     ) -> Mission:
-        mission_id = _stable_mission_id(source_name)
+        # ``mission_id`` is normally derived from ``source_name`` (content-
+        # addressable identity). It can be pinned explicitly to re-run a known
+        # mission in place — e.g. replaying a mission downloaded from S3.
+        mission_id = mission_id or _stable_mission_id(source_name)
         existing = self._deps.mission_repository.get(mission_id)
         if existing is not None:
-            return existing
+            # Rerun of an already-known mission (same content fed again):
+            # reopen and overwrite in place rather than skip. Artifacts are
+            # keyed deterministically by (ds, mission_id), so re-processing
+            # overwrites frames/labels/report; the row is refreshed and
+            # reset to ``running`` so a previously completed mission accepts
+            # frames again. No skip-by-exists (see diplom rerun rules).
+            self._deps.mission_repository.update_details(
+                mission_id,
+                source_name=source_name,
+                total_frames=total_frames,
+                fps=fps,
+            )
+            # Status back to ``running`` re-enables frame ingestion; the
+            # ingest guard keys off ``status == "completed"`` so the stale
+            # completed_frame_id is harmless and gets overwritten when this
+            # rerun completes (update_status uses COALESCE — None = no-op).
+            reopened = self._deps.mission_repository.update_status(
+                mission_id, status="running"
+            )
+            self._deps.auto_mission_config_repository.save(
+                mission_id=mission_id,
+                nav_mode=nav_mode,
+                detector=detector_name,
+                config_json=dict(config_json or {}),
+            )
+            self._deps.navigation_engine.reset(nav_mode=nav_mode, fps=fps)
+            self._runtimes[mission_id] = AutoMissionService._Runtime()
+            logger.info(
+                "Auto mission reopened for rerun: mission_id=%s source=%s",
+                mission_id,
+                source_name,
+            )
+            mission = reopened if reopened is not None else existing
+            self._store_uploaded_labels(mission, labels_payload)
+            return mission
 
         mission = Mission(
             mission_id=mission_id,
@@ -196,7 +235,25 @@ class AutoMissionService:
             detector_name,
         )
         self._runtimes[mission.mission_id] = AutoMissionService._Runtime()
+        self._store_uploaded_labels(mission, labels_payload)
         return mission
+
+    def _store_uploaded_labels(
+        self, mission: Mission, labels_payload: Mapping[str, object] | None
+    ) -> None:
+        """Persist labels.json shipped inside an uploaded ZIP to S3.
+
+        Keeps an offline upload symmetric with a cloud mission: frames land
+        under ``{ds}/{mission_id}/frames/`` and the ground truth under
+        ``{ds}/{mission_id}/labels.json``. Overwrites on re-upload (no skip).
+        """
+        if not labels_payload:
+            return
+        self._deps.artifact_storage.save_mission_annotations(
+            mission_id=mission.mission_id,
+            ds=_mission_ds(mission),
+            payload=dict(labels_payload),
+        )
 
     def complete_auto_mission(
         self,
@@ -218,10 +275,14 @@ class AutoMissionService:
 
         ds = _mission_ds(completed)
         points = self._deps.trajectory_repository.list_by_mission(mission_id)
+        origin = _mission_origin(
+            self._deps.auto_mission_config_repository.get(mission_id)
+        )
         self._deps.artifact_storage.save_trajectory_csv(
             mission_id=mission_id,
             ds=ds,
             points=points,
+            origin=origin,
         )
         if self._deps.trajectory_plot_renderer is not None:
             png_bytes = self._deps.trajectory_plot_renderer.render(
@@ -347,6 +408,20 @@ class AutoMissionService:
             gt_episode_id=None,
         )
 
+        # Archive EVERY frame to S3 (not only alert frames) so the mission
+        # becomes a complete, re-runnable dataset for batch re-evaluation /
+        # re-labelling. In-memory frames (stream / decoded video) are
+        # JPEG-encoded by the storage adapter under a deterministic key
+        # (frame_{id:06d}.jpg) so reruns overwrite in place.
+        stored_image_uri = self._deps.artifact_storage.store_frame(
+            mission_id=mission_id,
+            frame_id=frame_id,
+            source_uri=image_uri,
+            ds=_mission_ds(mission),
+            frame_bgr=frame_bgr,
+        )
+        frame_event.image_uri = stored_image_uri
+
         evaluation = evaluate_alert(
             frame_event=frame_event,
             detections=detections,
@@ -354,19 +429,15 @@ class AutoMissionService:
             rules=self._alert_rules,
         )
 
-        stored_image_uri = image_uri
+        # Persist the frame event before any alert that references it
+        # (alert carries an FK to frame_event). Every frame is recorded now,
+        # not only alert frames.
+        self._deps.frame_event_repository.add(frame_event)
+
         alerts: list[Alert] = []
         decisions: list[AutoDecision] = []
-        frame_event_persisted = False
 
         if evaluation.should_create_alert and evaluation.best_detection is not None:
-            stored_image_uri = self._deps.artifact_storage.store_frame(
-                mission_id=mission_id,
-                frame_id=frame_id,
-                source_uri=image_uri,
-                ds=_mission_ds(mission),
-            )
-            frame_event.image_uri = stored_image_uri
             alert = Alert(
                 alert_id=_stable_alert_id(mission_id=mission_id, frame_id=frame_id),
                 mission_id=mission_id,
@@ -377,8 +448,6 @@ class AutoMissionService:
                 primary_detection=evaluation.best_detection,
                 detections=list(evaluation.positives),
             )
-            self._deps.frame_event_repository.add(frame_event)
-            frame_event_persisted = True
             self._deps.alert_repository.add(alert)
             ALERTS_CREATED_TOTAL.labels(mission_mode="auto").inc()
             alerts.append(alert)
@@ -408,8 +477,6 @@ class AutoMissionService:
                 )
             )
 
-        if not frame_event_persisted:
-            self._deps.frame_event_repository.add(frame_event)
         return AutoFrameOutcome(
             detections=detections,
             trajectory_point=traj_point,
@@ -490,6 +557,7 @@ class AutoMissionService:
         alerts = self._deps.alert_repository.list(mission_id=mission_id)
         decisions = self._deps.auto_decision_repository.list_by_mission(mission_id)
         config_snapshot = self._deps.auto_mission_config_repository.get(mission_id)
+        origin = _mission_origin(config_snapshot)
 
         source_counts: dict[str, int] = {str(source): 0 for source in TrajectorySource}
         for point in points:
@@ -533,6 +601,13 @@ class AutoMissionService:
                 "points_total": len(points),
                 "by_source": source_counts,
                 "duration_sec": round(duration_sec, 3),
+                # When an absolute start point was given, the trajectory is
+                # reported geographically (lat/lon in trajectory.csv); else it
+                # stays relative-to-origin in meters.
+                "coordinate_system": ("absolute" if origin is not None else "relative"),
+                "origin": (
+                    {"lat": origin[0], "lon": origin[1]} if origin is not None else None
+                ),
             },
             "artifacts": {
                 "trajectory_csv": (f"{ds}/{mission_id}/trajectory.csv"),
@@ -547,6 +622,27 @@ class AutoMissionService:
             "generated_at": _utc_now_iso(),
         }
         return report
+
+
+def _mission_origin(
+    config: Mapping[str, object] | None,
+) -> tuple[float, float] | None:
+    """Read an optional absolute start point ``(lat, lon)`` from mission config.
+
+    Accepts either the raw ``config_json`` or the repository snapshot that
+    nests it under a ``config_json`` key.
+    """
+    if not isinstance(config, Mapping):
+        return None
+    inner = config.get("config_json")
+    source = inner if isinstance(inner, Mapping) else config
+    try:
+        return (
+            float(source["origin_lat"]),
+            float(source["origin_lon"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _utc_now_iso() -> str:

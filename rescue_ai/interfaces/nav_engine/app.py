@@ -25,6 +25,7 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, HTTPException, Response
 
+from rescue_ai.application.metrics import render_latest
 from rescue_ai.domain.value_objects import NavMode
 from rescue_ai.infrastructure.navigation.engine import NavigationEngine
 from rescue_ai.infrastructure.navigation.tuning import NavigationTuning
@@ -113,6 +114,16 @@ def build_app(*, registry: _SessionRegistry | None = None) -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/ready")
+    def ready() -> dict[str, str]:
+        return {"status": "ready"}
+
+    @app.get("/metrics", include_in_schema=False)
+    def prometheus_metrics() -> Response:
+        """Prometheus text-exposition of this service's metrics."""
+        payload, content_type = render_latest()
+        return Response(content=payload, media_type=content_type)
 
     @app.post("/sessions", response_model=ResetResponse)
     def create_session(payload: ResetRequest) -> ResetResponse:

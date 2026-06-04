@@ -1,0 +1,181 @@
+{{- if .Values.localMinio.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.localMinio.serviceAccountName | quote }}
+  labels:
+    {{- include "rescue-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: object-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rescue-ai.localMinio.name" . }}
+  labels:
+    {{- include "rescue-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: object-storage
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: api
+      port: 9000
+      targetPort: api
+      protocol: TCP
+    - name: console
+      port: 9001
+      targetPort: console
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "rescue-ai.localMinio.name" . }}
+  labels:
+    {{- include "rescue-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: object-storage
+spec:
+  serviceName: {{ include "rescue-ai.localMinio.name" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: object-storage
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.localMinio.vault.role | quote }}
+        vault.hashicorp.com/agent-inject-secret-minio-root-user: {{ printf "secret/data/%s" .Values.localMinio.vault.secretPath | quote }}
+        vault.hashicorp.com/agent-inject-template-minio-root-user: |
+          {{`{{- with secret "`}}{{ printf "secret/data/%s" .Values.localMinio.vault.secretPath }}{{`" -}}`}}
+          {{`{{ .Data.data.MINIO_ROOT_USER }}`}}
+          {{`{{- end }}`}}
+        vault.hashicorp.com/agent-inject-secret-minio-root-password: {{ printf "secret/data/%s" .Values.localMinio.vault.secretPath | quote }}
+        vault.hashicorp.com/agent-inject-template-minio-root-password: |
+          {{`{{- with secret "`}}{{ printf "secret/data/%s" .Values.localMinio.vault.secretPath }}{{`" -}}`}}
+          {{`{{ .Data.data.MINIO_ROOT_PASSWORD }}`}}
+          {{`{{- end }}`}}
+    spec:
+      serviceAccountName: {{ .Values.localMinio.serviceAccountName | quote }}
+      containers:
+        - name: minio
+          image: "{{ .Values.localMinio.image.repository }}:{{ .Values.localMinio.image.tag }}"
+          imagePullPolicy: {{ .Values.localMinio.image.pullPolicy }}
+          args:
+            - server
+            - /data
+            - --console-address
+            - ":9001"
+          ports:
+            - name: api
+              containerPort: 9000
+              protocol: TCP
+            - name: console
+              containerPort: 9001
+              protocol: TCP
+          env:
+            - name: MINIO_ROOT_USER_FILE
+              value: /vault/secrets/minio-root-user
+            - name: MINIO_ROOT_PASSWORD_FILE
+              value: /vault/secrets/minio-root-password
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: api
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.localMinio.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.localMinio.persistence.storageClass }}
+        storageClassName: {{ .Values.localMinio.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.localMinio.persistence.size | quote }}
+{{- if .Values.localMinio.defaultBuckets }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "rescue-ai.localMinio.name" . }}-bucket-init
+  labels:
+    {{- include "rescue-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: object-storage-init
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: object-storage-init
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        # Это Job, а не Deployment: Vault Agent должен отработать ТОЛЬКО как
+        # init-контейнер (один раз отдать креды в /vault/secrets), без
+        # долгоживущего сайдкара. Иначе sidecar не завершается, под висит 1/2,
+        # Job не доходит до Complete, а helm post-install хук таймаутит и
+        # помечает релиз failed. pre-populate-only решает это для одноразовых
+        # задач.
+        vault.hashicorp.com/agent-pre-populate-only: "true"
+        vault.hashicorp.com/role: {{ .Values.localMinio.vault.role | quote }}
+        vault.hashicorp.com/agent-inject-secret-minio-root-user: {{ printf "secret/data/%s" .Values.localMinio.vault.secretPath | quote }}
+        vault.hashicorp.com/agent-inject-template-minio-root-user: |
+          {{`{{- with secret "`}}{{ printf "secret/data/%s" .Values.localMinio.vault.secretPath }}{{`" -}}`}}
+          {{`{{ .Data.data.MINIO_ROOT_USER }}`}}
+          {{`{{- end }}`}}
+        vault.hashicorp.com/agent-inject-secret-minio-root-password: {{ printf "secret/data/%s" .Values.localMinio.vault.secretPath | quote }}
+        vault.hashicorp.com/agent-inject-template-minio-root-password: |
+          {{`{{- with secret "`}}{{ printf "secret/data/%s" .Values.localMinio.vault.secretPath }}{{`" -}}`}}
+          {{`{{ .Data.data.MINIO_ROOT_PASSWORD }}`}}
+          {{`{{- end }}`}}
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ .Values.localMinio.serviceAccountName | quote }}
+      containers:
+        - name: bucket-init
+          image: "{{ .Values.localMinio.mcImage.repository }}:{{ .Values.localMinio.mcImage.tag }}"
+          imagePullPolicy: {{ .Values.localMinio.mcImage.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              root_user="$(cat /vault/secrets/minio-root-user)"
+              root_password="$(cat /vault/secrets/minio-root-password)"
+              until mc alias set local http://{{ include "rescue-ai.localMinio.name" . }}:9000 "$root_user" "$root_password"; do
+                sleep 2
+              done
+              {{- range $bucket := splitList "," .Values.localMinio.defaultBuckets }}
+              mc mb --ignore-existing "local/{{ trim $bucket }}"
+              {{- end }}
+{{- end }}
+{{- end }}

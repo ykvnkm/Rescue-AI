@@ -2,6 +2,8 @@ PYTHONPATH := $(shell pwd)
 UV := PYTHONPATH=$(PYTHONPATH) uv run
 HELM ?= helm
 UMBRELLA_CHART := infra/k8s/charts/rescue-ai
+BATCH_CHART    := infra/k8s/charts/rescue-batch
+OBS_CHART      := infra/k8s/charts/rescue-ai-observability
 VALUES_DIR := infra/k8s/values
 
 .PHONY: help install format lint test ci \
@@ -22,7 +24,7 @@ help:
 	@echo "  make down            - stop and remove compose stack"
 
 install:
-	uv sync --extra dev --extra batch
+	uv sync --extra dev
 
 format:
 	$(UV) black rescue_ai tests scripts infra
@@ -50,11 +52,11 @@ helm-check:
 	fi
 
 helm-deps: helm-check
-	$(HELM) repo add bitnami https://charts.bitnami.com/bitnami --force-update
 	$(HELM) repo add hashicorp https://helm.releases.hashicorp.com --force-update
 	$(HELM) repo add apache-airflow https://airflow.apache.org --force-update
 	$(HELM) repo update
 	$(HELM) dependency update $(UMBRELLA_CHART)
+	$(HELM) dependency update $(BATCH_CHART)
 
 helm-lint: helm-deps
 	$(HELM) lint infra/k8s/charts/rescue-ai-api
@@ -63,11 +65,24 @@ helm-lint: helm-deps
 	$(HELM) lint infra/k8s/charts/rescue-ai-sync-worker
 	$(HELM) lint infra/k8s/charts/rescue-ai-batch-exporter
 	$(HELM) lint $(UMBRELLA_CHART)
-	@for p in offline cloud dev; do \
-		echo "==> helm template $$p"; \
+	$(HELM) lint $(BATCH_CHART)
+	$(HELM) lint $(OBS_CHART)
+	@for p in offline cloud; do \
+		echo "==> helm template rescue-ai $$p"; \
 		$(HELM) template rescue-ai $(UMBRELLA_CHART) \
 			-f $(VALUES_DIR)/$$p.yaml > /tmp/rescue-ai-$$p.yaml || exit 1; \
 		test -s /tmp/rescue-ai-$$p.yaml || exit 1; \
+	done
+	@echo "==> helm template rescue-batch (cloud-only)"
+	$(HELM) template rescue-batch $(BATCH_CHART) \
+		-f $(VALUES_DIR)/rescue-batch-cloud.yaml > /tmp/rescue-batch.yaml
+	test -s /tmp/rescue-batch.yaml
+	@for p in offline cloud; do \
+		echo "==> helm template rescue-ai-observability $$p"; \
+		$(HELM) template rescue-ai-observability $(OBS_CHART) \
+			-f $(VALUES_DIR)/observability-$$p.yaml \
+			> /tmp/observability-$$p.yaml || exit 1; \
+		test -s /tmp/observability-$$p.yaml || exit 1; \
 	done
 
 # Использование: make helm-template P=vps

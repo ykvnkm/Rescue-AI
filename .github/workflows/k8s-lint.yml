@@ -33,6 +33,7 @@ jobs:
           helm repo add apache-airflow https://airflow.apache.org --force-update
           helm repo update
           helm dependency update infra/k8s/charts/rescue-ai
+          helm dependency update infra/k8s/charts/rescue-batch
 
       - name: helm lint (rescue-ai-api)
         run: helm lint infra/k8s/charts/rescue-ai-api
@@ -49,35 +50,56 @@ jobs:
       - name: helm lint (rescue-ai-batch-exporter)
         run: helm lint infra/k8s/charts/rescue-ai-batch-exporter
 
-      - name: helm lint (umbrella)
+      - name: helm lint (umbrella rescue-ai)
         run: helm lint infra/k8s/charts/rescue-ai
 
-      - name: helm template — dev profile
-        run: |
-          helm template rescue-ai infra/k8s/charts/rescue-ai \
-            -f infra/k8s/values/dev.yaml > /tmp/dev.yaml
-          test -s /tmp/dev.yaml
+      - name: helm lint (umbrella rescue-batch)
+        run: helm lint infra/k8s/charts/rescue-batch
 
-      - name: helm template — offline profile
+      - name: helm lint (umbrella rescue-ai-observability)
+        run: helm lint infra/k8s/charts/rescue-ai-observability
+
+      - name: helm template — rescue-ai offline profile
         run: |
           helm template rescue-ai infra/k8s/charts/rescue-ai \
             -f infra/k8s/values/offline.yaml > /tmp/offline.yaml
           test -s /tmp/offline.yaml
 
-      - name: helm template — cloud profile
+      - name: helm template — rescue-ai cloud profile
         run: |
           helm template rescue-ai infra/k8s/charts/rescue-ai \
             -f infra/k8s/values/cloud.yaml > /tmp/cloud.yaml
           test -s /tmp/cloud.yaml
 
+      - name: helm template — rescue-batch cloud profile
+        run: |
+          helm template rescue-batch infra/k8s/charts/rescue-batch \
+            -f infra/k8s/values/rescue-batch-cloud.yaml > /tmp/rescue-batch.yaml
+          test -s /tmp/rescue-batch.yaml
+
+      - name: helm template — rescue-ai-observability offline profile
+        run: |
+          helm template rescue-ai-observability \
+            infra/k8s/charts/rescue-ai-observability \
+            -f infra/k8s/values/observability-offline.yaml \
+            > /tmp/obs-offline.yaml
+          test -s /tmp/obs-offline.yaml
+
+      - name: helm template — rescue-ai-observability cloud profile
+        run: |
+          helm template rescue-ai-observability \
+            infra/k8s/charts/rescue-ai-observability \
+            -f infra/k8s/values/observability-cloud.yaml \
+            > /tmp/obs-cloud.yaml
+          test -s /tmp/obs-cloud.yaml
+
       - name: Profile invariants — sync-worker
         # sync-worker — это offline-only компонент (станция отправляет
         # данные в центр при наличии связи). В cloud-профиле принимающая
-        # сторона, sync-worker отсутствует. В dev — smoke без репликации.
+        # сторона, sync-worker отсутствует.
         run: |
           grep -q "rescue-ai-rescue-ai-sync-worker" /tmp/offline.yaml
           ! grep -q "rescue-ai-rescue-ai-sync-worker" /tmp/cloud.yaml
-          ! grep -q "rescue-ai-rescue-ai-sync-worker" /tmp/dev.yaml
 
       - name: Profile invariants — detection and nav-engine
         # Оба сервиса обрабатывают живые миссии и присутствуют там, где
@@ -89,79 +111,35 @@ jobs:
           grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/offline.yaml
           grep -q "rescue-ai-rescue-ai-nav-engine" /tmp/cloud.yaml
 
-      - name: Profile invariants — batch-exporter and Airflow only in cloud
-        # batch-exporter и Apache Airflow живут только в центральном
-        # кластере. Локальная станция не выполняет ежедневный
-        # batch-пересчёт качества модели — он осмыслен только над
-        # аккумулированным набором миссий со всех станций.
+      - name: Profile invariants — batch контур ОТСУТСТВУЕТ в rescue-ai
+        # После S5 Airflow и batch-exporter переехали в отдельный
+        # umbrella rescue-batch (namespace rescue-batch). В шаблонах
+        # online umbrella'а их объектов быть не должно.
         run: |
-          grep -q "rescue-ai-rescue-ai-batch-exporter" /tmp/cloud.yaml
+          ! grep -q "kind: Deployment" /tmp/cloud.yaml || \
+              ! grep -q "rescue-ai-rescue-ai-batch-exporter" /tmp/cloud.yaml
           ! grep -q "rescue-ai-rescue-ai-batch-exporter" /tmp/offline.yaml
-          ! grep -q "rescue-ai-rescue-ai-batch-exporter" /tmp/dev.yaml
+
+      - name: Profile invariants — batch контур ПРИСУТСТВУЕТ в rescue-batch
+        # В rescue-batch namespace должны быть batch-exporter и Airflow
+        # scheduler/webserver.
+        run: |
+          grep -q "rescue-batch-rescue-ai-batch-exporter" /tmp/rescue-batch.yaml
+          grep -q "rescue-batch-airflow-scheduler" /tmp/rescue-batch.yaml
+
+      - name: Profile invariants — namespace isolation в rescue-batch
+        # NetworkPolicy default-deny + ResourceQuota обязаны быть
+        # развёрнуты в batch namespace.
+        run: |
+          grep -q "kind: NetworkPolicy" /tmp/rescue-batch.yaml
+          grep -q "rescue-batch-default-deny" /tmp/rescue-batch.yaml
+          grep -q "kind: ResourceQuota" /tmp/rescue-batch.yaml
 
       - name: Profile invariants — Vault Agent Injector annotations
-        # Vault-аннотация присутствует во всех production-like профилях,
-        # где secrets.source=vault. dev — единственный профиль с
-        # обычными kube Secret'ами.
+        # Vault-аннотация присутствует в обоих прод-профилях
+        # (secrets.source=vault). Локальная разработка идёт через
+        # docker-compose с обычными env-переменными, k8s-профиля для
+        # dev не существует.
         run: |
           grep -q "vault.hashicorp.com/agent-inject" /tmp/offline.yaml
           grep -q "vault.hashicorp.com/agent-inject" /tmp/cloud.yaml
-          ! grep -q "vault.hashicorp.com/agent-inject" /tmp/dev.yaml
-
-  kind-smoke:
-    # Лёгкий smoke: поднимаем kind, ставим чарт в dev-режиме,
-    # ждём readiness API. Без интернета внешним секретам неоткуда
-    # взяться, поэтому на CI используем dev (inline kube secrets).
-    needs: helm-lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.14.0
-
-      - uses: helm/kind-action@v1
-        with:
-          version: v0.23.0
-          cluster_name: rescue-ai
-
-      - name: Build online image
-        run: docker build --target app -t rescue-ai-online:local -f Dockerfile .
-
-      - name: Load image into kind
-        run: kind load docker-image rescue-ai-online:local --name rescue-ai
-
-      - name: Helm install (dev profile)
-        run: |
-          helm repo add bitnami https://charts.bitnami.com/bitnami --force-update
-          helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
-          helm repo add apache-airflow https://airflow.apache.org --force-update
-          helm repo update
-          helm dependency update infra/k8s/charts/rescue-ai
-          kubectl create namespace rescue-ai
-          kubectl -n rescue-ai create configmap pg-init --from-file=infra/postgres/init/
-          helm install rescue-ai infra/k8s/charts/rescue-ai \
-            -n rescue-ai \
-            -f infra/k8s/values/dev.yaml
-
-      - name: Wait for dev workload
-        run: |
-          kubectl -n rescue-ai rollout status statefulset/rescue-ai-postgresql --timeout=10m
-          kubectl -n rescue-ai rollout status deployment/rescue-ai-minio --timeout=10m
-          kubectl -n rescue-ai rollout status deployment/rescue-ai-rescue-ai-api --timeout=10m
-
-      - name: Dump Kubernetes diagnostics
-        if: failure()
-        run: |
-          kubectl -n rescue-ai get all || true
-          kubectl -n rescue-ai describe pods || true
-          kubectl -n rescue-ai get events --sort-by=.lastTimestamp || true
-          kubectl -n rescue-ai logs -l app.kubernetes.io/name=rescue-ai-api --tail=200 || true
-          kubectl -n rescue-ai logs -l app.kubernetes.io/name=postgresql --tail=200 || true
-
-      - name: API health check
-        run: |
-          kubectl -n rescue-ai port-forward svc/rescue-ai-rescue-ai-api 8000:8000 &
-          sleep 5
-          curl -fsS http://localhost:8000/health

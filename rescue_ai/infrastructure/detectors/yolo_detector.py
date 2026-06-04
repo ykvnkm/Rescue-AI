@@ -152,10 +152,73 @@ class NcnnYoloDetector(_BaseYoloDetector):
     def _resolve_model_path(self) -> Path:
         if not self._config.ncnn_model_url:
             raise RuntimeError("NCNN runtime requires ncnn_model_url")
-        return self._cache.resolve_directory(
+        resolved = self._cache.resolve_directory(
             self._config.ncnn_model_url,
             self._config.ncnn_model_sha256,
         )
+        return _ensure_ncnn_model_dirname(resolved)
+
+
+_NCNN_PARAM_FILE = "model.ncnn.param"
+
+
+def _find_ncnn_model_dir(path: Path) -> Path:
+    """Locate the directory that actually holds the NCNN weights.
+
+    A package exported to ``*_ncnn`` and zipped on macOS unpacks to a doubly
+    nested layout — the outer ``*_ncnn`` dir contains a ``*_ncnn_model`` subdir
+    with the real ``model.ncnn.param``/``.bin`` plus a junk ``__MACOSX`` sibling.
+    Ultralytics must be pointed at the directory that *directly* contains
+    ``model.ncnn.param``; aiming it at the outer dir loads an empty model whose
+    inference yields nothing (surfacing as a cryptic ``StopIteration``).
+    """
+    if (path / _NCNN_PARAM_FILE).is_file():
+        return path
+    nested = sorted(
+        child
+        for child in path.glob("*")
+        if child.is_dir()
+        and child.name != "__MACOSX"
+        and (child / _NCNN_PARAM_FILE).is_file()
+    )
+    if nested:
+        return nested[0]
+    # Nothing matched — return the original path so Ultralytics raises a clear
+    # "not a supported model format" instead of us guessing.
+    return path
+
+
+def _ensure_ncnn_model_dirname(path: Path) -> Path:
+    """Expose the NCNN package under a ``*_ncnn_model`` directory name.
+
+    Ultralytics detects the NCNN format by a directory whose name ends with
+    ``_ncnn_model``; packages exported as ``*_ncnn`` (as on our model registry)
+    are otherwise rejected with 'not a supported model format'. We first resolve
+    the real weights directory (handling the doubly nested export layout), then
+    — if it is not already named ``*_ncnn_model`` — expose a correctly named
+    symlink rather than renaming the (possibly read-only) cached package.
+    """
+    model_dir = _find_ncnn_model_dir(path)
+    if model_dir.name.endswith("_ncnn_model"):
+        return model_dir
+    import tempfile  # noqa: PLC0415
+
+    # The symlink target MUST be absolute: ModelCache returns a relative path
+    # (``runtime/models/...``) and a relative symlink under /tmp would dangle.
+    target = model_dir.resolve()
+    name = model_dir.name
+    base = name[: -len("_ncnn")] if name.endswith("_ncnn") else name
+    link = Path(tempfile.gettempdir()) / "rescue_ai_ncnn" / f"{base}_ncnn_model"
+    try:
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if link.is_symlink():
+            link.unlink()  # drop a possibly-stale link, recreate fresh
+        if not link.exists():
+            link.symlink_to(target, target_is_directory=True)
+        return link
+    except OSError:
+        logger.warning("NCNN symlink failed for %s; passing raw path", model_dir)
+        return model_dir
 
 
 YoloDetector = PtYoloDetector

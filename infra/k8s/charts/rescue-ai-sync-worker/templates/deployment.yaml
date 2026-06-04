@@ -18,24 +18,72 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- if eq .Values.secrets.source "vault" }}
         vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-init-first: "true"
         vault.hashicorp.com/role: {{ .Values.secrets.vault.role | quote }}
-        vault.hashicorp.com/agent-inject-secret-app.env: {{ .Values.secrets.vault.secretPath | quote }}
+        vault.hashicorp.com/agent-inject-secret-app.env: {{ printf "secret/data/%s" .Values.secrets.vault.secretPath | quote }}
         vault.hashicorp.com/agent-inject-template-app.env: |
-          {{`{{- with secret "`}}{{ .Values.secrets.vault.secretPath }}{{`" -}}`}}
+          {{`{{- with secret "`}}{{ printf "secret/data/%s" .Values.secrets.vault.secretPath }}{{`" -}}`}}
           {{`{{- range $k, $v := .Data.data }}`}}
           {{`{{ $k }}={{ $v }}`}}
           {{`{{- end }}`}}
           {{`{{- end }}`}}
         {{- end }}
     spec:
+      {{- if .Values.hostNetwork.enabled }}
+      # Sync-worker — единственный сервис с egress в УДАЛЁННЫЙ контур (remote
+      # Postgres + remote S3). На некоторых станциях masquerade'нутый трафик
+      # подовой сети до удалённой БД режется по пути (RST), тогда как host-стек
+      # ноды до неё доходит. hostNetwork даёт воркеру сетевой namespace ноды;
+      # ClusterFirstWithHostNet сохраняет резолв cluster-DNS и доступ к
+      # ClusterIP локальных Postgres/MinIO/Vault. Воркер не слушает портов,
+      # поэтому конфликтов с хостом нет.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      serviceAccountName: {{ include "rescue-ai-sync-worker.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.initContainers.waitForPostgres.enabled }}
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ .Values.initContainers.waitForPostgres.image | quote }}
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: {{ include "rescue-ai-sync-worker.fullname" . }}-config
+            {{- if eq .Values.secrets.source "kube" }}
+            - secretRef:
+                name: {{ include "rescue-ai-sync-worker.kubeSecretName" . }}
+            {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              if [ -f /vault/secrets/app.env ]; then
+                set -a; . /vault/secrets/app.env; set +a
+              fi
+              deadline=$(( $(date +%s) + {{ .Values.initContainers.waitForPostgres.timeoutSec }} ))
+              until pg_isready -d "$DB_DSN" -q; do
+                if [ $(date +%s) -gt $deadline ]; then
+                  echo "wait-for-postgres: timeout"; exit 1
+                fi
+                sleep 2
+              done
+      {{- end }}
       containers:
         - name: sync-worker
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- with .Values.lifecycle }}
+          {{- if . }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- end }}
           {{- if eq .Values.secrets.source "vault" }}
           command:
             - /bin/sh

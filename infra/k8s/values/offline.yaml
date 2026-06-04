@@ -26,14 +26,23 @@
 #   * rescue-ai-detection             — обнаружение людей
 #   * rescue-ai-nav-engine            — восстановление траектории
 #   * rescue-ai-sync-worker           — дрейн outbox в remote
-#   * postgresql (bitnami)            — локальная БД миссии
-#   * minio (bitnami)                 — локальное S3-хранилище
-#   * vault (hashicorp)               — секреты
+#   * localPostgresql                 — локальная БД, пароль из Vault
+#                                       Agent через POSTGRES_PASSWORD_FILE
+#                                       (custom StatefulSet в umbrella'е,
+#                                       не bitnami subchart)
+#   * localMinio                      — локальное S3, root credentials
+#                                       из Vault Agent через MINIO_*_FILE
+#                                       (custom StatefulSet)
+#
+# Vault (Helm релиз rescue-ai-vault) ставится ОТДЕЛЬНО до umbrella —
+# см. docs/runbooks/vault_setup.md, часть 1. Init/unseal/bootstrap
+# выполняются ДО `helm install rescue-ai`, чтобы прикладные поды
+# получили секреты сразу при первом старте.
 
 rescue-ai-api:
   enabled: true
   image:
-    repository: rescue-ai-online
+    repository: rescue-ai-api
     tag: local
   deployment:
     deploymentMode: offline
@@ -46,38 +55,68 @@ rescue-ai-api:
       s3Bucket: rescue-artifacts
       s3Prefix: missions
     rpi:
+      # Пусто НАМЕРЕННО. Адрес бортового компьютера БПЛА (RPi) — параметр
+      # конкретной станции, разный у каждого оператора, и его не коммитят в
+      # git в открытом виде. Задаётся на бутстрапе через Vault-секрет
+      # secret/rescue-ai/api (ключ RPI_BASE_URL), откуда Vault Agent
+      # источает его в окружение пода и перетирает этот пустой дефолт.
+      # См. scripts/security/vault_bootstrap.sh (RPI_BASE_URL=…).
       baseUrl: ""
       missionsDir: ""
-    detection:
-      serviceUrl: "http://rescue-ai-rescue-ai-detection.rescue-ai.svc.cluster.local:8002"
-    navigation:
-      serviceUrl: "http://rescue-ai-rescue-ai-nav-engine.rescue-ai.svc.cluster.local:8001"
+    services:
+      detectorUrl: "http://rescue-ai-rescue-ai-detection.rescue-ai.svc.cluster.local:8002"
+      navEngineUrl: "http://rescue-ai-rescue-ai-nav-engine.rescue-ai.svc.cluster.local:8001"
   security:
     tlsMode: "mtls"
     ca:
-      existingSecret: rpi-mtls
+      source: vault
+      vault:
+        role: rescue-ai-api
+        secretPath: rescue-ai/rpi-mtls
   secrets:
     source: vault
     vault:
       role: rescue-ai-api
       secretPath: rescue-ai/api
+  # Offline-станция одноузловая → HPA / podAntiAffinity не имеют
+  # смысла. PDB включён формально (maxUnavailable=0 запретит kubectl
+  # drain — оператор делает manual scale down перед drain'ом).
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 0
+  networkPolicy:
+    enabled: true
+  initContainers:
+    waitForPostgres:
+      enabled: true   # локальный Postgres рядом, может стартовать
+                      # 30-60 секунд при первом старте — даём api подождать.
 
 rescue-ai-detection:
   enabled: true
   image:
-    repository: rescue-ai-online
+    repository: rescue-ai-detection
     tag: local
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 0
+  networkPolicy:
+    enabled: true
 
 rescue-ai-nav-engine:
   enabled: true
   image:
-    repository: rescue-ai-online
+    repository: rescue-ai-nav-engine
     tag: local
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 0
+  networkPolicy:
+    enabled: true
 
 rescue-ai-sync-worker:
   enabled: true
   image:
-    repository: rescue-ai-online
+    repository: rescue-ai-sync-worker
     tag: local
   deployment:
     appEnv: field
@@ -87,6 +126,12 @@ rescue-ai-sync-worker:
     intervalSec: 10
     maxAttempts: 10
     processingTimeoutSec: 120
+  # Egress подовой сети до УДАЛЁННОГО Postgres на этой станции режется по пути
+  # (RST), а host-стек ноды до него доходит — поэтому воркер живёт в сетевом
+  # namespace ноды. Локальные Postgres/MinIO/Vault остаются доступны через
+  # ClusterFirstWithHostNet (см. чарт).
+  hostNetwork:
+    enabled: true
   config:
     remoteS3:
       endpoint: "https://storage.yandexcloud.net"
@@ -97,6 +142,13 @@ rescue-ai-sync-worker:
     vault:
       role: rescue-ai-sync-worker
       secretPath: rescue-ai/sync-worker
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 0
+  networkPolicy:
+    enabled: true
+  # Init-контейнер на локальную Postgres уже включён в дефолтах
+  # чарта (sync-worker/values.yaml).
 
 rescue-ai-batch-exporter:
   # Не разворачивается на наземной станции. Batch-пересчёт качества
@@ -105,48 +157,79 @@ rescue-ai-batch-exporter:
   enabled: false
 
 postgresql:
+  # Отключено: offline-prod использует localPostgresql ниже.
+  enabled: false
+
+minio:
+  # Отключено: offline-prod использует localMinio ниже.
+  enabled: false
+
+vault:
+  # Vault ставится отдельным релизом в namespace `vault` ДО
+  # umbrella-чарта:
+  #   helm install rescue-ai-vault hashicorp/vault \
+  #     -n vault --create-namespace \
+  #     -f infra/k8s/vault/values-offline.yaml
+  enabled: false
+
+localPostgresql:
   enabled: true
   image:
-    registry: docker.io
-    repository: bitnamilegacy/postgresql
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  serviceAccountName: rescue-ai-postgresql
   auth:
     username: rescue
     database: rescue_ai
-    existingSecret: rescue-ai-postgresql-auth
-    secretKeys:
-      userPasswordKey: password
-      adminPasswordKey: postgres-password
-  primary:
-    persistence:
-      enabled: true
-      size: 10Gi
-    initdb:
-      # ConfigMap pg-init создаётся отдельно командой:
-      #   kubectl -n rescue-ai create configmap pg-init \
-      #     --from-file=infra/postgres/init/
-      scriptsConfigMap: pg-init
+  vault:
+    role: rescue-ai-postgresql
+    secretPath: rescue-ai/postgresql
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: null
+  initdb:
+    scriptsConfigMap: pg-init
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
 
-minio:
+localMinio:
   enabled: true
   image:
-    registry: docker.io
-    repository: bitnamilegacy/minio
-  auth:
-    existingSecret: rescue-ai-minio-auth
-    rootUserSecretKey: root-user
-    rootPasswordSecretKey: root-password
+    repository: quay.io/minio/minio
+    tag: "RELEASE.2024-07-16T23-46-41Z"
+    pullPolicy: IfNotPresent
+  mcImage:
+    repository: quay.io/minio/mc
+    tag: "RELEASE.2024-07-22T20-02-49Z"
+    pullPolicy: IfNotPresent
+  serviceAccountName: rescue-ai-minio
+  vault:
+    role: rescue-ai-minio
+    secretPath: rescue-ai/minio
   defaultBuckets: "rescue-artifacts"
   persistence:
     enabled: true
     size: 50Gi
+    storageClass: null
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
 
-vault:
+localPostgresqlBackup:
   enabled: true
-  server:
-    dev:
-      enabled: false
-  injector:
-    enabled: true
+  schedule: "0 2 * * *"   # 02:00 UTC
+  bucket: rescue-artifacts
 
 airflow:
   # Apache Airflow на наземной станции не разворачивается. Ежедневный

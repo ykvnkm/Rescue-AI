@@ -30,9 +30,10 @@ infra/k8s/
     rescue-ai-batch/        # Airflow DAG runner (опционально)
   values/
     cloud.yaml              # managed K8s, remote Postgres/S3
-    offline.yaml            # k3s on station, local Postgres/MinIO
-    hybrid.yaml             # k3s + sync-worker enabled
-    dev.yaml                # kind/minikube для локальных тестов
+    offline.yaml            # k3s on station, local Postgres/MinIO, sync-worker
+    # hybrid поглощён offline (sync-worker запускается всегда);
+    # отдельный dev-профиль для k8s упразднён — локальная разработка
+    # идёт через docker-compose, kind/minikube не используется.
   deps/
     # external dependencies, подключаются как subcharts:
     # - bitnami/postgresql
@@ -129,7 +130,7 @@ Docker Compose **не удаляется**. Остаётся как:
 
 ## Дальнейшие шаги (порядок реализации в P3)
 
-1. P3.1: Helm-чарт `rescue-ai-api` — самый простой, как reference. Проверить на `kind`. Values-файл `dev.yaml`.
+1. P3.1: Helm-чарт `rescue-ai-api` — самый простой, как reference. Проверить через `helm template … -f offline.yaml`. Локальный smoke идёт через docker-compose, а не через kind.
 2. P3.2: Чарты для остальных сервисов (`nav-engine`, `detection`, `sync-worker`, `batch`). Подключить subcharts `postgresql`, `minio`.
 3. P3.3: Vault deployment через официальный Helm-чарт. Инициализация, unseal, политики для каждого сервиса (`rescue-ai-api`, `nav-engine`, и т.п.).
 4. P3.4: Vault Agent Injector на всех подах. Миграция секретов из `.env` → Vault KV.

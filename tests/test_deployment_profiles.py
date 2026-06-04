@@ -7,6 +7,8 @@ don't drag in psycopg / boto3.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from rescue_ai.config import (
     DatabaseSettings,
     DeploymentSettings,
@@ -70,6 +72,6 @@ def test_offline_profile_enables_outbox_and_local_storage() -> None:
 
 
 def test_security_defaults_match_cloud_legacy_behaviour() -> None:
-    sec = SecuritySettings()
+    sec = cast(Any, SecuritySettings)(_env_file=None)
     assert sec.tls_mode == "off"
     assert sec.ca_cert_path == ""

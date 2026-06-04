@@ -107,6 +107,24 @@ def parse_args() -> argparse.Namespace:
             "(fallback: BATCH_MISSION_IDS_CSV env var)"
         ),
     )
+    parser.add_argument(
+        "--as-reference",
+        action="store_true",
+        help=(
+            "Только для stage=publish_metrics: записать гистограммы "
+            "текущей миссии в таблицу drift_reference (фиксация эталона). "
+            "В этом режиме требуется --reference-id и ровно одна миссия "
+            "в --mission-ids-csv. Daily DAG этот режим не использует."
+        ),
+    )
+    parser.add_argument(
+        "--reference-id",
+        default=None,
+        help=(
+            "Идентификатор эталонной миссии для drift_reference "
+            "(обязателен при --as-reference)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -301,34 +319,61 @@ def _run_evaluate_model(
     val_tmp = Path(tempfile.mkdtemp(prefix="rescue_ai_eval_"))
     s3_settings = _build_s3_settings()
 
-    def _detector_predict(image_uri: str) -> bool:
-        if image_uri.startswith("s3://"):
-            import boto3
+    def _resolve_local_path(image_uri: str) -> str:
+        """S3 URI → локальный путь (с кешем в val_tmp); local URI as-is."""
+        if not image_uri.startswith("s3://"):
+            return image_uri
+        import boto3
 
-            path_part = image_uri[5:]
-            bucket, _, key = path_part.partition("/")
-            local_path = val_tmp / Path(key).name
-            if not local_path.exists():
-                client = boto3.client(
-                    "s3",
-                    endpoint_url=s3_settings.endpoint,
-                    region_name=s3_settings.region,
-                    aws_access_key_id=s3_settings.access_key_id,
-                    aws_secret_access_key=s3_settings.secret_access_key,
-                )
-                client.download_file(bucket, key, str(local_path))
-            return bool(detector.detect(str(local_path)))
-        return bool(detector.detect(image_uri))
+        path_part = image_uri[5:]
+        bucket, _, key = path_part.partition("/")
+        local_path = val_tmp / Path(key).name
+        if not local_path.exists():
+            client = boto3.client(
+                "s3",
+                endpoint_url=s3_settings.endpoint,
+                region_name=s3_settings.region,
+                aws_access_key_id=s3_settings.access_key_id,
+                aws_secret_access_key=s3_settings.secret_access_key,
+            )
+            client.download_file(bucket, key, str(local_path))
+        return str(local_path)
+
+    def _detector_predict(image_uri: str) -> list[object]:
+        """Возвращает list[Detection] — нужно для подсчёта features.
+
+        pipeline_stages._evaluate сам приводит len(list) > 0 к
+        bool-у через _to_detected_flag.
+        """
+        local = _resolve_local_path(image_uri)
+        return list(detector.detect(local))
+
+    def _frame_loader(image_uri: str) -> object:
+        """Подгружает кадр (BGR ndarray) для расчёта drift-features.
+
+        Кадры уже скачаны detector_predict-ом в val_tmp; читаем
+        локально через cv2. Если файл недоступен, возвращаем None —
+        _extract_frame_features подавит KeyError и кадр выпадет из
+        features-list (это допустимо, drift — мягкая фича).
+        """
+        import cv2
+
+        local = _resolve_local_path(image_uri)
+        frame = cv2.imread(local)
+        if frame is None:
+            raise OSError(f"cv2.imread failed for {local}")
+        return frame
 
     return run_evaluate_model_stage(
         store,
         paths,
         detector_predict=_detector_predict,
+        frame_loader=_frame_loader,
     )
 
 
 def _run_publish_metrics(
-    _args: argparse.Namespace,
+    args: argparse.Namespace,
     *,
     settings,
     store: S3StageStore,
@@ -337,14 +382,23 @@ def _run_publish_metrics(
     dsn = settings.database.dsn.strip()
     if not dsn:
         raise ValueError("DB_DSN is required for publish_metrics stage")
-    metrics_writer = PostgresBatchMetricsRepository(
+    # Один Postgres-репозиторий обслуживает и batch_pipeline_metrics,
+    # и таблицы drift_reference / drift_observations — это разные
+    # методы одного класса.
+    repository = PostgresBatchMetricsRepository(
         db=PostgresDatabase(dsn=dsn, schema="app")
     )
+    drift_evaluation_keys = getattr(args, "_drift_evaluation_keys", None)
     return run_publish_metrics_stage(
         store,
         paths,
-        metrics_writer=metrics_writer,
+        metrics_writer=repository,
         record_factory=_build_metrics_record,
+        drift_store=repository,
+        drift_evaluation_keys=drift_evaluation_keys,
+        as_reference=bool(getattr(args, "as_reference", False)),
+        reference_id=getattr(args, "reference_id", None),
+        model_version=getattr(settings.app, "service_version", "unknown") or "unknown",
     )
 
 
@@ -383,6 +437,32 @@ def main() -> None:
     if not mission_ids:
         print(f"[{args.stage}] no missions discovered for ds={args.ds}, nothing to do")
         raise SystemExit(NO_DATA_EXIT_CODE)
+
+    # --as-reference имеет смысл только для publish_metrics + ровно
+    # одной миссии. Валидируем рано, чтобы не запустить ML впустую.
+    if getattr(args, "as_reference", False):
+        if args.stage != "publish_metrics":
+            raise SystemExit("--as-reference is only valid for stage=publish_metrics")
+        if not getattr(args, "reference_id", None):
+            raise SystemExit("--as-reference requires --reference-id")
+        if len(mission_ids) != 1:
+            raise SystemExit(
+                f"--as-reference requires exactly one mission "
+                f"in --mission-ids-csv, got {len(mission_ids)}"
+            )
+
+    # Для daily-режима publish_metrics: собираем evaluation.json keys
+    # всех миссий ds — нужны drift-стейджу для совокупных гистограмм.
+    # В режиме --as-reference это поле не используется.
+    if args.stage == "publish_metrics" and not getattr(args, "as_reference", False):
+        args._drift_evaluation_keys = [
+            PipelinePaths(
+                prefix=batch_prefix, mission_id=mid, ds=args.ds
+            ).evaluation_key
+            for mid in mission_ids
+        ]
+    else:
+        args._drift_evaluation_keys = None
 
     stage_handlers: dict[
         str,

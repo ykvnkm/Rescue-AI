@@ -1,6 +1,8 @@
 # Дефолты umbrella-чарта (cloud-ориентированные). Конкретные профили
-# лежат в infra/k8s/values/{cloud,offline,dev}.yaml и подключаются
-# при установке: `helm install rescue-ai . -f ../../values/<profile>.yaml`.
+# лежат в infra/k8s/values/{cloud,offline}.yaml и подключаются при
+# установке: `helm install rescue-ai . -f ../../values/<profile>.yaml`.
+# Локальная разработка идёт через docker-compose из корня репо, а не
+# через kind/minikube — k8s-профиля для dev не существует.
 
 rescue-ai-api:
   enabled: true
@@ -19,9 +21,6 @@ rescue-ai-nav-engine:
 rescue-ai-sync-worker:
   enabled: false   # только offline
 
-rescue-ai-batch-exporter:
-  enabled: false   # offline + cloud
-
 # Инфра-зависимости — выключены по умолчанию (предполагается managed).
 postgresql:
   enabled: false
@@ -32,5 +31,34 @@ minio:
 vault:
   enabled: false
 
-airflow:
-  enabled: false   # offline + cloud
+# Offline-prod локальная инфраструктура без k8s Secret как source of truth.
+# Включается только через infra/k8s/values/offline.yaml после отдельной
+# установки и bootstrap Vault.
+localPostgresql:
+  enabled: false
+
+localMinio:
+  enabled: false
+
+# Ежедневный backup локальной Postgres → MinIO.
+# Включается вместе с localPostgresql в offline.yaml.
+localPostgresqlBackup:
+  enabled: false
+  schedule: "0 2 * * *"            # каждый день в 02:00 UTC
+  bucket: rescue-artifacts
+  image:
+    repository: postgres
+    tag: "16-alpine"
+  mcImage:
+    repository: quay.io/minio/mc
+    tag: "RELEASE.2024-07-22T20-02-49Z"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Airflow и batch-exporter переехали в umbrella rescue-batch
+# (namespace rescue-batch). См. infra/k8s/charts/rescue-batch/.

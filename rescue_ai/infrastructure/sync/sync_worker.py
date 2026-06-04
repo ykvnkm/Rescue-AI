@@ -14,9 +14,22 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from rescue_ai.domain.ports import OutboxRow, RemoteSyncTarget, SyncOutbox
+from rescue_ai.domain.ports import (
+    OutboxRow,
+    RemoteSyncTarget,
+    RemoteUnavailableError,
+    SyncOutbox,
+)
 
 logger = logging.getLogger(__name__)
+SYNC_WORKER_RECOVERABLE_ERRORS = (
+    RuntimeError,
+    OSError,
+    ValueError,
+    TypeError,
+    KeyError,
+    AttributeError,
+)
 
 
 @dataclass(frozen=True)
@@ -47,13 +60,29 @@ class SyncWorker:
         self._config = config
 
     def run_once(self) -> int:
-        """Process one batch and return how many rows were synced."""
+        """Process one batch and return how many rows were synced.
+
+        On a connectivity failure (``RemoteUnavailableError``) the batch is
+        aborted immediately: the already-claimed rows keep their
+        ``processing`` state and are returned to ``pending`` by the next
+        ``reset_stuck`` sweep, so no delivery attempt is consumed while the
+        uplink is down (ADR-0007 §3 offline-first guarantee).
+        """
         self._outbox.reset_stuck(self._config.processing_timeout_sec)
         rows = self._outbox.claim_pending(self._config.batch_size)
         synced = 0
-        for row in rows:
-            if self._handle_row(row):
-                synced += 1
+        for index, row in enumerate(rows):
+            try:
+                if self._handle_row(row):
+                    synced += 1
+            except RemoteUnavailableError as error:
+                logger.warning(
+                    "sync-worker: remote unavailable (%s); aborting batch, "
+                    "%d row(s) deferred for retry (no attempt consumed)",
+                    error,
+                    len(rows) - index,
+                )
+                break
         return synced
 
     def run_forever(self, *, sleep: Callable[[float], None] | None = None) -> None:
@@ -61,7 +90,9 @@ class SyncWorker:
         while True:
             try:
                 self.run_once()
-            except RuntimeError:  # pragma: no cover - log and keep going
+            except SYNC_WORKER_RECOVERABLE_ERRORS:  # pragma: no cover
+                # Top-level safety net: a station must keep draining even if a
+                # cycle raises unexpectedly (local DB blip, bug). Log and retry.
                 logger.exception("sync-worker iteration failed")
             sleep_fn(self._config.interval_sec)
 
@@ -78,7 +109,7 @@ class SyncWorker:
             return False
         try:
             self._target.deliver(row)
-        except RuntimeError as error:
+        except SYNC_WORKER_RECOVERABLE_ERRORS as error:
             logger.warning(
                 "outbox row %s delivery failed: %s",
                 row.id,

@@ -1,0 +1,105 @@
+# Helm values для отдельного релиза `hashicorp/vault` в cloud-кластере
+# (ADR-0008 §3 + ADR-0007 §5).
+#
+# Vault разворачивается ОТДЕЛЬНО от umbrella `rescue-ai`, потому что у
+# него своя политика обновлений, свой namespace и свой жизненный цикл:
+# приложение можно перевыкатить полностью, а Vault — нельзя без потери
+# unsealed-состояния. Это каноничный паттерн «security infra отдельно
+# от прикладного релиза».
+#
+# Установка (одноразовая):
+#   kubectl create namespace vault
+#   helm repo add hashicorp https://helm.releases.hashicorp.com
+#   helm install rescue-ai-vault hashicorp/vault \
+#       -n vault \
+#       -f infra/k8s/vault/values-cloud.yaml
+#
+# Имя release-а единое с offline-профилем (`rescue-ai-vault`), чтобы
+# kubectl-команды unseal/bootstrap были одинаковы; namespace тоже
+# единый (`vault`) — security-инфраструктура изолирована от прикладного
+# контура в обоих профилях (CIS K8s §5.7.1).
+#
+# После установки выполнить vault operator init + unseal — см.
+# docs/runbooks/vault_setup.md, раздел «Cloud: первоначальная
+# инициализация». Затем запустить scripts/security/vault_bootstrap.sh
+# с ENABLE_AIRFLOW=true.
+
+global:
+  # TLS внутри cluster.local не используется — клиент через
+  # ClusterIP-сервис достучится без TLS. Внешний доступ к Vault UI
+  # закрыт Ingress-ом с cert-manager (см. ниже).
+  tlsDisable: true
+
+server:
+  # Одноузловой standalone-Vault достаточен для дипломной защиты:
+  # данные на PVC, бэкап файлом. Production-режим Raft HA из 3+ узлов
+  # — следующий шаг роста, не обязательный сейчас (см. раздел
+  # «Дальнейший рост» в vault_setup.md).
+  dev:
+    enabled: false
+  ha:
+    enabled: false
+  standalone:
+    enabled: true
+    config: |
+      ui = true
+      listener "tcp" {
+        tls_disable = 1
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+      storage "file" {
+        path = "/vault/data"
+      }
+
+  dataStorage:
+    enabled: true
+    size: 10Gi
+    # На managed K8s обычно есть default StorageClass с ssd / nvme.
+    # Не указываем явно — берём дефолт кластера.
+    storageClass: null
+
+  auditStorage:
+    enabled: true
+    size: 5Gi
+    storageClass: null
+
+  serviceAccount:
+    create: true
+    name: rescue-ai-vault
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  # Доступ к UI извне через Ingress c TLS от cert-manager.
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: vault.rescue-ai.example.com
+        paths:
+          - /
+    tls:
+      - secretName: vault-tls
+        hosts:
+          - vault.rescue-ai.example.com
+
+ui:
+  enabled: true
+  serviceType: ClusterIP
+
+# Vault Agent Injector — это и есть механизм, через который наши поды
+# (api, sync-worker, batch-exporter) получают секреты. Поды живут в
+# другом namespace (rescue-ai), но injector — кластер-широкий
+# mutating webhook, поэтому это работает.
+injector:
+  enabled: true
+  metrics:
+    enabled: true   # подключим в Prometheus (S7)

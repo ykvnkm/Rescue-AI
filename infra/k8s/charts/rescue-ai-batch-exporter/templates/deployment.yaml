@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "rescue-ai-batch-exporter.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.replicaCount }}   {{/* HPA для batch-exporter избыточен — это thin gauge-эмиттер */}}
   selector:
     matchLabels:
       {{- include "rescue-ai-batch-exporter.selectorLabels" . | nindent 6 }}
@@ -16,8 +16,9 @@ spec:
         {{- include "rescue-ai-batch-exporter.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        # Эндпоинт /metrics опрашивается Prometheus напрямую (см.
-        # infra/observability/prometheus/prometheus.yml).
+        # Эндпоинт /metrics опрашивается Prometheus напрямую — см. chart
+        # rescue-ai-observability (templates/prometheus-configmap.yaml,
+        # job_name=rescue-ai-batch-exporter).
         prometheus.io/scrape: "true"
         prometheus.io/port: {{ .Values.exporter.port | quote }}
         prometheus.io/path: "/metrics"
@@ -33,14 +34,48 @@ spec:
           {{`{{- end }}`}}
         {{- end }}
     spec:
+      serviceAccountName: {{ include "rescue-ai-batch-exporter.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.initContainers.waitForPostgres.enabled }}
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ .Values.initContainers.waitForPostgres.image | quote }}
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: {{ include "rescue-ai-batch-exporter.fullname" . }}-config
+            {{- if eq .Values.secrets.source "kube" }}
+            - secretRef:
+                name: {{ include "rescue-ai-batch-exporter.kubeSecretName" . }}
+            {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              if [ -f /vault/secrets/app.env ]; then
+                set -a; . /vault/secrets/app.env; set +a
+              fi
+              deadline=$(( $(date +%s) + {{ .Values.initContainers.waitForPostgres.timeoutSec }} ))
+              until pg_isready -d "$DB_DSN" -q; do
+                if [ $(date +%s) -gt $deadline ]; then
+                  echo "wait-for-postgres: timeout"; exit 1
+                fi
+                sleep 2
+              done
+      {{- end }}
       containers:
         - name: batch-exporter
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- with .Values.lifecycle }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- if eq .Values.secrets.source "vault" }}
           command:
             - /bin/sh
@@ -79,20 +114,32 @@ spec:
               value: {{ .Values.exporter.port | quote }}
             - name: BATCH_EXPORTER_SCRAPE_INTERVAL_SEC
               value: {{ .Values.exporter.scrapeIntervalSec | quote }}
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: metrics
-            initialDelaySeconds: 5
-            periodSeconds: 10
           livenessProbe:
-            httpGet:
-              path: /health
-              port: metrics
-            initialDelaySeconds: 15
-            periodSeconds: 30
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          {{- with .Values.probes.startup }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

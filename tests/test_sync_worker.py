@@ -55,6 +55,8 @@ class _InMemoryOutbox:
                 local_path=record.local_path,
                 s3_bucket=record.s3_bucket,
                 s3_key=record.s3_key,
+                source_s3_bucket=record.source_s3_bucket,
+                source_s3_key=record.source_s3_key,
                 idempotency_key=record.idempotency_key,
                 attempts=0,
             )
@@ -83,6 +85,8 @@ class _InMemoryOutbox:
                 local_path=None,
                 s3_bucket=None,
                 s3_key=None,
+                source_s3_bucket=None,
+                source_s3_key=None,
                 idempotency_key=f"retry-{outbox_id}-{len(self.failures)}",
                 attempts=len([row for row in self.failures if row[0] == outbox_id]),
             )
@@ -222,6 +226,8 @@ def test_sync_worker_stops_retrying_after_max_attempts() -> None:
             local_path=None,
             s3_bucket=None,
             s3_key=None,
+            source_s3_bucket=None,
+            source_s3_key=None,
             idempotency_key="mission:m-1:capped",
             attempts=10,
         )

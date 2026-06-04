@@ -1,0 +1,122 @@
+# Профиль cloud для batch-контура (ADR-0008 §4).
+#
+# Устанавливается отдельным helm release ПОСЛЕ rescue-ai-vault
+# (нужны k8s auth role'и rescue-ai-airflow и rescue-ai-batch-exporter,
+# забинденные на ServiceAccount-ы из namespace rescue-batch):
+#
+#   helm upgrade --install rescue-batch infra/k8s/charts/rescue-batch \
+#     -n rescue-batch --create-namespace \
+#     -f infra/k8s/values/rescue-batch-cloud.yaml
+#
+# Не разворачивается в offline — на станции нет batch-пересчёта.
+
+createNamespace: false   # CI создаёт namespace отдельной командой
+namespace: rescue-batch
+
+resourceQuota:
+  enabled: true
+  hard:
+    requests.cpu: "8"
+    requests.memory: "16Gi"
+    limits.cpu: "16"
+    limits.memory: "32Gi"
+    persistentvolumeclaims: "5"
+    pods: "20"
+
+limitRange:
+  enabled: true
+  defaultRequest:
+    cpu: 100m
+    memory: 128Mi
+  default:
+    cpu: 500m
+    memory: 512Mi
+
+networkPolicy:
+  enabled: true
+
+# ── Airflow ─────────────────────────────────────────────────────
+airflow:
+  enabled: true
+  executor: KubernetesExecutor
+  defaultAirflowTag: "2.9.3"
+  airflowVersion: "2.9.3"
+  webserverSecretKey: ${AIRFLOW_WEBSERVER_SECRET_KEY}
+  webserver:
+    defaultUser:
+      enabled: true
+      role: Admin
+      username: admin
+      email: admin@rescue-ai.example.com
+      password: ${AIRFLOW_ADMIN_PASSWORD}
+  postgresql:
+    enabled: false   # используется Yandex Managed PostgreSQL
+  data:
+    # Metadata-БД самого Airflow — chicken-and-egg секрет, лежит в
+    # k8s Secret `rescue-airflow-meta-db` в namespace rescue-batch.
+    # Создаётся CI-пайплайном (см. deploy.yml шаг «Ensure airflow
+    # meta-db secret») из GitHub Secret AIRFLOW_DB_URI.
+    metadataSecretName: rescue-airflow-meta-db
+  dags:
+    gitSync:
+      enabled: true
+      repo: "https://github.com/ykvnkm/Rescue-AI.git"
+      branch: main
+      subPath: "infra/airflow/dags"
+      depth: 1
+      maxFailures: 5
+      wait: 60
+  env:
+    # Образ, который Airflow поднимает через KubernetesPodOperator
+    # на каждой стадии ML-пайплайна (prepare_dataset / evaluate_model
+    # / publish_metrics / compute_drift). Под создаётся в этом же
+    # namespace (rescue-batch) и наследует все ResourceQuota /
+    # NetworkPolicy ограничения.
+    - name: BATCH_IMAGE
+      value: "ghcr.io/ykvnkm/rescue-ai-batch-worker:latest"
+    - name: AIRFLOW_POD_NAMESPACE
+      value: "rescue-batch"
+    - name: AIRFLOW_POD_SERVICE_ACCOUNT
+      value: "rescue-batch-worker"
+  # Airflow Secrets Backend → Vault KV v2 (ADR-0008 §3).
+  extraEnv: |
+    - name: AIRFLOW__SECRETS__BACKEND
+      value: "airflow.providers.hashicorp.secrets.vault.VaultBackend"
+    - name: AIRFLOW__SECRETS__BACKEND_KWARGS
+      value: '{"connections_path":"airflow/connections","variables_path":"airflow/variables","mount_point":"secret","auth_type":"kubernetes","kubernetes_role":"rescue-ai-airflow","url":"http://rescue-ai-vault.vault.svc.cluster.local:8200"}'
+  extraPipPackages:
+    - "apache-airflow-providers-hashicorp==4.0.0"
+  ingress:
+    web:
+      enabled: true
+      hosts:
+        - name: airflow.rescue-ai.example.com
+          tls:
+            enabled: true
+            secretName: rescue-airflow-tls
+
+# ── batch-exporter ──────────────────────────────────────────────
+rescue-ai-batch-exporter:
+  enabled: true
+  image:
+    repository: ghcr.io/ykvnkm/rescue-ai-batch-exporter
+    tag: latest
+  imagePullSecrets:
+    - name: ghcr-pull
+  exporter:
+    scrapeIntervalSec: 300
+    port: 8003
+  secrets:
+    source: vault
+    vault:
+      role: rescue-ai-batch-exporter
+      secretPath: rescue-ai/batch-exporter
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+  # NetworkPolicy чарта batch-exporter оставляем выключенной: на
+  # уровне namespace `rescue-batch` уже стоит default-deny + явный
+  # allow от monitoring и к vault/external — purpose тот же,
+  # дублировать локальной политикой смысла нет.
+  networkPolicy:
+    enabled: false

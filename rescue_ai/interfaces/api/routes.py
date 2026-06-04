@@ -140,7 +140,7 @@ class ReadyResponse(BaseModel):
 
     status: str = Field(description="Overall readiness", examples=["ready"])
     checks: dict[str, bool] = Field(
-        description="Per-subsystem configuration checks " "(database, storage, rpi)",
+        description="Per-subsystem configuration checks (database, storage)",
     )
 
 
@@ -294,9 +294,13 @@ def health() -> dict[str, str]:
     responses={503: {"description": "One or more subsystems not configured"}},
 )
 def ready() -> dict[str, object]:
-    """Checks that all required integrations (database, S3, RPi) are configured.
+    """Checks that the pod-level integrations (database, S3) are configured.
 
-    Returns 503 with a per-subsystem breakdown if any check fails."""
+    The RPi link is *not* a readiness dependency: its address is supplied
+    per mission by the operator (each drone computer differs), so it is
+    never wired at deploy time. RPi reachability is reported separately by
+    ``/rpi/status``. Returns 503 with a per-subsystem breakdown if a
+    required integration is missing."""
     settings = get_settings()
     checks = {
         "database": bool(settings.database.dsn.strip()),
@@ -304,7 +308,6 @@ def ready() -> dict[str, object]:
             settings.storage.s3_bucket.strip()
             and settings.storage.s3_access_key_id.strip()
         ),
-        "rpi": bool(settings.rpi.base_url.strip() and settings.rpi.rtsp_port > 0),
     }
     if not all(checks.values()):
         logger.warning("Endpoint ready: status=not_ready checks=%s", checks)

@@ -256,6 +256,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /missions/{mission_id}/trajectory:
+    get:
+      tags:
+      - missions
+      summary: Get live operator trajectory
+      description: Return trajectory points produced while the operator stream runs.
+      operationId: get_mission_trajectory_missions__mission_id__trajectory_get
+      parameters:
+      - name: mission_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Mission Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MissionTrajectoryResponse'
+        '404':
+          description: Mission not found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /missions/{mission_id}/report:
     get:
       tags:
@@ -510,6 +539,303 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /auto-missions/start:
+    post:
+      tags:
+      - auto-missions
+      summary: Start an automatic mission
+      description: Create and start a new automatic mission.
+      operationId: start_auto_mission_auto_missions_start_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutoMissionStartRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoMissionResponse'
+        '503':
+          description: Automatic mode not configured
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /auto-missions/{mission_id}/ingest:
+    post:
+      tags:
+      - auto-missions
+      summary: Ingest one frame
+      description: Process one frame of an automatic mission.
+      operationId: ingest_auto_mission_frame_auto_missions__mission_id__ingest_post
+      parameters:
+      - name: mission_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Mission Id
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_ingest_auto_mission_frame_auto_missions__mission_id__ingest_post'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoFrameResponse'
+        '404':
+          description: Mission not found
+        '409':
+          description: Mission is not an automatic mission or is completed
+        '415':
+          description: Uploaded file is not an image
+        '503':
+          description: Automatic mode not configured
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /auto-missions/{mission_id}/complete:
+    post:
+      tags:
+      - auto-missions
+      summary: Complete an automatic mission
+      description: Finalize an automatic mission and persist the report + trajectory
+        plot.
+      operationId: complete_auto_mission_auto_missions__mission_id__complete_post
+      parameters:
+      - name: mission_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Mission Id
+      - name: completed_frame_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Completed Frame Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoMissionCompleteResponse'
+        '404':
+          description: Mission not found
+        '502':
+          description: Storage operation failed
+        '503':
+          description: Automatic mode not configured
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /auto-missions/{mission_id}/report:
+    get:
+      tags:
+      - auto-missions
+      summary: Get automatic-mission report
+      description: Return the ``report.json`` summary for a completed automatic mission.
+      operationId: get_auto_mission_report_auto_missions__mission_id__report_get
+      parameters:
+      - name: mission_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Mission Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                title: Response Get Auto Mission Report Auto Missions  Mission Id  Report
+                  Get
+        '404':
+          description: Mission not found or not completed
+        '502':
+          description: Storage operation failed
+        '503':
+          description: Automatic mode not configured
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /auto-missions/{mission_id}/trajectory-plot.png:
+    get:
+      tags:
+      - auto-missions
+      summary: Download trajectory plot PNG
+      description: Serve the rendered ``plots/trajectory.png`` for an automatic mission.
+      operationId: get_auto_mission_trajectory_plot_auto_missions__mission_id__trajectory_plot_png_get
+      parameters:
+      - name: mission_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Mission Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '404':
+          description: Mission or plot not found
+        '502':
+          description: Storage operation failed
+        '503':
+          description: Automatic mode not configured
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /auto-missions/{mission_id}/trajectory.csv:
+    get:
+      tags:
+      - auto-missions
+      summary: Download trajectory CSV
+      description: Serve the persisted ``trajectory.csv`` for an automatic mission.
+      operationId: get_auto_mission_trajectory_csv_auto_missions__mission_id__trajectory_csv_get
+      parameters:
+      - name: mission_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Mission Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '404':
+          description: Mission or trajectory CSV not found
+        '502':
+          description: Storage operation failed
+        '503':
+          description: Automatic mode not configured
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /auto-sessions/start:
+    post:
+      tags:
+      - auto-sessions
+      summary: Start a new automatic-mode session
+      description: Create an automatic mission and start streaming frames.
+      operationId: start_auto_session_auto_sessions_start_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoSessionStartResponse'
+        '400':
+          description: Invalid source
+        '409':
+          description: Another automatic session is already running
+        '413':
+          description: Upload too large
+        '503':
+          description: Automatic mode not configured
+  /s3-missions:
+    get:
+      tags:
+      - auto-sessions
+      summary: List missions archived in S3 (re-runnable from the cloud)
+      description: "Return ``{ds, mission_id}`` entries for every mission stored in\
+        \ S3.\n\nPowers the operator UI \"\u0418\u0437 \u043E\u0431\u043B\u0430\u043A\
+        \u0430\" picker. Returns an empty list (not an\nerror) when S3 is not configured\
+        \ so the UI degrades gracefully."
+      operationId: list_cloud_missions_s3_missions_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                title: Response List Cloud Missions S3 Missions Get
+  /auto-sessions/{session_id}/stop:
+    post:
+      tags:
+      - auto-sessions
+      summary: Stop an automatic-mode session
+      description: Signal the session to stop and wait for it to drain.
+      operationId: stop_auto_session_auto_sessions__session_id__stop_post
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoSessionStopResponse'
+        '404':
+          description: Session not found
+        '503':
+          description: Automatic mode not configured
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /auto-sessions/active:
+    get:
+      tags:
+      - auto-sessions
+      summary: Describe the currently active automatic session (if any)
+      description: Return descriptor + running counters for the active session.
+      operationId: get_active_auto_session_auto_sessions_active_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoSessionActiveResponse'
+        '503':
+          description: Automatic mode not configured
 components:
   schemas:
     AlertResponse:
@@ -620,6 +946,428 @@ components:
       - reviewed_by
       title: AlertResponse
       description: Alert details returned by list and detail endpoints.
+    AutoFrameAlertItem:
+      properties:
+        alert_id:
+          type: string
+          title: Alert Id
+        frame_id:
+          type: integer
+          title: Frame Id
+        ts_sec:
+          type: number
+          title: Ts Sec
+        people_detected:
+          type: integer
+          title: People Detected
+        score:
+          type: number
+          title: Score
+        label:
+          type: string
+          title: Label
+        image_uri:
+          type: string
+          title: Image Uri
+      type: object
+      required:
+      - alert_id
+      - frame_id
+      - ts_sec
+      - people_detected
+      - score
+      - label
+      - image_uri
+      title: AutoFrameAlertItem
+      description: Alert emitted while ingesting a frame.
+    AutoFrameDecisionItem:
+      properties:
+        decision_id:
+          type: string
+          title: Decision Id
+        kind:
+          type: string
+          title: Kind
+        reason:
+          type: string
+          title: Reason
+        ts_sec:
+          type: number
+          title: Ts Sec
+        frame_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Frame Id
+      type: object
+      required:
+      - decision_id
+      - kind
+      - reason
+      - ts_sec
+      - frame_id
+      title: AutoFrameDecisionItem
+      description: Audit-log decision recorded for a frame.
+    AutoFrameDetectionItem:
+      properties:
+        bbox:
+          items:
+            type: number
+          type: array
+          title: Bbox
+        score:
+          type: number
+          title: Score
+        label:
+          type: string
+          title: Label
+        model_name:
+          type: string
+          title: Model Name
+      type: object
+      required:
+      - bbox
+      - score
+      - label
+      - model_name
+      title: AutoFrameDetectionItem
+      description: One detection returned alongside a processed frame.
+    AutoFramePoint:
+      properties:
+        seq:
+          type: integer
+          title: Seq
+        ts_sec:
+          type: number
+          title: Ts Sec
+        frame_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Frame Id
+        x:
+          type: number
+          title: X
+        y:
+          type: number
+          title: Y
+        z:
+          type: number
+          title: Z
+        source:
+          type: string
+          title: Source
+      type: object
+      required:
+      - seq
+      - ts_sec
+      - frame_id
+      - x
+      - y
+      - z
+      - source
+      title: AutoFramePoint
+      description: Trajectory point produced for a frame, if any.
+    AutoFrameResponse:
+      properties:
+        mission_id:
+          type: string
+          title: Mission Id
+        frame_id:
+          type: integer
+          title: Frame Id
+        ts_sec:
+          type: number
+          title: Ts Sec
+        detections:
+          items:
+            $ref: '#/components/schemas/AutoFrameDetectionItem'
+          type: array
+          title: Detections
+        trajectory_point:
+          anyOf:
+          - $ref: '#/components/schemas/AutoFramePoint'
+          - type: 'null'
+        alerts:
+          items:
+            $ref: '#/components/schemas/AutoFrameAlertItem'
+          type: array
+          title: Alerts
+        decisions:
+          items:
+            $ref: '#/components/schemas/AutoFrameDecisionItem'
+          type: array
+          title: Decisions
+      type: object
+      required:
+      - mission_id
+      - frame_id
+      - ts_sec
+      - detections
+      - trajectory_point
+      - alerts
+      - decisions
+      title: AutoFrameResponse
+      description: Aggregated result of processing one automatic frame.
+    AutoMissionCompleteResponse:
+      properties:
+        mission_id:
+          type: string
+          title: Mission Id
+        status:
+          type: string
+          title: Status
+        completed_frame_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Completed Frame Id
+        report:
+          type: object
+          title: Report
+      type: object
+      required:
+      - mission_id
+      - status
+      - completed_frame_id
+      - report
+      title: AutoMissionCompleteResponse
+      description: Response returned after completing an automatic mission.
+    AutoMissionResponse:
+      properties:
+        mission_id:
+          type: string
+          title: Mission Id
+          description: Unique mission identifier
+        status:
+          type: string
+          title: Status
+          description: Mission status
+          examples:
+          - running
+        mode:
+          type: string
+          title: Mode
+          description: Mission mode
+          examples:
+          - automatic
+        source_name:
+          type: string
+          title: Source Name
+          description: Mission source
+        created_at:
+          type: string
+          title: Created At
+          description: UTC creation timestamp (ISO 8601)
+        fps:
+          type: number
+          title: Fps
+          description: Mission fps
+      type: object
+      required:
+      - mission_id
+      - status
+      - mode
+      - source_name
+      - created_at
+      - fps
+      title: AutoMissionResponse
+      description: Basic automatic mission descriptor.
+    AutoMissionStartRequest:
+      properties:
+        source_name:
+          type: string
+          title: Source Name
+          description: Logical source descriptor (e.g. rtsp URL or dataset name)
+        nav_mode:
+          $ref: '#/components/schemas/NavMode'
+          description: 'Navigation mode: marker / no_marker / auto'
+          default: auto
+        detector_name:
+          type: string
+          title: Detector Name
+          description: Detector identifier
+          default: yolo
+        total_frames:
+          type: integer
+          minimum: 0.0
+          title: Total Frames
+          description: Expected number of frames; 0 for open-ended streams
+          default: 0
+        fps:
+          type: number
+          exclusiveMinimum: 0.0
+          title: Fps
+          description: Frame rate used to compute ts_sec when the caller omits it
+          default: 2.0
+        config_json:
+          anyOf:
+          - type: object
+          - type: 'null'
+          title: Config Json
+          description: Free-form config snapshot persisted alongside the mission
+      type: object
+      required:
+      - source_name
+      title: AutoMissionStartRequest
+      description: Request body for creating a new automatic mission.
+    AutoSessionActiveResponse:
+      properties:
+        running:
+          type: boolean
+          title: Running
+        session_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Id
+        mission_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Mission Id
+        source_kind:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Kind
+        source_value:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Value
+        nav_mode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Nav Mode
+        detector_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Detector Name
+        fps:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Fps
+        started_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Started At
+        frames_consumed:
+          type: integer
+          title: Frames Consumed
+          default: 0
+        frames_emitted:
+          type: integer
+          title: Frames Emitted
+          default: 0
+        alerts_total:
+          type: integer
+          title: Alerts Total
+          default: 0
+        avg_stream_fps:
+          type: number
+          title: Avg Stream Fps
+          default: 0.0
+      type: object
+      required:
+      - running
+      title: AutoSessionActiveResponse
+      description: Response returned by GET /auto-sessions/active.
+    AutoSessionStartResponse:
+      properties:
+        session_id:
+          type: string
+          title: Session Id
+        mission_id:
+          type: string
+          title: Mission Id
+        source_kind:
+          type: string
+          title: Source Kind
+        source_value:
+          type: string
+          title: Source Value
+        nav_mode:
+          type: string
+          title: Nav Mode
+        detector_name:
+          type: string
+          title: Detector Name
+        fps:
+          type: number
+          title: Fps
+        started_at:
+          type: string
+          title: Started At
+      type: object
+      required:
+      - session_id
+      - mission_id
+      - source_kind
+      - source_value
+      - nav_mode
+      - detector_name
+      - fps
+      - started_at
+      title: AutoSessionStartResponse
+      description: Response returned by POST /auto-sessions/start.
+    AutoSessionStopResponse:
+      properties:
+        session_id:
+          type: string
+          title: Session Id
+        mission_id:
+          type: string
+          title: Mission Id
+        frames_consumed:
+          type: integer
+          title: Frames Consumed
+        frames_emitted:
+          type: integer
+          title: Frames Emitted
+        alerts_total:
+          type: integer
+          title: Alerts Total
+        avg_stream_fps:
+          type: number
+          title: Avg Stream Fps
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - session_id
+      - mission_id
+      - frames_consumed
+      - frames_emitted
+      - alerts_total
+      - avg_stream_fps
+      title: AutoSessionStopResponse
+      description: Response returned by POST /auto-sessions/{id}/stop.
+    Body_ingest_auto_mission_frame_auto_missions__mission_id__ingest_post:
+      properties:
+        frame_id:
+          type: integer
+          title: Frame Id
+        ts_sec:
+          type: number
+          title: Ts Sec
+        image:
+          type: string
+          format: binary
+          title: Image
+      type: object
+      required:
+      - frame_id
+      - ts_sec
+      - image
+      title: Body_ingest_auto_mission_frame_auto_missions__mission_id__ingest_post
     DetectionResponse:
       properties:
         bbox:
@@ -830,6 +1578,37 @@ components:
       - stream
       title: MissionStartResponse
       description: Response after successfully starting a mission.
+    MissionTrajectoryResponse:
+      properties:
+        mission_id:
+          type: string
+          title: Mission Id
+        points:
+          items:
+            $ref: '#/components/schemas/TrajectoryPointResponse'
+          type: array
+          title: Points
+      type: object
+      required:
+      - mission_id
+      - points
+      title: MissionTrajectoryResponse
+      description: Live operator trajectory for a mission.
+    NavMode:
+      type: string
+      enum:
+      - marker
+      - no_marker
+      - auto
+      title: NavMode
+      description: 'Navigation mode selected for an automatic mission.
+
+
+        ``AUTO`` means the application probes the first seconds of footage and
+
+        elects ``MARKER`` or ``NO_MARKER`` based on whether a fiducial is
+
+        detected.'
     PredictRequest:
       properties:
         image_uri:
@@ -877,7 +1656,7 @@ components:
             type: boolean
           type: object
           title: Checks
-          description: Per-subsystem configuration checks (database, storage, rpi)
+          description: Per-subsystem configuration checks (database, storage)
       type: object
       required:
       - status
@@ -891,6 +1670,18 @@ components:
           title: Reviewed By
           description: Identifier of the reviewer
           default: "\u043E\u043F\u0435\u0440\u0430\u0442\u043E\u0440"
+        reviewed_at_sec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Reviewed At Sec
+          description: Mission-relative timestamp when the operator reviewed the alert
+        decision_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Decision Reason
+          description: Optional operator decision rationale
       type: object
       title: ReviewRequest
       description: Operator review decision for an alert.
@@ -938,6 +1729,42 @@ components:
       - processed_frames
       title: StopStreamResponse
       description: Response after stopping the video stream.
+    TrajectoryPointResponse:
+      properties:
+        seq:
+          type: integer
+          title: Seq
+        ts_sec:
+          type: number
+          title: Ts Sec
+        frame_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Frame Id
+        x:
+          type: number
+          title: X
+        y:
+          type: number
+          title: Y
+        z:
+          type: number
+          title: Z
+        source:
+          type: string
+          title: Source
+      type: object
+      required:
+      - seq
+      - ts_sec
+      - frame_id
+      - x
+      - y
+      - z
+      - source
+      title: TrajectoryPointResponse
+      description: One operator trajectory sample.
     ValidationError:
       properties:
         loc:

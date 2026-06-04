@@ -21,6 +21,7 @@ import httpx
 import numpy as np
 
 from rescue_ai.domain.entities import Detection
+from rescue_ai.infrastructure._http_retry import RetryConfig, request_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -35,21 +36,33 @@ class HttpDetector:
         timeout_sec: float = 5.0,
         client: httpx.Client | None = None,
         jpeg_quality: int = 85,
+        retry_config: RetryConfig | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_sec
         self._jpeg_quality = int(max(50, min(95, jpeg_quality)))
-        self._client = client or httpx.Client(timeout=timeout_sec)
+        # httpx.HTTPTransport(retries=N) переподнимает connect только до
+        # первого байта запроса; полную retry-логику (5xx + backoff +
+        # jitter) делает наш helper request_with_retry.
+        self._client = client or httpx.Client(
+            timeout=timeout_sec,
+            transport=httpx.HTTPTransport(retries=2),
+        )
         self._runtime_name_cache: str | None = None
+        self._retry_config = retry_config or RetryConfig()
 
     # ── DetectorPort ────────────────────────────────────────────
 
     def detect(self, image_uri: object) -> list[Detection]:
         b64 = _to_jpeg_b64(image_uri, self._jpeg_quality)
-        response = self._client.post(
-            f"{self._base_url}/detect",
-            json={"frame_jpeg_b64": b64},
-            timeout=self._timeout,
+        response = request_with_retry(
+            lambda: self._client.post(
+                f"{self._base_url}/detect",
+                json={"frame_jpeg_b64": b64},
+                timeout=self._timeout,
+            ),
+            config=self._retry_config,
+            operation="HttpDetector.detect",
         )
         response.raise_for_status()
         body = response.json()
@@ -63,11 +76,16 @@ class HttpDetector:
 
     def warmup(self) -> None:
         # Pod warmup делает сам сервис в lifespan; адаптеру достаточно
-        # убедиться, что сетевой канал жив.
+        # убедиться, что сетевой канал жив. Health-check идемпотентен —
+        # ретраим вместе со всеми 5xx.
         try:
-            response = self._client.get(
-                f"{self._base_url}/health",
-                timeout=self._timeout,
+            response = request_with_retry(
+                lambda: self._client.get(
+                    f"{self._base_url}/health",
+                    timeout=self._timeout,
+                ),
+                config=self._retry_config,
+                operation="HttpDetector.warmup",
             )
             response.raise_for_status()
         except httpx.HTTPError as err:
@@ -77,9 +95,13 @@ class HttpDetector:
         if self._runtime_name_cache is not None:
             return self._runtime_name_cache
         try:
-            response = self._client.get(
-                f"{self._base_url}/runtime",
-                timeout=self._timeout,
+            response = request_with_retry(
+                lambda: self._client.get(
+                    f"{self._base_url}/runtime",
+                    timeout=self._timeout,
+                ),
+                config=self._retry_config,
+                operation="HttpDetector.runtime_name",
             )
             response.raise_for_status()
             self._runtime_name_cache = str(

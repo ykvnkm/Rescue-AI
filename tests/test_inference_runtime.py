@@ -214,4 +214,7 @@ def test_ncnn_detector_resolves_export_directory(
 
         detector.warmup()
         assert isinstance(detector._model, _FakeYolo)
-        assert detector._model.model_path == str(model_dir)
+        resolved = Path(detector._model.model_path)
+        assert resolved.name == "model_ncnn_model"
+        assert (resolved / "model.ncnn.param").read_text() == "param"
+        assert (resolved / "model.ncnn.bin").read_bytes() == b"bin"

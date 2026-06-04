@@ -1,25 +1,31 @@
-# Профиль `cloud` — managed Kubernetes (Yandex Managed Kubernetes
-# или аналог), используется для централизованной обработки данных
-# и сопровождения модели (ADR-0007 §5, ADR-0008 §1).
+# Профиль `cloud` — online контур приложения в managed Kubernetes
+# (ADR-0007 §5, ADR-0008 §1, §4).
 #
 # Включённые сервисы:
 #   * rescue-ai-api                   — управление миссией
 #   * rescue-ai-detection             — обнаружение людей
 #   * rescue-ai-nav-engine            — восстановление траектории
-#   * rescue-ai-batch-exporter        — мост batch-метрик в Prometheus
-#   * airflow                         — оркестратор batch-DAG
 #
 # Выключенные / внешние:
-#   * rescue-ai-sync-worker           — не нужен в cloud (cloud получает данные, не отдаёт)
+#   * rescue-ai-sync-worker           — не нужен в cloud (cloud получает данные)
+#   * rescue-ai-batch-exporter        — переехал в отдельный umbrella
+#                                       `rescue-batch` (см.
+#                                       infra/k8s/values/rescue-batch-cloud.yaml)
+#   * airflow                         — там же, в namespace rescue-batch
 #   * postgresql                      — Yandex Managed PostgreSQL
 #   * minio                           — Yandex Object Storage
 #   * vault                           — развёрнут отдельным релизом (cluster-wide)
+#
+# Batch-контур ставится ОТДЕЛЬНЫМ helm release в namespace
+# `rescue-batch`, не как subchart этого umbrella. Это даёт ресурсную
+# изоляцию (ResourceQuota), сетевую изоляцию (NetworkPolicy) и
+# независимый lifecycle Airflow от online-API.
 
 rescue-ai-api:
   enabled: true
   replicaCount: 2
   image:
-    repository: ghcr.io/ykvnkm/rescue-ai-online
+    repository: ghcr.io/ykvnkm/rescue-ai-api
     tag: latest
     pullPolicy: IfNotPresent
   imagePullSecrets:
@@ -29,7 +35,43 @@ rescue-ai-api:
     appEnv: prod
     logLevel: INFO
     serviceVersion: ${IMAGE_TAG}
+  # Прод-уровень K8s-резилентности (ADR-0008 §4).
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+  networkPolicy:
+    enabled: true
+  # Реплики api не должны жить на одной ноде — иначе один node-drain
+  # положит весь сервис; кроме того, размазываемся по zone-меткам, если
+  # managed K8s даёт их.
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: rescue-ai-api
+            topologyKey: kubernetes.io/hostname
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: rescue-ai-api
   config:
+    api:
+      # Public cloud demo is open (no bearer token) → cap requests/min/IP.
+      # Must comfortably exceed the operator UI's own polling (~2-3 req/sec =
+      # ~180/min) so legitimate use is never throttled; this still caps gross
+      # abuse (per-IP). For controlled access add API_AUTH_TOKEN to Vault.
+      rateLimitPerMin: 600
     storage:
       s3Endpoint: "https://storage.yandexcloud.net"
       s3Region: ru-central1
@@ -38,10 +80,9 @@ rescue-ai-api:
     rpi:
       baseUrl: ""
       missionsDir: ""
-    detection:
-      serviceUrl: "http://rescue-ai-rescue-ai-detection.rescue-ai.svc.cluster.local:8002"
-    navigation:
-      serviceUrl: "http://rescue-ai-rescue-ai-nav-engine.rescue-ai.svc.cluster.local:8001"
+    services:
+      detectorUrl: "http://rescue-ai-rescue-ai-detection.rescue-ai.svc.cluster.local:8002"
+      navEngineUrl: "http://rescue-ai-rescue-ai-nav-engine.rescue-ai.svc.cluster.local:8001"
   security:
     # До борта в cloud-режиме идёт cloudflared-туннель; mTLS
     # активируется снаружи. См. ADR-0007 §5.
@@ -78,37 +119,60 @@ rescue-ai-api:
 rescue-ai-detection:
   enabled: true
   image:
-    repository: ghcr.io/ykvnkm/rescue-ai-online
+    repository: ghcr.io/ykvnkm/rescue-ai-detection
     tag: latest
   imagePullSecrets:
     - name: ghcr-pull
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  networkPolicy:
+    enabled: true
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: rescue-ai-detection
+            topologyKey: kubernetes.io/hostname
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: rescue-ai-detection
 
 rescue-ai-nav-engine:
   enabled: true
   image:
-    repository: ghcr.io/ykvnkm/rescue-ai-online
+    repository: ghcr.io/ykvnkm/rescue-ai-nav-engine
     tag: latest
   imagePullSecrets:
     - name: ghcr-pull
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+  # HPA отключён: нагрузка nav-engine упирается в темп кадров (6 fps);
+  # хранение состояния сессии (per mission_id) делает горизонтальное
+  # масштабирование неочевидным.
+  networkPolicy:
+    enabled: true
 
 rescue-ai-sync-worker:
   enabled: false
 
+# batch-exporter и Airflow переехали в umbrella rescue-batch
+# (namespace rescue-batch). См. infra/k8s/values/rescue-batch-cloud.yaml.
 rescue-ai-batch-exporter:
-  enabled: true
-  image:
-    repository: ghcr.io/ykvnkm/rescue-ai-online
-    tag: latest
-  imagePullSecrets:
-    - name: ghcr-pull
-  exporter:
-    scrapeIntervalSec: 300
-    port: 8003
-  secrets:
-    source: vault
-    vault:
-      role: rescue-ai-batch-exporter
-      secretPath: rescue-ai/batch-exporter
+  enabled: false
 
 postgresql:
   enabled: false
@@ -121,58 +185,10 @@ vault:
   # был установлен сам Vault.
   enabled: false
 
+# Apache Airflow вынесен в отдельный umbrella rescue-batch
+# (см. infra/k8s/values/rescue-batch-cloud.yaml и
+# infra/k8s/charts/rescue-batch/). Здесь оставлен только маркер
+# выключения, чтобы umbrella rescue-ai случайно не пытался его
+# поднять при перекатке.
 airflow:
-  enabled: true
-  executor: KubernetesExecutor
-  defaultAirflowTag: "2.9.3"
-  airflowVersion: "2.9.3"
-  webserverSecretKey: ${AIRFLOW_WEBSERVER_SECRET_KEY}
-  webserver:
-    defaultUser:
-      enabled: true
-      role: Admin
-      username: admin
-      email: admin@rescue-ai.example.com
-      password: ${AIRFLOW_ADMIN_PASSWORD}
-  postgresql:
-    enabled: false   # используется Yandex Managed PostgreSQL
-  data:
-    metadataConnection:
-      user: rescue_airflow
-      pass: ${AIRFLOW_DB_PASSWORD}
-      host: rescue-airflow-pgsql.mdb.yandexcloud.net
-      port: 6432
-      db: airflow
-  dags:
-    gitSync:
-      enabled: true
-      repo: "https://github.com/ykvnkm/Rescue-AI.git"
-      branch: main
-      subPath: "infra/airflow/dags"
-      depth: 1
-      maxFailures: 5
-      wait: 60
-  env:
-    - name: BATCH_IMAGE
-      value: "ghcr.io/ykvnkm/rescue-ai-online:latest"
-  extraEnv: |
-    - name: AIRFLOW_CONN_RESCUE_APP_DB
-      valueFrom:
-        secretKeyRef:
-          name: rescue-airflow-conns
-          key: rescue_app_db_conn
-    - name: AIRFLOW_CONN_RESCUE_S3
-      valueFrom:
-        secretKeyRef:
-          name: rescue-airflow-conns
-          key: rescue_s3_conn
-  ingress:
-    web:
-      enabled: true
-      hosts:
-        - name: airflow.rescue-ai.example.com
-          tls:
-            enabled: true
-            secretName: rescue-airflow-tls
-  # NB: DAG-стадии должны использовать KubernetesPodOperator
-  # (общий TODO после защиты диплома).
+  enabled: false

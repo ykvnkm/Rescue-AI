@@ -33,6 +33,10 @@ app.kubernetes.io/name: {{ include "rescue-ai-sync-worker.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- define "rescue-ai-sync-worker.serviceAccountName" -}}
+{{ include "rescue-ai-sync-worker.fullname" . }}
+{{- end -}}
+
 {{- define "rescue-ai-sync-worker.kubeSecretName" -}}
 {{- if .Values.secrets.kube.existingSecret -}}
 {{- .Values.secrets.kube.existingSecret -}}

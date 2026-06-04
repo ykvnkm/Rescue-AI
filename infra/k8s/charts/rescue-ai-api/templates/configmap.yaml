@@ -6,6 +6,10 @@ metadata:
     {{- include "rescue-ai-api.labels" . | nindent 4 }}
 data:
   # Несекретные опции — подаются через envFrom.configMapRef.
+  # Public-demo guard: per-IP request cap (0 disables). The bearer gate is a
+  # SECRET (API_AUTH_TOKEN) sourced via Vault app.env, not here — an empty
+  # token leaves the demo open. См. docs/runbooks/public_demo_access.md.
+  APP_RATE_LIMIT_PER_MIN: {{ .Values.config.api.rateLimitPerMin | quote }}
   ARTIFACTS_S3_ENDPOINT: {{ .Values.config.storage.s3Endpoint | quote }}
   ARTIFACTS_S3_REGION: {{ .Values.config.storage.s3Region | quote }}
   ARTIFACTS_S3_BUCKET: {{ .Values.config.storage.s3Bucket | quote }}
@@ -22,7 +26,13 @@ data:
   DETECTOR_TIMEOUT_SEC: {{ .Values.config.services.detectorTimeoutSec | quote }}
   TLS_MODE: {{ .Values.security.tlsMode | toString | quote }}
   {{- if eq (.Values.security.tlsMode | toString) "mtls" }}
+  {{- if eq .Values.security.ca.source "vault" }}
+  TLS_CA_CERT_PATH: "/vault/secrets/station-root-ca.crt"
+  TLS_CLIENT_CERT_PATH: "/vault/secrets/gcs-client.crt"
+  TLS_CLIENT_KEY_PATH: "/vault/secrets/gcs-client.key"
+  {{- else }}
   TLS_CA_CERT_PATH: "/app/certs/station-root-ca.crt"
   TLS_CLIENT_CERT_PATH: "/app/certs/gcs-client.crt"
   TLS_CLIENT_KEY_PATH: "/app/certs/gcs-client.key"
+  {{- end }}
   {{- end }}

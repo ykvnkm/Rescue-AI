@@ -1,0 +1,138 @@
+{{- if and .Values.localPostgresql.enabled .Values.localPostgresqlBackup.enabled }}
+# CronJob ежедневного backup'а локальной Postgres.
+#
+# Учебный паттерн прод-эксплуатации SQL-БД (ADR-0008 §4):
+#   1. pg_dump custom-format → бинарный stream;
+#   2. поток отправляется напрямую в MinIO под именем
+#      backups/postgres/<ds>.dump (без промежуточного диска у пода);
+#   3. retention в backups/postgres/ настраивается lifecycle-rule
+#      MinIO (см. infra/k8s/vault/policies/rescue-ai-pg-backup.hcl
+#      и offline.yaml).
+#
+# Credentials берутся через Vault Agent: pg-password из той же KV-
+# записи, что и сам Postgres, и минио-root для mc.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rescue-ai-pg-backup
+  labels:
+    {{- include "rescue-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/name: pg-backup
+    app.kubernetes.io/component: backup
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "rescue-ai.localPostgresql.name" . }}-backup
+  labels:
+    {{- include "rescue-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/name: pg-backup
+    app.kubernetes.io/component: backup
+spec:
+  schedule: {{ .Values.localPostgresqlBackup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: pg-backup
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/component: backup
+          annotations:
+            vault.hashicorp.com/agent-inject: "true"
+            # CronJob → Vault Agent только init-контейнером, без сайдкара:
+            # иначе sidecar держит под живым и Job ежедневно висит 1/2,
+            # никогда не доходя до Complete. Секрет-файлы пишутся init-агентом
+            # в shared /vault/secrets ДО старта pg-dump/mc-upload.
+            vault.hashicorp.com/agent-pre-populate-only: "true"
+            # У этого пода ЕСТЬ свой init-контейнер (pg-dump). Без init-first
+            # Vault-init встаёт ПОСЛЕ него, и pg-dump не находит
+            # /vault/secrets/postgres.env. init-first ставит Vault-init первым.
+            vault.hashicorp.com/agent-init-first: "true"
+            vault.hashicorp.com/role: "rescue-ai-pg-backup"
+            # Postgres-пароль — для pg_dump.
+            vault.hashicorp.com/agent-inject-secret-postgres.env: "secret/data/rescue-ai/postgresql"
+            vault.hashicorp.com/agent-inject-template-postgres.env: |
+              {{`{{- with secret "secret/data/rescue-ai/postgresql" -}}`}}
+              PGPASSWORD={{`{{ .Data.data.POSTGRES_PASSWORD }}`}}
+              PGUSER={{`{{ .Data.data.POSTGRES_USER }}`}}
+              PGDATABASE={{`{{ .Data.data.POSTGRES_DB }}`}}
+              {{`{{- end }}`}}
+            # MinIO root — для mc cp.
+            vault.hashicorp.com/agent-inject-secret-minio.env: "secret/data/rescue-ai/minio"
+            vault.hashicorp.com/agent-inject-template-minio.env: |
+              {{`{{- with secret "secret/data/rescue-ai/minio" -}}`}}
+              MINIO_ROOT_USER={{`{{ .Data.data.MINIO_ROOT_USER }}`}}
+              MINIO_ROOT_PASSWORD={{`{{ .Data.data.MINIO_ROOT_PASSWORD }}`}}
+              {{`{{- end }}`}}
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: rescue-ai-pg-backup
+          # Учебный паттерн «2-stage job» — каждый stage отдельным
+          # образом с нужным набором утилит:
+          #   initContainer pg_dump → shared emptyDir
+          #   container mc cp → MinIO
+          # Init завершается до main; если pg_dump упал, mc не стартует
+          # и Job помечается Failed.
+          volumes:
+            - name: scratch
+              emptyDir: {}
+          initContainers:
+            - name: pg-dump
+              image: {{ .Values.localPostgresqlBackup.image.repository }}:{{ .Values.localPostgresqlBackup.image.tag }}
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: PGHOST
+                  value: {{ include "rescue-ai.localPostgresql.name" . | quote }}
+                - name: PGPORT
+                  value: "5432"
+              volumeMounts:
+                - name: scratch
+                  mountPath: /scratch
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  . /vault/secrets/postgres.env
+                  export PGPASSWORD PGUSER PGDATABASE
+                  echo "==> pg_dump → /scratch/dump.bin"
+                  pg_dump --format=custom --no-owner --no-acl "${PGDATABASE}" \
+                      > /scratch/dump.bin
+                  echo "==> dumped $(wc -c < /scratch/dump.bin) bytes"
+              resources:
+                {{- toYaml .Values.localPostgresqlBackup.resources | nindent 16 }}
+          containers:
+            - name: mc-upload
+              image: {{ .Values.localPostgresqlBackup.mcImage.repository }}:{{ .Values.localPostgresqlBackup.mcImage.tag }}
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: MINIO_ENDPOINT
+                  value: "http://{{ include "rescue-ai.localMinio.name" . }}:9000"
+                - name: BUCKET
+                  value: {{ .Values.localPostgresqlBackup.bucket | quote }}
+              volumeMounts:
+                - name: scratch
+                  mountPath: /scratch
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  . /vault/secrets/minio.env
+                  ds="$(date -u +%Y-%m-%d)"
+                  ts="$(date -u +%H%M%S)"
+                  key="backups/postgres/${ds}/${ds}T${ts}Z.dump"
+                  echo "==> mc cp → s3://${BUCKET}/${key}"
+                  mc alias set local "${MINIO_ENDPOINT}" \
+                      "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
+                  mc cp /scratch/dump.bin "local/${BUCKET}/${key}"
+                  echo "==> upload done"
+              resources:
+                {{- toYaml .Values.localPostgresqlBackup.resources | nindent 16 }}
+{{- end }}

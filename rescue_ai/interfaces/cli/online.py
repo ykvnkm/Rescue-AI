@@ -1178,7 +1178,58 @@ def build_api_runtime() -> tuple[
         auto_repos,
     ) = _build_repositories(settings=settings)
 
-    artifact_storage = build_s3_storage(settings.storage)
+    artifact_storage: ArtifactStorage = build_s3_storage(settings.storage)
+
+    # Offline-профиль: обернуть artifact_storage в OutboxArtifactStorage,
+    # который дополнительно ставит outbox-запись на каждый upload в
+    # локальный MinIO. Sync-worker потом скопирует объект в remote S3
+    # через S3-to-S3 GET/PUT (см. ADR-0007 §3, диплом §3.5.1).
+    if str(getattr(settings.deployment, "mode", "cloud")) == "offline":
+        from rescue_ai.infrastructure.postgres_connection import (  # noqa: PLC0415
+            PostgresDatabase,
+        )
+
+        # pylint: disable=import-outside-toplevel
+        from rescue_ai.infrastructure.sync.outbox_artifact_storage import (
+            OutboxArtifactStorage,
+        )
+        from rescue_ai.infrastructure.sync.sync_outbox_repository import (
+            PostgresSyncOutboxRepository,
+        )
+
+        _local_bucket = settings.storage.s3_bucket
+        _remote_bucket = str(
+            getattr(settings.deployment, "remote_s3_bucket", "")
+        ).strip()
+        _local_prefix = settings.storage.s3_prefix
+        if _local_bucket and _remote_bucket:
+            outbox_for_storage = PostgresSyncOutboxRepository(
+                PostgresDatabase(settings.database.dsn)
+            )
+            artifact_storage = OutboxArtifactStorage(
+                inner=artifact_storage,
+                outbox=outbox_for_storage,
+                local_bucket=_local_bucket,
+                remote_bucket=_remote_bucket,
+                local_prefix=_local_prefix,
+                remote_prefix=_local_prefix,
+            )
+            logger.info(
+                "Offline profile: artifact_storage wrapped с outbox-репликацией "
+                "(local=%s/%s → remote=%s/%s)",
+                _local_bucket,
+                _local_prefix,
+                _remote_bucket,
+                _local_prefix,
+            )
+        else:
+            logger.warning(
+                "Offline profile: S3-репликация артефактов выключена "
+                "(local_bucket=%r, remote_bucket=%r). Реплицируются только "
+                "DB-метаданные через outbox.",
+                _local_bucket,
+                _remote_bucket,
+            )
 
     pilot_service = PilotService(
         dependencies=PilotService.Dependencies(

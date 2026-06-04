@@ -105,7 +105,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra batch --extra postgres
+        run: uv sync --extra dev
 
       - name: Run tests
         run: uv run pytest --cov=rescue_ai --cov-report=term-missing --cov-fail-under=70

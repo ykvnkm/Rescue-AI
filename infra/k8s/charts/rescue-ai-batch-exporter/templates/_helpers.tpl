@@ -33,6 +33,10 @@ app.kubernetes.io/name: {{ include "rescue-ai-batch-exporter.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- define "rescue-ai-batch-exporter.serviceAccountName" -}}
+{{ include "rescue-ai-batch-exporter.fullname" . }}
+{{- end -}}
+
 {{- define "rescue-ai-batch-exporter.kubeSecretName" -}}
 {{- if .Values.secrets.kube.existingSecret -}}
 {{- .Values.secrets.kube.existingSecret -}}

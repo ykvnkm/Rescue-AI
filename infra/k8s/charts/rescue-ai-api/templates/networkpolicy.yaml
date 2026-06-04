@@ -1,0 +1,123 @@
+{{- if .Values.networkPolicy.enabled }}
+# NetworkPolicy для api-пода.
+#
+# Учебная норма прод-кластера: default-deny внутри namespace + явные
+# whitelist'ы. Без NetworkPolicy скомпрометированный pod в этом
+# namespace может ходить куда угодно — в БД, к Vault, к S3, в
+# detection — это не safe.
+#
+# В этом чарте описана политика ровно для api-пода. Аналогичные
+# политики живут в чартах detection/nav-engine/sync-worker/batch-exporter,
+# и плюс одна общая default-deny — она в umbrella-чарте (или применяется
+# отдельно перед helm install).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "rescue-ai-api.fullname" . }}
+  labels:
+    {{- include "rescue-ai-api.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "rescue-ai-api.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Извне — только через Ingress-контроллер (nginx). На станции
+    # без ingress трафик заходит через port-forward (выше политики).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: http
+          protocol: TCP
+    # Прометей соскрейпит /metrics (см. S6 — observability).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: http
+          protocol: TCP
+  egress:
+    # DNS — k8s coredns в kube-system.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Postgres — bitnami subchart внутри этого namespace.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgresql
+      ports:
+        - port: 5432
+          protocol: TCP
+    # MinIO — bitnami subchart внутри этого namespace (offline).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: minio
+      ports:
+        - port: 9000
+          protocol: TCP
+    # detection и nav-engine — наши же поды в этом namespace.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rescue-ai-detection
+      ports:
+        - port: 8002
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rescue-ai-nav-engine
+      ports:
+        - port: 8001
+          protocol: TCP
+    # Vault — agent injector в каждом поде, плюс UI api/PUT через
+    # ClusterIP. В offline Vault живёт в этом же namespace, в cloud
+    # — в namespace `vault`.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vault
+      ports:
+        - port: 8200
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: vault
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vault
+      ports:
+        - port: 8200
+          protocol: TCP
+    # Raspberry Pi (mTLS) — выход за пределы кластера, IP RPi
+    # настроен в config.rpi.baseUrl. NetworkPolicy на уровне
+    # внешних IP в k8s ограниченна (нужен Cilium/Calico с FQDN-
+    # rules); до тех пор разрешаем весь egress на нестандартные
+    # порты к 0.0.0.0/0 (но только эти порты).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16   # k8s metadata
+      ports:
+        - port: 9100             # RPi HTTPS API
+          protocol: TCP
+        - port: {{ .Values.config.rpi.rtspPort }}
+          protocol: TCP
+        - port: 443              # cloudflared tunnel + Yandex S3
+          protocol: TCP
+{{- end }}

@@ -1,0 +1,120 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default-deny + explicit allow для всего batch namespace.
+#
+# Учебный принцип сетевой сегментации (CIS K8s benchmark §5.3.2):
+# каждый namespace стартует с deny-all, а доступ открывается явными
+# правилами. Без него batch-контейнеры могут обращаться куда угодно
+# внутри кластера, в том числе в `rescue-ai` к Postgres и Vault
+# приложения — что недопустимо.
+
+# (1) default-deny: всё закрыто.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rescue-batch-default-deny
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "rescue-batch.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# (2) DNS — обязательно, иначе резолв kubernetes.default.svc не
+# работает и Vault auth падает.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rescue-batch-allow-dns
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "rescue-batch.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# (3) Egress к Vault. В cloud Vault в namespace `vault`.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rescue-batch-allow-vault
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "rescue-batch.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: vault
+      ports:
+        - port: 8200
+          protocol: TCP
+---
+# (4) Egress к managed Postgres и S3 (внешние). NetworkPolicy на
+# уровне FQDN не поддерживается стандартными CNI, поэтому
+# разрешаем нужные порты для всех внешних IP, исключая metadata.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rescue-batch-allow-external
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "rescue-batch.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16   # cloud-provider metadata
+      ports:
+        - port: 5432             # Postgres (рабочий)
+          protocol: TCP
+        - port: 6432             # Postgres через PgBouncer
+          protocol: TCP
+        - port: 443              # HTTPS (S3, GitHub git-sync)
+          protocol: TCP
+        - port: 22               # git-sync через SSH (если используется)
+          protocol: TCP
+---
+# (5) Ingress только от Prometheus (для batch-exporter /metrics) и
+# от kube-system (probes от kubelet ходят с node-IP, не из namespace,
+# поэтому отдельно разрешать kubelet НЕ нужно — k8s исключает
+# liveness/readiness из NetworkPolicy на уровне kubelet, см.
+# https://kubernetes.io/docs/concepts/services-networking/network-policies/#what-you-can-t-do).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rescue-batch-allow-monitoring-ingress
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "rescue-batch.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+{{- end }}

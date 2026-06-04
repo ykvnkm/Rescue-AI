@@ -1,25 +1,31 @@
 """Entry point for the rescue-ai-batch-exporter pod.
 
 Назначение микросервиса — публиковать в Prometheus агрегированные
-показатели качества модели, полученные на ежедневном batch-DAG
-(см. раздел 2.7 пояснительной записки). Сервис ничего не считает сам:
-он периодически читает таблицу ``batch_pipeline_metrics`` и обновляет
+показатели качества модели и дрейфа входных данных, полученные на
+ежедневном batch-DAG (см. раздел 2.7 пояснительной записки). Сервис
+ничего не считает сам: он периодически читает две таблицы
+(``batch_pipeline_metrics`` и ``drift_observations``) и обновляет
 соответствующие Prometheus-gauge'и.
 
 Поведение:
 
 * подключается к Postgres по ``DB_DSN``;
 * раз в ``BATCH_EXPORTER_SCRAPE_INTERVAL_SEC`` (по умолчанию 300 секунд)
-  выбирает последнюю по ``updated_at`` запись и проставляет gauge'и
-  ``rescue_ai_batch_recall``, ``rescue_ai_batch_precision``,
-  ``rescue_ai_batch_accuracy``, ``rescue_ai_batch_rows_corrupted``,
-  ``rescue_ai_batch_detector_errors``,
-  ``rescue_ai_batch_last_run_timestamp_seconds``;
+  выбирает последнюю по ``updated_at`` запись из каждой таблицы и
+  проставляет gauge'и:
+  - качество модели: ``rescue_ai_batch_recall/precision/accuracy``,
+    ``rescue_ai_batch_rows_corrupted``,
+    ``rescue_ai_batch_detector_errors``,
+    ``rescue_ai_batch_last_run_timestamp_seconds``;
+  - дрейф данных: ``rescue_ai_drift_psi_score``,
+    ``rescue_ai_drift_csi{feature}`` (3 точки по площади bbox,
+    отношению сторон bbox и яркости кадра);
 * публикует эндпоинт ``/metrics`` на порту ``BATCH_EXPORTER_PORT``
   (по умолчанию 8003), который опрашивает Prometheus.
 
-Сервис умышленно сделан тонким: вся бизнес-логика подсчёта качества
-живёт в Airflow DAG. Здесь только мост между таблицей и Prometheus.
+Сервис умышленно сделан тонким: бизнес-логика подсчёта качества и
+дрейфа живёт в stage ``publish_metrics`` Airflow DAG. Здесь только
+мост между таблицами и Prometheus.
 """
 
 from __future__ import annotations
@@ -41,6 +47,8 @@ from rescue_ai.application.metrics import (
     BATCH_PRECISION,
     BATCH_RECALL,
     BATCH_ROWS_CORRUPTED,
+    DRIFT_CSI,
+    DRIFT_PSI,
     render_latest,
 )
 from rescue_ai.infrastructure.postgres_connection import PostgresDatabase
@@ -60,6 +68,17 @@ ORDER BY updated_at DESC
 LIMIT 1
 """
 
+_DRIFT_QUERY = """
+SELECT
+    psi_confidence,
+    csi_bbox_area,
+    csi_bbox_ratio,
+    csi_brightness
+FROM drift_observations
+ORDER BY ds DESC
+LIMIT 1
+"""
+
 
 def _postgres_error_types() -> tuple[type[BaseException], ...]:
     """Return psycopg exception types without making psycopg a hard import."""
@@ -73,8 +92,8 @@ def _postgres_error_types() -> tuple[type[BaseException], ...]:
     return (OSError, RuntimeError)
 
 
-def _refresh_gauges(db: PostgresDatabase) -> None:
-    """Прочитать последнюю запись batch_pipeline_metrics и обновить gauge'и."""
+def _refresh_quality_gauges(db: PostgresDatabase) -> None:
+    """Прочитать последнюю запись batch_pipeline_metrics и обновить gauge'и качества."""
     try:
         with db.connect() as conn, conn.cursor() as cursor:
             cursor.execute(_SCRAPE_QUERY)
@@ -93,11 +112,51 @@ def _refresh_gauges(db: PostgresDatabase) -> None:
     BATCH_DETECTOR_ERRORS.set(float(detector_errors))
     BATCH_LAST_RUN_TIMESTAMP.set(float(updated_at))
     logger.info(
-        "batch-exporter: refreshed gauges (recall=%.4f precision=%.4f accuracy=%.4f)",
+        "batch-exporter: refreshed quality gauges "
+        "(recall=%.4f precision=%.4f accuracy=%.4f)",
         float(recall),
         float(precision),
         float(accuracy),
     )
+
+
+def _refresh_drift_gauges(db: PostgresDatabase) -> None:
+    """Прочитать последнюю запись drift_observations и обновить gauge'и дрейфа.
+
+    Если запись отсутствует (например, эталонная миссия ещё не
+    зафиксирована командой `publish_metrics --as-reference`), gauge'и
+    не обновляются — Prometheus будет видеть отсутствие изменений,
+    что и есть «дрейф ещё не отслеживается».
+    """
+    try:
+        with db.connect() as conn, conn.cursor() as cursor:
+            cursor.execute(_DRIFT_QUERY)
+            row = cursor.fetchone()
+    except _postgres_error_types():  # pragma: no cover - Postgres недоступен
+        logger.exception("batch-exporter: failed to read drift_observations")
+        return
+    if row is None:
+        logger.info("batch-exporter: drift_observations is empty, skipping")
+        return
+    psi_confidence, csi_bbox_area, csi_bbox_ratio, csi_brightness = row
+    DRIFT_PSI.set(float(psi_confidence))
+    DRIFT_CSI.labels(feature="bbox_area").set(float(csi_bbox_area))
+    DRIFT_CSI.labels(feature="bbox_ratio").set(float(csi_bbox_ratio))
+    DRIFT_CSI.labels(feature="brightness").set(float(csi_brightness))
+    logger.info(
+        "batch-exporter: refreshed drift gauges "
+        "(psi=%.4f csi[area]=%.4f csi[ratio]=%.4f csi[bright]=%.4f)",
+        float(psi_confidence),
+        float(csi_bbox_area),
+        float(csi_bbox_ratio),
+        float(csi_brightness),
+    )
+
+
+def _refresh_gauges(db: PostgresDatabase) -> None:
+    """Один проход обновления всех gauge'ов (качество + дрейф)."""
+    _refresh_quality_gauges(db)
+    _refresh_drift_gauges(db)
 
 
 def _scrape_loop(db: PostgresDatabase, interval_sec: float, stop: Event) -> None:

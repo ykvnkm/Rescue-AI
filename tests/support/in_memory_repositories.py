@@ -150,12 +150,21 @@ class InMemoryArtifactStorage:
     _reports: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def store_frame(
-        self, mission_id: str, frame_id: int, source_uri: str, ds: str
+        self,
+        mission_id: str,
+        frame_id: int,
+        source_uri: str,
+        ds: str,
+        *,
+        frame_bgr: object | None = None,
     ) -> str:
-        parsed = urlparse(source_uri)
-        filename = Path(parsed.path).name if parsed.scheme == "file" else ""
-        if not filename:
-            filename = Path(source_uri).name or f"{frame_id}.jpg"
+        if frame_bgr is not None:
+            filename = f"frame_{frame_id:06d}.jpg"
+        else:
+            parsed = urlparse(source_uri)
+            filename = Path(parsed.path).name if parsed.scheme == "file" else ""
+            if not filename:
+                filename = Path(source_uri).name or f"{frame_id}.jpg"
         uri = f"memory://missions/{ds}/{mission_id}/frames/{filename}"
         self.stored_frames[(mission_id, frame_id)] = uri
         return uri
@@ -224,9 +233,12 @@ class InMemoryArtifactStorage:
         mission_id: str,
         ds: str,
         points: Sequence[TrajectoryPoint],
+        *,
+        origin: tuple[float, float] | None = None,
     ) -> str:
         key = f"{ds}:{mission_id}:trajectory"
         self._reports[key] = {
+            "origin": list(origin) if origin is not None else None,
             "points": [
                 {
                     "seq": point.seq,
@@ -238,7 +250,7 @@ class InMemoryArtifactStorage:
                     "source": str(point.source),
                 }
                 for point in points
-            ]
+            ],
         }
         return f"memory://missions/{ds}/{mission_id}/trajectory.csv"
 

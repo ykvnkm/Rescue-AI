@@ -4,7 +4,7 @@
 replicaCount: 1
 
 image:
-  repository: rescue-ai-online
+  repository: rescue-ai-api
   pullPolicy: IfNotPresent
   tag: "local"
 
@@ -21,6 +21,11 @@ deployment:
 # Конфиг через ConfigMap. Секреты идут отдельно — либо через Vault
 # Agent Injector, либо через kube-Secret (см. secrets.* ниже).
 config:
+  api:
+    # Public-demo per-IP request cap (requests/min). 0 disables the limiter
+    # (controlled deployments rely on the bearer gate instead). The bearer
+    # token itself (API_AUTH_TOKEN) is a Vault secret, not set here.
+    rateLimitPerMin: 0
   rpi:
     baseUrl: ""
     missionsDir: ""
@@ -49,9 +54,14 @@ config:
 security:
   tlsMode: "off"
   ca:
+    # Source for mTLS material when tlsMode=mtls: kube | vault.
+    source: kube
     # Имя secret'а в кластере с cert-материалом, если tlsMode=mtls.
     # Вытащит ключи: ca.crt, client.crt, client.key.
     existingSecret: ""
+    vault:
+      role: rescue-ai-api
+      secretPath: rescue-ai/rpi-mtls
 
 # Источник секретов: vault | kube | none.
 #
@@ -98,22 +108,81 @@ resources:
     memory: 1Gi
 
 probes:
+  # liveness — "под жив?" (если фейлится, kubelet перезапускает контейнер)
   liveness:
     httpGet:
       path: /health
       port: http
-    initialDelaySeconds: 30
     periodSeconds: 30
+    failureThreshold: 3
+  # readiness — "под готов принимать трафик?" (если фейлится, Service
+  # убирает его из endpoints, но контейнер не перезапускается).
   readiness:
+    httpGet:
+      path: /ready
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+  # startupProbe — отдельная фаза для медленного старта (загрузка
+  # моделей, выкачивание весов из S3). Пока startupProbe идёт,
+  # liveness/readiness ОТКЛЮЧЕНЫ — иначе долгая инициализация
+  # выглядела бы как зависший под и kubelet бесконечно перезапускал
+  # бы его. failureThreshold × periodSeconds = бюджет на старт.
+  startup:
     httpGet:
       path: /health
       port: http
-    initialDelaySeconds: 5
-    periodSeconds: 10
+    periodSeconds: 5
+    failureThreshold: 60   # 60 * 5s = 5 минут на запуск
+
+# Графусное завершение. При rollout/scale-down/drain k8s посылает
+# SIGTERM, ждёт preStop, ждёт terminationGracePeriodSeconds, потом
+# SIGKILL. preStop sleep даёт Service время удалить под из endpoints
+# до того, как uvicorn начнёт отказывать в коннектах.
+terminationGracePeriodSeconds: 30
+lifecycle:
+  preStop:
+    exec:
+      command: ["/bin/sh", "-c", "sleep 5"]
+
+# initContainers (учебная норма для прод-API с DB-зависимостью).
+# wait-for-postgres блокирует старт api, пока DB не отвечает —
+# без него под крашится при первом запросе и kubectl rollout видит
+# CrashLoopBackOff вместо предсказуемого Init.
+initContainers:
+  waitForPostgres:
+    enabled: false        # включается в offline.yaml (там Postgres
+                          # поднимается рядом и может ещё инициализироваться)
+    image: postgres:16-alpine
+    timeoutSec: 120
+
+# Кластер k8s следит за тем, чтобы при добровольном выселении подов
+# (drain ноды, перекатка) одновременно недоступно было не более
+# maxUnavailable штук. enabled=false по умолчанию (1 реплика — PDB
+# с maxUnavailable=0 заблокировал бы drain ноды совсем).
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+# HPA — масштабирование api по CPU (включается в cloud.yaml).
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
 
 nodeSelector: {}
 tolerations: []
+# Дефолт пустой; cloud.yaml ставит podAntiAffinity (replicas > 1
+# не должны жить на одной ноде) и topologySpreadConstraints.
 affinity: {}
+topologySpreadConstraints: []
+
+# NetworkPolicy включается в обоих прод-профилях (см. cloud/offline
+# umbrella values). По умолчанию выключена для совместимости с dev
+# kind-кластерами без CNI, поддерживающим NetworkPolicy.
+networkPolicy:
+  enabled: false
 
 podSecurityContext:
   runAsNonRoot: true
@@ -124,4 +193,8 @@ securityContext:
   allowPrivilegeEscalation: false
   capabilities:
     drop: [ALL]
+  # api пишет временные файлы (uvicorn access-log буфер,
+  # tempfile artifact storage download). Полностью readOnly включить
+  # не получится без `emptyDir` томов; оставляем false до миграции
+  # путей записи в /tmp.
   readOnlyRootFilesystem: false

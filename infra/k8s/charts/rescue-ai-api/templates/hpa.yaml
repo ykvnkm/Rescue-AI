@@ -1,0 +1,27 @@
+{{- if .Values.autoscaling.enabled }}
+# Horizontal Pod Autoscaler — масштабирует Deployment по CPU.
+# При нагрузке выше targetCPUUtilizationPercentage HPA добавляет
+# реплики (до maxReplicas); при падении нагрузки — снимает (но не
+# ниже minReplicas). Корректно работает только если у пода задан
+# resources.requests.cpu (есть, см. values.resources).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "rescue-ai-api.fullname" . }}
+  labels:
+    {{- include "rescue-ai-api.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "rescue-ai-api.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

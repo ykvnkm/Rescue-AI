@@ -91,10 +91,11 @@ def test_video_session_ignores_form_fps_override(monkeypatch, tmp_path) -> None:
     )
 
     assert manager.build_source_calls == [
-        {"source_kind": "video", "source_value": str(video_path), "fps": None}
+        {"source_kind": "video", "source_value": str(video_path), "fps": 3.0}
     ]
     assert manager.start_request is not None
     assert manager.start_request.fps == 30.0
+    assert manager.start_request.detect_fps == 3.0
     assert response["fps"] == 30.0
 
 

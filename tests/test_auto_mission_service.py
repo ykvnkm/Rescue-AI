@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -263,7 +264,11 @@ def test_start_auto_mission_creates_automatic_mission_and_persists_config() -> N
     }
 
 
-def test_start_auto_mission_is_idempotent_for_same_source() -> None:
+def test_start_auto_mission_reopens_same_source_for_rerun() -> None:
+    # Re-feeding the same content must reopen and overwrite the mission in
+    # place (same mission_id), not skip-by-exists: artifacts are keyed by
+    # (ds, mission_id) and put_object overwrites, so a previously completed
+    # mission is reset to ``running`` and its details/config refreshed.
     harness = _build_service()
     first = harness.service.start_auto_mission(
         source_name="same-source",
@@ -272,6 +277,9 @@ def test_start_auto_mission_is_idempotent_for_same_source() -> None:
         nav_mode=NavMode.AUTO,
         detector_name="yolo",
     )
+    harness.db.missions[first.mission_id].status = "completed"
+    harness.db.missions[first.mission_id].completed_frame_id = 4
+
     second = harness.service.start_auto_mission(
         source_name="same-source",
         total_frames=99,
@@ -279,11 +287,72 @@ def test_start_auto_mission_is_idempotent_for_same_source() -> None:
         nav_mode=NavMode.MARKER,
         detector_name="nanodet",
     )
+
     assert first.mission_id == second.mission_id
-    assert harness.navigation.reset_calls == 1
+    # Reopened, not skipped: status back to running re-enables ingestion
+    # (the guard keys off status=="completed"), details and config
+    # overwritten, nav engine re-initialized. completed_frame_id stays under
+    # COALESCE semantics and is overwritten when this rerun completes.
+    assert second.status == "running"
+    assert second.total_frames == 99
+    assert second.fps == 9.0
+    assert harness.config_repo.get(second.mission_id) == {
+        "nav_mode": "marker",
+        "detector": "nanodet",
+        "config_json": {},
+    }
+    assert harness.navigation.reset_calls == 2
 
 
-def test_ingest_frame_no_detection_produces_frame_event_only() -> None:
+def test_start_auto_mission_pins_explicit_mission_id_for_s3_rerun() -> None:
+    # Replaying a mission from S3 pins its existing id: the override wins over
+    # the content-derived id, so the known mission is reopened in place.
+    harness = _build_service()
+    created = harness.service.start_auto_mission(
+        source_name="s3:2026-05-30/abc",
+        total_frames=3,
+        fps=1.0,
+        nav_mode=NavMode.AUTO,
+        detector_name="yolo",
+        mission_id="11111111-2222-3333-4444-555555555555",
+    )
+    assert created.mission_id == "11111111-2222-3333-4444-555555555555"
+
+    again = harness.service.start_auto_mission(
+        source_name="anything-else",
+        total_frames=3,
+        fps=1.0,
+        nav_mode=NavMode.AUTO,
+        detector_name="yolo",
+        mission_id="11111111-2222-3333-4444-555555555555",
+    )
+    assert again.mission_id == created.mission_id
+    assert again.status == "running"
+
+
+def test_start_auto_mission_ships_uploaded_labels_to_s3() -> None:
+    # A ZIP mission package carries labels.json next to frames/; it must be
+    # archived under the mission's labels key so the offline upload stays
+    # symmetric with an S3 mission.
+    harness = _build_service()
+    labels = {"frame_000000.jpg": True, "frame_000001.jpg": False}
+    mission = harness.service.start_auto_mission(
+        source_name="frames:pkg.zip:abc123",
+        total_frames=2,
+        fps=1.0,
+        nav_mode=NavMode.AUTO,
+        detector_name="yolo",
+        labels_payload=labels,
+    )
+    stored = [
+        value
+        for key, value in harness.artifacts._reports.items()
+        if key.endswith(f":{mission.mission_id}:labels")
+    ]
+    assert stored == [labels]
+
+
+def test_ingest_frame_no_detection_archives_frame_event_only() -> None:
     harness = _build_service()
     mission = harness.service.start_auto_mission(
         source_name="quiet",
@@ -295,19 +364,20 @@ def test_ingest_frame_no_detection_produces_frame_event_only() -> None:
 
     outcome = harness.service.ingest_frame(
         mission_id=mission.mission_id,
-        frame_bgr=object(),
+        frame_bgr=np.zeros((4, 4, 3), dtype=np.uint8),
         ts_sec=0.0,
         frame_id=1,
-        image_uri="file:///tmp/1.jpg",
+        image_uri="session://quiet/1",
     )
 
     assert outcome == AutoFrameOutcome(
         detections=[], trajectory_point=None, alerts=[], decisions=[]
     )
     assert not harness.db.alerts
-    assert harness.db.mission_frames[mission.mission_id][0].image_uri == (
-        "file:///tmp/1.jpg"
-    )
+    # Every frame is archived now, not only alert frames: the in-memory
+    # frame is stored and the frame event points at the stored URI.
+    stored_uri = harness.artifacts.stored_frames[(mission.mission_id, 1)]
+    assert harness.db.mission_frames[mission.mission_id][0].image_uri == stored_uri
     assert harness.decision_repo.list_by_mission(mission.mission_id) == []
 
 
@@ -612,6 +682,66 @@ def test_complete_auto_mission_transitions_and_writes_trajectory_csv() -> None:
     saved = harness.artifacts._reports[key]
     assert saved["points"][0]["seq"] == 1
     assert saved["points"][0]["source"] == "marker"
+
+
+def test_complete_auto_mission_with_origin_reports_absolute_coordinates() -> None:
+    # When an absolute start point is configured, the report switches to the
+    # geographic coordinate system and the CSV is saved with the origin.
+    navigation = FakeNavigationEngine(
+        queue=[
+            TrajectoryPoint(
+                mission_id="x",
+                seq=1,
+                ts_sec=0.0,
+                x=100.0,
+                y=100.0,
+                z=5.0,
+                source=TrajectorySource.MARKER,
+            )
+        ]
+    )
+    harness = _build_service(navigation=navigation)
+    mission = harness.service.start_auto_mission(
+        source_name="abs-coords",
+        total_frames=1,
+        fps=1.0,
+        nav_mode=NavMode.MARKER,
+        detector_name="yolo",
+        config_json={"origin_lat": 55.75, "origin_lon": 37.62},
+    )
+    harness.service.ingest_frame(
+        mission_id=mission.mission_id,
+        frame_bgr=object(),
+        ts_sec=0.0,
+        frame_id=1,
+        image_uri="file:///tmp/1.jpg",
+    )
+    harness.service.complete_auto_mission(
+        mission_id=mission.mission_id, completed_frame_id=1
+    )
+
+    report = harness.service.get_auto_mission_report(mission.mission_id)
+    traj = cast(Mapping[str, object], report["trajectory"])
+    assert traj["coordinate_system"] == "absolute"
+    assert traj["origin"] == {"lat": 55.75, "lon": 37.62}
+    key = f"{mission.created_at[:10]}:{mission.mission_id}:trajectory"
+    assert harness.artifacts._reports[key]["origin"] == [55.75, 37.62]
+
+
+def test_complete_auto_mission_without_origin_stays_relative() -> None:
+    harness = _build_service()
+    mission = harness.service.start_auto_mission(
+        source_name="rel-coords",
+        total_frames=1,
+        fps=1.0,
+        nav_mode=NavMode.AUTO,
+        detector_name="yolo",
+    )
+    harness.service.complete_auto_mission(mission.mission_id)
+    report = harness.service.get_auto_mission_report(mission.mission_id)
+    traj = cast(Mapping[str, object], report["trajectory"])
+    assert traj["coordinate_system"] == "relative"
+    assert traj["origin"] is None
 
 
 def test_complete_auto_mission_is_idempotent() -> None:

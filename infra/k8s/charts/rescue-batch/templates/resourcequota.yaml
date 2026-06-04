@@ -1,0 +1,16 @@
+{{- if .Values.resourceQuota.enabled }}
+# ResourceQuota namespace-уровня. Гарантирует, что batch не съест
+# больше ресурсов, чем заложено в кластере, — без неё ephemeral
+# KubernetesPodOperator-под на ML-стадии с torch может выжать всю
+# свободную память ноды и положить соседние workloads.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: rescue-batch-quota
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "rescue-batch.labels" . | nindent 4 }}
+spec:
+  hard:
+    {{- toYaml .Values.resourceQuota.hard | nindent 4 }}
+{{- end }}

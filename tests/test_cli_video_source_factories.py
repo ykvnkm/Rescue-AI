@@ -127,11 +127,9 @@ def test_auto_factory_local_modes(
     calls: dict[str, tuple[object, ...]] = {}
 
     class _FakeFileSource:
-        def __init__(self, path: str, fps_override: float | None, loop: bool) -> None:
-            calls["file"] = (path, fps_override, loop)
-            # Surface the override (or a stable fallback) so the factory
-            # can return the effective FPS in its 3-tuple contract.
-            self.fps = float(fps_override) if fps_override else 24.0
+        def __init__(self, path: str, *, loop: bool) -> None:
+            calls["file"] = (path, loop)
+            self.fps = 24.0
 
     class _FakeFolderSource:
         def __init__(self, path: str, fps: float) -> None:
@@ -155,8 +153,8 @@ def test_auto_factory_local_modes(
     )
     assert isinstance(src, _FakeFileSource)
     assert resolved == str(video_path)
-    assert calls["file"] == (str(video_path), 8.0, True)
-    assert fps == 8.0
+    assert calls["file"] == (str(video_path), True)
+    assert fps == 24.0
 
     src, resolved, fps = auto_factory_mod.auto_video_source_factory(
         "frames", str(frames_dir), 5.0

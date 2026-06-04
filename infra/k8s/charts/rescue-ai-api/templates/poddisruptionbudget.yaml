@@ -1,0 +1,17 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+# PodDisruptionBudget — гарантирует, что при добровольных операциях
+# k8s (drain ноды, перекатка через helm upgrade, kubectl-cordon),
+# одновременно недоступно не более maxUnavailable штук api-подов.
+# Не защищает от *в*ынужденных падений (OOM, нода сама легла).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "rescue-ai-api.fullname" . }}
+  labels:
+    {{- include "rescue-ai-api.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "rescue-ai-api.selectorLabels" . | nindent 6 }}
+{{- end }}

@@ -91,7 +91,7 @@ def test_ingest_frame_event_persists_stored_image_uri_for_frame_and_alert() -> N
     assert artifacts.stored_frames[(mission.mission_id, 1)] == expected_uri
 
 
-def test_ingest_frame_event_without_alert_skips_frame_upload() -> None:
+def test_ingest_frame_event_without_alert_still_archives_frame() -> None:
     artifacts = InMemoryArtifactStorage()
     service, db = _build_pilot_service(artifact_storage=artifacts)
     mission = service.create_mission(source_name="pilot", total_frames=1, fps=2.0)
@@ -111,8 +111,10 @@ def test_ingest_frame_event_without_alert_skips_frame_upload() -> None:
     )
 
     assert not alerts
-    assert not artifacts.stored_frames
-    assert db.mission_frames[mission.mission_id][0].image_uri == "file:///tmp/frame.jpg"
+    # Every frame is archived now, even without an alert: the frame event
+    # points at the stored URI.
+    stored_uri = artifacts.stored_frames[(mission.mission_id, 1)]
+    assert db.mission_frames[mission.mission_id][0].image_uri == stored_uri
 
 
 def test_review_alert_cannot_be_applied_twice() -> None:

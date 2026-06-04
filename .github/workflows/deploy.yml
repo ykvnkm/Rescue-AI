@@ -6,12 +6,14 @@ name: deploy
 # либо вручную через workflow_dispatch.
 #
 # Что делает:
-#   1. build-online    — собирает образ rescue-ai-online и пушит в GHCR
-#                        с тегами latest и ${GIT_SHA}.
-#   2. build-batch     — то же для образа batch (контейнеры Airflow-стадий).
-#   3. deploy          — подключается к VPS по SSH, обновляет репо,
-#                        делает `helm upgrade --install rescue-ai`
-#                        с подменой image.tag на свежий ${GIT_SHA}.
+#   1. build (matrix) — собирает шесть независимых образов
+#      (api / detection / nav-engine / sync-worker / batch-worker /
+#      batch-exporter) и пушит каждый в свой GHCR-репозиторий с
+#      тегами latest и ${GIT_SHA}.
+#   2. deploy         — подключается к VPS по SSH, обновляет репо,
+#                       делает `helm upgrade --install rescue-ai`
+#                       с подменой image.repository / image.tag для
+#                       каждого сервиса на свежий образ.
 
 on:
   workflow_run:
@@ -24,10 +26,20 @@ env:
   DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
-  build-online:
+  build:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api
+          - detection
+          - nav-engine
+          - sync-worker
+          - batch-worker
+          - batch-exporter
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,42 +53,17 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          target: app
+          target: ${{ matrix.service }}
           push: true
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/rescue-ai-online:cache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/rescue-ai-online:cache,mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/rescue-ai-${{ matrix.service }}:cache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/rescue-ai-${{ matrix.service }}:cache,mode=max
           tags: |
-            ghcr.io/${{ github.repository_owner }}/rescue-ai-online:latest
-            ghcr.io/${{ github.repository_owner }}/rescue-ai-online:${{ env.DEPLOY_SHA }}
-
-  build-batch:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-latest
-    permissions: { contents: read, packages: write }
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.DEPLOY_SHA }}
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          target: batch
-          push: true
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:cache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:cache,mode=max
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:latest
-            ghcr.io/${{ github.repository_owner }}/rescue-ai-batch:${{ env.DEPLOY_SHA }}
+            ghcr.io/${{ github.repository_owner }}/rescue-ai-${{ matrix.service }}:latest
+            ghcr.io/${{ github.repository_owner }}/rescue-ai-${{ matrix.service }}:${{ env.DEPLOY_SHA }}
 
   deploy:
     runs-on: ubuntu-latest
-    needs: [build-online, build-batch]
+    needs: [build]
     permissions: { contents: read, packages: read }
     steps:
       - name: Helm upgrade via SSH to VPS
@@ -86,14 +73,22 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          # Bootstrap-секрет уровня инфраструктуры: connection URI
+          # к Airflow metadata DB (см. cloud.yaml → data.metadataSecretName).
+          AIRFLOW_DB_URI: ${{ secrets.AIRFLOW_DB_URI }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: GIT_SHA,OWNER,GHCR_USERNAME,GHCR_TOKEN
+          envs: GIT_SHA,OWNER,GHCR_USERNAME,GHCR_TOKEN,AIRFLOW_DB_URI
           command_timeout: 30m
           script: |
             set -euo pipefail
+
+            if [ "$(id -u)" -eq 0 ] || [ "${USER:-}" = "root" ]; then
+              echo "ERROR: Refusing to deploy as root. Use a dedicated non-root deploy user."
+              exit 1
+            fi
 
             REPO_DIR="$HOME/rescue-ai"
             NAMESPACE="rescue-ai"
@@ -126,6 +121,16 @@ jobs:
                 --from-file=client.key="$HOME/secrets/gcs-client.key" \
                 --dry-run=client -o yaml | kubectl apply -f -
 
+            echo "==> Ensure airflow meta-db secret (chicken-and-egg, see vault_setup.md)"
+            # Airflow ещё не запущен — он не может сам прочитать
+            # connection-URI своей metadata DB из Vault. Этот секрет
+            # bootstrap-уровня, как и rpi-mtls и ghcr-pull. URI
+            # формата postgresql://user:pass@host:port/db приходит
+            # из GitHub Secret AIRFLOW_DB_URI.
+            kubectl -n "${NAMESPACE}" create secret generic rescue-airflow-meta-db \
+                --from-literal=connection="${AIRFLOW_DB_URI}" \
+                --dry-run=client -o yaml | kubectl apply -f -
+
             echo "==> Resolve umbrella chart dependencies"
             helm repo add bitnami https://charts.bitnami.com/bitnami --force-update
             helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
@@ -134,31 +139,49 @@ jobs:
             helm dependency update infra/k8s/charts/rescue-ai
 
             echo "==> Deploy rescue-ai (Helm upgrade --install)"
-            # Используется профиль offline (полная self-contained
-            # одноузловая инсталляция); источник образа переопределяется
-            # на GHCR с тегом текущего коммита.
-            IMAGE_REPO="ghcr.io/${OWNER}/rescue-ai-online"
+            # Каждый сервис ссылается на собственный GHCR-репозиторий.
+            # Airflow тянет stock-образ apache/airflow:2.9.3 и запускает
+            # batch-worker через KubernetesPodOperator из отдельного образа.
+            REGISTRY="ghcr.io/${OWNER}"
             helm upgrade --install rescue-ai infra/k8s/charts/rescue-ai \
                 --namespace "${NAMESPACE}" \
                 -f infra/k8s/values/offline.yaml \
-                --set rescue-ai-api.image.repository="${IMAGE_REPO}" \
+                --set rescue-ai-api.image.repository="${REGISTRY}/rescue-ai-api" \
                 --set rescue-ai-api.image.tag="${GIT_SHA}" \
                 --set rescue-ai-api.image.pullPolicy="Always" \
                 --set-json "rescue-ai-api.imagePullSecrets=[{\"name\":\"ghcr-pull\"}]" \
-                --set rescue-ai-detection.image.repository="${IMAGE_REPO}" \
+                --set rescue-ai-detection.image.repository="${REGISTRY}/rescue-ai-detection" \
                 --set rescue-ai-detection.image.tag="${GIT_SHA}" \
                 --set rescue-ai-detection.image.pullPolicy="Always" \
                 --set-json "rescue-ai-detection.imagePullSecrets=[{\"name\":\"ghcr-pull\"}]" \
-                --set rescue-ai-nav-engine.image.repository="${IMAGE_REPO}" \
+                --set rescue-ai-nav-engine.image.repository="${REGISTRY}/rescue-ai-nav-engine" \
                 --set rescue-ai-nav-engine.image.tag="${GIT_SHA}" \
                 --set rescue-ai-nav-engine.image.pullPolicy="Always" \
                 --set-json "rescue-ai-nav-engine.imagePullSecrets=[{\"name\":\"ghcr-pull\"}]" \
-                --set rescue-ai-batch-exporter.image.repository="${IMAGE_REPO}" \
-                --set rescue-ai-batch-exporter.image.tag="${GIT_SHA}" \
-                --set rescue-ai-batch-exporter.image.pullPolicy="Always" \
-                --set-json "rescue-ai-batch-exporter.imagePullSecrets=[{\"name\":\"ghcr-pull\"}]" \
-                --set "airflow.env[0].value=${IMAGE_REPO}:${GIT_SHA}" \
+                --set rescue-ai-sync-worker.image.repository="${REGISTRY}/rescue-ai-sync-worker" \
+                --set rescue-ai-sync-worker.image.tag="${GIT_SHA}" \
+                --set rescue-ai-sync-worker.image.pullPolicy="Always" \
+                --set-json "rescue-ai-sync-worker.imagePullSecrets=[{\"name\":\"ghcr-pull\"}]" \
                 --wait --timeout 15m
+
+            # ── Batch-контур (rescue-batch namespace) ─────────────────
+            # Online (offline.yaml) batch не разворачивает; Airflow и
+            # batch-exporter живут только в cloud через отдельный helm
+            # release umbrella'а rescue-batch (см. ADR-0008 §4 и
+            # infra/k8s/values/rescue-batch-cloud.yaml).
+            #
+            # Если этот workflow когда-нибудь будет деплоить и в cloud,
+            # добавь параллельный шаг:
+            #
+            #   kubectl create namespace rescue-batch --dry-run=client -o yaml \
+            #       | kubectl apply -f -
+            #   helm upgrade --install rescue-batch \
+            #       infra/k8s/charts/rescue-batch \
+            #       -n rescue-batch \
+            #       -f infra/k8s/values/rescue-batch-cloud.yaml \
+            #       --set rescue-ai-batch-exporter.image.repository="${REGISTRY}/rescue-ai-batch-exporter" \
+            #       --set rescue-ai-batch-exporter.image.tag="${GIT_SHA}" \
+            #       --set "airflow.env[0].value=${REGISTRY}/rescue-ai-batch-worker:${GIT_SHA}"
 
             echo "==> Check Vault Agent rendered application secrets"
             # Real secrets are provisioned outside CI/CD. The deploy job only
@@ -171,7 +194,6 @@ jobs:
             kubectl -n "${NAMESPACE}" rollout status deploy/rescue-ai-rescue-ai-api --timeout=5m
             kubectl -n "${NAMESPACE}" rollout status deploy/rescue-ai-rescue-ai-detection --timeout=5m
             kubectl -n "${NAMESPACE}" rollout status deploy/rescue-ai-rescue-ai-nav-engine --timeout=5m
-            kubectl -n "${NAMESPACE}" rollout status deploy/rescue-ai-rescue-ai-batch-exporter --timeout=5m
 
             echo "==> Health check"
             kubectl -n "${NAMESPACE}" port-forward svc/rescue-ai-rescue-ai-api 8000:8000 &

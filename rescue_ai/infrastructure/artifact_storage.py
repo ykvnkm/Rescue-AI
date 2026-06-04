@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from rescue_ai.config import StorageSettings
 from rescue_ai.domain.entities import TrajectoryPoint
+from rescue_ai.domain.geo import relative_to_absolute
 from rescue_ai.domain.value_objects import ArtifactBlob
 
 try:
@@ -92,14 +93,35 @@ class S3ArtifactStorage:
         )
 
     def store_frame(
-        self, mission_id: str, frame_id: int, source_uri: str, ds: str
+        self,
+        mission_id: str,
+        frame_id: int,
+        source_uri: str,
+        ds: str,
+        *,
+        frame_bgr: object | None = None,
     ) -> str:
-        source_path = _local_path_from_uri(source_uri)
-        if source_path is None or not source_path.exists() or not source_path.is_file():
-            return source_uri
+        # In-memory frame (stream / decoded video): JPEG-encode and upload
+        # under a deterministic key so the mission in S3 is complete and
+        # reruns overwrite in place.
+        if frame_bgr is not None:
+            payload = _encode_jpeg(frame_bgr)
+            if payload is None:
+                return source_uri
+            filename = f"frame_{frame_id:06d}.jpg"
+            media_type = "image/jpeg"
+        else:
+            source_path = _local_path_from_uri(source_uri)
+            if (
+                source_path is None
+                or not source_path.exists()
+                or not source_path.is_file()
+            ):
+                return source_uri
+            filename = source_path.name or "frame.bin"
+            payload = source_path.read_bytes()
+            media_type = mimetypes.guess_type(source_path.name)[0] or "image/jpeg"
 
-        _ = frame_id
-        filename = source_path.name or "frame.bin"
         key = self._key_for_mission_file(
             mission_id=mission_id,
             ds=ds,
@@ -110,14 +132,7 @@ class S3ArtifactStorage:
         with self._lock:
             self._pending_frames[key] = PendingFrameUpload(source_uri=source_uri)
 
-        media_type, _ = mimetypes.guess_type(source_path.name)
-        payload = source_path.read_bytes()
-        self._uploads.submit(
-            self._upload_frame,
-            key,
-            payload,
-            media_type or "application/octet-stream",
-        )
+        self._uploads.submit(self._upload_frame, key, payload, media_type)
         return s3_uri
 
     def load_frame(self, image_uri: str) -> ArtifactBlob | None:
@@ -205,23 +220,32 @@ class S3ArtifactStorage:
         mission_id: str,
         ds: str,
         points: Sequence[TrajectoryPoint],
+        *,
+        origin: tuple[float, float] | None = None,
     ) -> str:
         key = self._trajectory_key(mission_id, ds)
         buffer = StringIO()
         writer = csv.writer(buffer)
-        writer.writerow(["seq", "ts_sec", "frame_id", "x", "y", "z", "source"])
+        header = ["seq", "ts_sec", "frame_id", "x", "y", "z", "source"]
+        if origin is not None:
+            header += ["lat", "lon"]
+        writer.writerow(header)
         for point in points:
-            writer.writerow(
-                [
-                    point.seq,
-                    point.ts_sec,
-                    "" if point.frame_id is None else point.frame_id,
-                    point.x,
-                    point.y,
-                    point.z,
-                    str(point.source),
-                ]
-            )
+            row: list[object] = [
+                point.seq,
+                point.ts_sec,
+                "" if point.frame_id is None else point.frame_id,
+                point.x,
+                point.y,
+                point.z,
+                str(point.source),
+            ]
+            if origin is not None:
+                lat, lon = relative_to_absolute(
+                    point.x, point.y, origin_lat=origin[0], origin_lon=origin[1]
+                )
+                row += [f"{lat:.7f}", f"{lon:.7f}"]
+            writer.writerow(row)
         self._client.put_object(
             Bucket=self._settings.bucket,
             Key=key,
@@ -362,6 +386,21 @@ class S3ArtifactStorage:
         else:
             with self._lock:
                 self._pending_frames.pop(key, None)
+
+
+def _encode_jpeg(frame_bgr: object) -> bytes | None:
+    """Encode an in-memory BGR ndarray to JPEG bytes, or None if unusable."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+    if not isinstance(frame_bgr, np.ndarray):
+        return None
+    ok, buffer = cv2.imencode(".jpg", frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    if not ok:
+        return None
+    return buffer.tobytes()
 
 
 def _local_path_from_uri(uri: str) -> Path | None:

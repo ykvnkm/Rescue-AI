@@ -3,7 +3,7 @@ reason: "Локальный поток кадров: единый контрак
 device: cpu
 
 model:
-  runtime: pt
+  runtime: ncnn
   pt_url: https://storage.yandexcloud.net/rescue-ai-detectors/models/yolov8n_baseline_multiscale/v1/yolov8n_baseline_multiscale.pt
   ncnn_url: https://storage.yandexcloud.net/rescue-ai-detectors/models/yolov8n_baseline_multiscale/v1/yolov8n_baseline_multiscale_ncnn.zip
 

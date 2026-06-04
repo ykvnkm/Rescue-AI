@@ -62,6 +62,7 @@ def test_nav_engine_service_health_and_session_lifecycle() -> None:
     app = build_nav_engine_app()
     with TestClient(app) as client:
         assert client.get("/health").json() == {"status": "ok"}
+        assert client.get("/ready").json() == {"status": "ready"}
 
         # create
         rsp = client.post(
@@ -153,6 +154,7 @@ def test_detection_service_returns_detector_output() -> None:
     app = build_detection_app(detector_factory=lambda: fake)
     with TestClient(app) as client:
         assert client.get("/health").json() == {"status": "ok"}
+        assert client.get("/ready").json() == {"status": "ready"}
         runtime = client.get("/runtime").json()
         assert runtime == {"runtime_name": "fake-runtime"}
 

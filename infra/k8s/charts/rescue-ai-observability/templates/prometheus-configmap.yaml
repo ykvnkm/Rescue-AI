@@ -1,0 +1,84 @@
+{{- if .Values.prometheus.enabled }}
+# ConfigMap c конфигурацией Prometheus для k8s-контура.
+#
+# Содержит:
+#   * prometheus.yml — со scrape-таргетами, указанными как FQDN
+#     <service>.<namespace>.svc.cluster.local. Это отличает k8s-вариант
+#     от docker-compose-варианта (там используются короткие docker-network
+#     aliases). Файл генерируется шаблоном Helm — единый источник
+#     правды по values.scrape.*.
+#   * rules-station.yml / rules-central.yml — копируются как есть из
+#     files/prometheus/. В каждый Prometheus загружается ровно один
+#     файл, соответствующий выбранному контуру (.Values.contour).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "obs.prometheus.name" . }}-config
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 30s
+      external_labels:
+        cluster: rescue-ai
+        contour: {{ .Values.contour }}
+
+    rule_files:
+      {{- if eq .Values.contour "station" }}
+      - /etc/prometheus/rules-station.yml
+      {{- else }}
+      - /etc/prometheus/rules-central.yml
+      {{- end }}
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - {{ include "obs.alertmanager.name" . }}.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.alertmanager.service.port }}
+
+    scrape_configs:
+      # Online application: api / detection / nav-engine (всегда есть
+      # в обоих контурах — миссии идут и на станции, и в центре).
+      - job_name: rescue-ai-api
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - {{ .Values.prometheus.scrape.apiService }}.{{ .Values.prometheus.scrape.appNamespace }}.svc.cluster.local:8000
+
+      - job_name: rescue-ai-detection
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - {{ .Values.prometheus.scrape.detectionService }}.{{ .Values.prometheus.scrape.appNamespace }}.svc.cluster.local:8002
+
+      - job_name: rescue-ai-nav-engine
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - {{ .Values.prometheus.scrape.navEngineService }}.{{ .Values.prometheus.scrape.appNamespace }}.svc.cluster.local:8001
+
+      {{- if eq .Values.contour "central" }}
+      # batch-exporter — только в центральном контуре, живёт в
+      # namespace rescue-batch (см. ADR-0008 §4).
+      - job_name: rescue-ai-batch-exporter
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - {{ .Values.prometheus.scrape.batchExporterService }}.{{ .Values.prometheus.scrape.batchNamespace }}.svc.cluster.local:8003
+      {{- end }}
+
+      # Self-scrape, чтобы видеть состояние самого Prometheus.
+      - job_name: prometheus
+        static_configs:
+          - targets:
+              - localhost:9090
+
+  {{- range $path, $_ := .Files.Glob "files/prometheus/rules-*.yml" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+  {{- end }}
+{{- end }}

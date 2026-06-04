@@ -8,6 +8,7 @@ Stateless: один глобальный ``DetectorPort`` instance на проц
 API сервиса:
 
     GET  /health              → {"status": "ok"}
+    GET  /ready               → {"status": "ready"}
     GET  /runtime             → {"runtime_name": "..."}
     POST /detect              → list[Detection]
 """
@@ -19,8 +20,9 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Callable
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 
+from rescue_ai.application.metrics import render_latest
 from rescue_ai.domain.ports import DetectorPort
 from rescue_ai.interfaces.detection.schemas import (
     DetectionItem,
@@ -72,9 +74,20 @@ def build_app(*, detector_factory: Callable[[], DetectorPort]) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/ready")
+    def ready() -> dict[str, str]:
+        _detector()
+        return {"status": "ready"}
+
     @app.get("/runtime", response_model=RuntimeInfoResponse)
     def runtime_info() -> RuntimeInfoResponse:
         return RuntimeInfoResponse(runtime_name=_detector().runtime_name())
+
+    @app.get("/metrics", include_in_schema=False)
+    def prometheus_metrics() -> Response:
+        """Prometheus text-exposition of this service's metrics."""
+        payload, content_type = render_latest()
+        return Response(content=payload, media_type=content_type)
 
     @app.post("/detect", response_model=DetectResponse)
     def detect(payload: DetectRequest) -> DetectResponse:

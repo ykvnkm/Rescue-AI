@@ -47,9 +47,11 @@ class PostgresSyncOutboxRepository:
                     local_path,
                     s3_bucket,
                     s3_key,
+                    source_s3_bucket,
+                    source_s3_key,
                     idempotency_key
                 )
-                VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (idempotency_key) DO NOTHING
                 """,
                 (
@@ -60,6 +62,8 @@ class PostgresSyncOutboxRepository:
                     record.local_path,
                     record.s3_bucket,
                     record.s3_key,
+                    record.source_s3_bucket,
+                    record.source_s3_key,
                     record.idempotency_key,
                 ),
             )
@@ -88,6 +92,8 @@ class PostgresSyncOutboxRepository:
                         local_path,
                         s3_bucket,
                         s3_key,
+                        source_s3_bucket,
+                        source_s3_key,
                         idempotency_key,
                         attempts
                     """,
@@ -160,6 +166,8 @@ def _row_from_tuple(row: tuple[Any, ...]) -> OutboxRow:
         local_path=None if row[5] is None else str(row[5]),
         s3_bucket=None if row[6] is None else str(row[6]),
         s3_key=None if row[7] is None else str(row[7]),
-        idempotency_key=str(row[8]),
-        attempts=int(row[9]),
+        source_s3_bucket=None if row[8] is None else str(row[8]),
+        source_s3_key=None if row[9] is None else str(row[9]),
+        idempotency_key=str(row[10]),
+        attempts=int(row[11]),
     )

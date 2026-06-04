@@ -21,6 +21,7 @@ import numpy as np
 
 from rescue_ai.domain.entities import TrajectoryPoint
 from rescue_ai.domain.value_objects import NavMode, TrajectorySource
+from rescue_ai.infrastructure._http_retry import RetryConfig, request_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class HttpNavigationEngine:
         timeout_sec: float = 5.0,
         client: httpx.Client | None = None,
         jpeg_quality: int = 85,
+        retry_config: RetryConfig | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._mission_id = mission_id
@@ -43,9 +45,16 @@ class HttpNavigationEngine:
         self._jpeg_quality = int(max(50, min(95, jpeg_quality)))
         # ``client`` инжектируется в тестах. Реальный wiring создаёт
         # один общий httpx.Client на сервис, чтобы переиспользовать
-        # keep-alive соединения.
-        self._client = client or httpx.Client(timeout=timeout_sec)
+        # keep-alive соединения. transport.retries=2 покрывает только
+        # connect-failures (rollout соседнего пода), full retry с
+        # backoff делает request_with_retry поверх него — но только
+        # для idempotent-методов (см. ниже).
+        self._client = client or httpx.Client(
+            timeout=timeout_sec,
+            transport=httpx.HTTPTransport(retries=2),
+        )
         self._session_id: str | None = None
+        self._retry_config = retry_config or RetryConfig()
 
     # ── NavigationEnginePort ────────────────────────────────────
 
@@ -64,10 +73,17 @@ class HttpNavigationEngine:
             payload["nav_mode"] = str(nav_mode)
         if fps is not None and fps > 0.0:
             payload["fps"] = float(fps)
-        response = self._client.post(
-            f"{self._base_url}/sessions",
-            json=payload,
-            timeout=self._timeout,
+        # reset идемпотентен — создаётся новая session_id, старые
+        # серверные сессии истекают по TTL. Безопасно ретраить и
+        # на connect-fail, и на 5xx.
+        response = request_with_retry(
+            lambda: self._client.post(
+                f"{self._base_url}/sessions",
+                json=payload,
+                timeout=self._timeout,
+            ),
+            config=self._retry_config,
+            operation="HttpNavigationEngine.reset",
         )
         response.raise_for_status()
         self._session_id = str(response.json()["session_id"])
@@ -86,6 +102,12 @@ class HttpNavigationEngine:
         if self._session_id is None:
             raise RuntimeError("HttpNavigationEngine.step called before reset()")
         b64 = _encode_jpeg_b64(frame_bgr, self._jpeg_quality)
+        # step() НЕ идемпотентен (на сервере крутится seq-счётчик,
+        # буфер кадров для no-marker-replay). Не используем
+        # request_with_retry с 5xx-ретраем — оставляем только
+        # connect-retry на уровне httpx.HTTPTransport(retries=2),
+        # который ретраит ДО первого байта запроса (там состояние
+        # ещё не успело измениться).
         response = self._client.post(
             f"{self._base_url}/sessions/{self._session_id}/step",
             json={

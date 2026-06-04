@@ -39,6 +39,10 @@ class ApiSettings(BaseEnvSettings):
         default=30.0,
         alias="APP_POSTGRES_READY_TIMEOUT_SEC",
     )
+    # Per-client request cap for an open public demo (requests/minute/IP).
+    # 0 disables the limiter (controlled deployments rely on the bearer gate
+    # / ingress instead). Probes, metrics and the UI shell are never limited.
+    rate_limit_per_min: int = Field(default=0, alias="APP_RATE_LIMIT_PER_MIN")
 
 
 class DatabaseSettings(BaseEnvSettings):
@@ -179,6 +183,12 @@ class SecuritySettings(BaseEnvSettings):
     ca_cert_path: str = Field(default="", alias="TLS_CA_CERT_PATH")
     client_cert_path: str = Field(default="", alias="TLS_CLIENT_CERT_PATH")
     client_key_path: str = Field(default="", alias="TLS_CLIENT_KEY_PATH")
+    # Shared-secret bearer token for the HTTP API (cloud profile). When set,
+    # every API request must carry ``Authorization: Bearer <token>``; probes
+    # and the UI shell stay open (see interfaces/api/auth.py). Empty disables
+    # the gate so offline/dev keep working without a token. Source it from
+    # Vault/env in production.
+    api_auth_token: str = Field(default="", alias="API_AUTH_TOKEN")
 
     @model_validator(mode="after")
     def _validate_paths(self) -> "SecuritySettings":
@@ -222,12 +232,21 @@ class Settings(BaseSettings):
         deployment_mode = str(getattr(self.deployment, "mode", "cloud"))
         tls_mode = str(getattr(self.security, "tls_mode", "off"))
         app_env = str(getattr(self.app, "env", "dev"))
-        # ADR-0007 §4: the offline profile must run mTLS — the RPi link
-        # in the field is not protected by a public tunnel.
-        if deployment_mode == "offline" and tls_mode == "off" and app_env != "dev":
+        rpi_base_url = str(getattr(getattr(self, "rpi", None), "base_url", "") or "")
+        # ADR-0007 §4: when the offline station actually drives the RPi link,
+        # that link MUST be mTLS (no public tunnel protects it in the field).
+        # The guard is scoped to services that talk to the RPi (they have
+        # ``rpi.base_url`` set); sync-worker / batch have no RPi link and are
+        # exempt — requiring mTLS from them would be a false positive.
+        if (
+            deployment_mode == "offline"
+            and tls_mode == "off"
+            and app_env != "dev"
+            and rpi_base_url.strip()
+        ):
             raise ValueError(
                 "TLS_MODE=off is not allowed when DEPLOYMENT_MODE="
-                f"{deployment_mode} outside dev"
+                f"{deployment_mode} outside dev with an RPi link configured"
             )
         return self
 

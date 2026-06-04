@@ -1,66 +1,189 @@
-# Runbook: полевой деплой Rescue-AI на k3s
+# Runbook: полевой prod-деплой Rescue-AI на k3s
 
-**Контекст:** ADR-0007 + ADR-0008 §2. Это инструкция для операционного
-сценария **«поле»** — однонодная Linux-машина (станция оператора,
-ноут, mini-PC), без интернета или с эпизодической связью. Установить
-k3s, развернуть rescue-ai по offline (или hybrid) values-файлу,
-сгенерировать сертификаты, засеять Vault.
+**Контекст:** ADR-0007 + ADR-0008. Это инструкция для строгого
+offline/hybrid prod-сценария: однонодная Linux-станция оператора,
+локальные Postgres/MinIO, Vault как единственный source of truth для
+долгоживущих секретов, k3s как runtime.
 
-Для **локальной разработки на Windows** используй
-[k8s_local_kind.md](k8s_local_kind.md) — там та же топология, но в
-kind/k3d.
+Для локальной разработки k3s не используется. Dev-стенд запускается
+через docker-compose из корня репозитория:
+
+```bash
+docker compose up --build
+```
+
+## Целевая модель
+
+В offline-prod **не создаём Kubernetes Secret для Postgres, MinIO,
+`DB_DSN`, S3-ключей или mTLS-ключей**. Последовательность такая:
+
+1. Сначала ставится отдельный Helm-релиз Vault.
+2. Оператор делает `vault operator init` и `unseal`.
+3. `vault_bootstrap.sh` заводит в Vault infra/app/mTLS секреты и
+   Kubernetes auth roles.
+4. Umbrella-чарт `rescue-ai` поднимает локальные Postgres/MinIO и
+   приложения. Все они получают credentials через Vault Agent Injector.
+
+`Kubernetes Secret` остаётся допустимым только для bootstrap-вещей,
+без которых сам Kubernetes не может работать, например `imagePullSecret`
+для приватного registry или TLS Secret, который создаёт cert-manager
+для ingress. В базовом offline runbook ниже такие Secrets не нужны.
+
+## Что разворачивается на станции
+
+`infra/k8s/values/offline.yaml` включает:
+
+- `rescue-ai-api`
+- `rescue-ai-detection`
+- `rescue-ai-nav-engine`
+- `rescue-ai-sync-worker`
+- `localPostgresql` — локальный StatefulSet PostgreSQL, пароль из Vault
+- `localMinio` — локальный StatefulSet MinIO, root credentials из Vault
+
+Отдельно до umbrella-чарта ставится:
+
+- `rescue-ai-vault` — HashiCorp Vault release в namespace `vault`
+  с values из `infra/k8s/vault/values-offline.yaml`
+
+Отдельного `hybrid.yaml` нет. Если в Vault заполнены
+`DEPLOYMENT_REMOTE_*`, sync-worker дренирует `replication_outbox` в
+центральный контур при появлении связи. Если они пустые, станция
+работает полностью offline.
 
 ## Предусловия
 
-- Linux (Ubuntu 22.04+ / Debian 12 / Fedora 39+) на станции.
-- Минимум 4 ГБ RAM, 20 ГБ свободного диска (под Postgres/MinIO/модели).
-- Образ Rescue-AI (`rescue-ai/online:<tag>`), доставленный на станцию
-  одним из способов (см. шаг 2 ниже).
-- Файлы репо `infra/k8s/` и `scripts/security/` — либо из git, либо
-  скопированные на станцию архивом.
+- Linux-станция: Ubuntu 22.04+ / Debian 12 / Fedora 39+.
+- Минимум 4 ГБ RAM и 20 ГБ диска; для MinIO лучше закладывать больше.
+- Установлены `kubectl`, `helm`, `vault` CLI и Docker/Podman.
+- На станции есть репозиторий или архив с каталогами `infra/k8s/`,
+  `infra/postgres/init/` и `scripts/security/`.
+- На станции есть образы приложения:
+  `rescue-ai-api:<tag>`, `rescue-ai-detection:<tag>`,
+  `rescue-ai-nav-engine:<tag>`, `rescue-ai-sync-worker:<tag>`.
+- Если registry недоступен, заранее привези tar-архивы всех runtime
+  images: приложения, Vault, Vault Injector, `postgres:16-alpine`,
+  `quay.io/minio/minio`, `quay.io/minio/mc`, `postgres:16-alpine`
+  для init-контейнеров.
 
-## Шаг 1. Установить k3s
+## 1. Установить k3s
 
 ```bash
-curl -sfL https://get.k3s.io | sh -
+curl -sfL https://get.k3s.io | sh -s - --secrets-encryption
 
-# kubectl-конфиг для текущего пользователя
+mkdir -p ~/.kube
 sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
 sudo chown "$USER:$USER" ~/.kube/config
 chmod 600 ~/.kube/config
 
 kubectl get nodes
+kubectl get storageclass
 ```
 
-Должна появиться одна нода в статусе `Ready`. k3s сам развернёт
-встроенный Traefik как ingress controller.
+Ожидаемый результат: одна нода `Ready`, default `StorageClass` обычно
+`local-path`. `--secrets-encryption` оставляем включённым как базовую
+prod-гигиену k3s, но не используем его как оправдание для хранения
+прикладных или infra credentials в Kubernetes Secrets.
 
-## Шаг 2. Доставить образ rescue-ai в кластер
+## 2. Подготовить Helm dependencies
 
-В поле нет registry, поэтому образ либо собирается на месте, либо
-импортируется из tar:
+Если на станции есть интернет:
 
-### Вариант A — собран на станции
 ```bash
-docker build --target app -t rescue-ai/online:local -f Dockerfile .
-# k3s использует containerd, нужно импортировать в его image store:
-docker save rescue-ai/online:local -o /tmp/rescue-ai.tar
-sudo k3s ctr images import /tmp/rescue-ai.tar
+helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
+helm repo add apache-airflow https://airflow.apache.org --force-update
+helm repo update
+helm dependency update infra/k8s/charts/rescue-ai
 ```
 
-### Вариант B — привезли tar с собой (типичный полевой сценарий)
+Эквивалентно:
+
 ```bash
-# собрано заранее на ноуте: docker save rescue-ai/online:local -o rescue-ai.tar
-sudo k3s ctr images import rescue-ai.tar
-sudo k3s ctr images list | grep rescue-ai
+make helm-deps
 ```
 
-Проверка:
+Если интернета нет, каталог `infra/k8s/charts/rescue-ai/charts/`
+нужно подготовить заранее на машине с интернетом и перенести на
+станцию. Не коммить `charts/*.tgz` в Git.
+
+## 3. Доставить образы в k3s
+
+Приложение собирается отдельными targets:
+
 ```bash
-sudo k3s ctr images list -q | grep rescue-ai/online
+for svc in api detection nav-engine sync-worker; do
+    docker build --target "$svc" -t "rescue-ai-$svc:<tag>" -f Dockerfile .
+    docker save "rescue-ai-$svc:<tag>" -o "rescue-ai-$svc-<tag>.tar"
+done
 ```
 
-## Шаг 3. Сгенерировать сертификаты mTLS
+На станции:
+
+```bash
+for svc in api detection nav-engine sync-worker; do
+    sudo k3s ctr images import "rescue-ai-$svc-<tag>.tar"
+done
+
+sudo k3s ctr images list -q | grep 'rescue-ai-'
+```
+
+Если нет доступа к внешнему registry, тем же способом импортируй
+образы Vault, Vault Injector, Postgres, MinIO и MinIO Client.
+
+## 4. Создать namespaces и init ConfigMap
+
+```bash
+# Namespace для security-инфраструктуры (Vault). Создаётся отдельно
+# от namespace приложения — это каноническая изоляция (CIS K8s §5.7.1).
+kubectl create namespace vault --dry-run=client -o yaml \
+    | kubectl apply -f -
+
+# Namespace для приложения.
+kubectl create namespace rescue-ai --dry-run=client -o yaml \
+    | kubectl apply -f -
+
+kubectl -n rescue-ai create configmap pg-init \
+    --from-file=infra/postgres/init/ \
+    --dry-run=client -o yaml \
+    | kubectl apply -f -
+```
+
+Здесь намеренно нет `kubectl create secret`: пароли Postgres/MinIO,
+`DB_DSN`, S3 credentials и mTLS-ключи будут заведены в Vault.
+
+## 5. Установить Vault отдельным релизом
+
+```bash
+helm upgrade --install rescue-ai-vault hashicorp/vault \
+    -n vault \
+    --version 0.30.0 \
+    -f infra/k8s/vault/values-offline.yaml
+
+kubectl -n vault get pods -l app.kubernetes.io/name=vault -w
+```
+
+Дождись pod `rescue-ai-vault-0`. Сначала он будет `Running`, но Vault
+внутри будет sealed.
+
+## 6. Init + unseal Vault
+
+```bash
+kubectl -n vault exec -it rescue-ai-vault-0 -- \
+    vault operator init -key-shares=5 -key-threshold=3
+```
+
+Сохрани все 5 unseal keys и Initial Root Token вне кластера. Затем:
+
+```bash
+kubectl -n vault exec -it rescue-ai-vault-0 -- vault operator unseal <key-1>
+kubectl -n vault exec -it rescue-ai-vault-0 -- vault operator unseal <key-2>
+kubectl -n vault exec -it rescue-ai-vault-0 -- vault operator unseal <key-3>
+
+kubectl -n vault exec -it rescue-ai-vault-0 -- vault status
+```
+
+Ожидаемый статус: `Initialized: true`, `Sealed: false`.
+
+## 7. Сгенерировать mTLS-материал
 
 Один раз на станции, по [`rpi_mtls_setup.md`](rpi_mtls_setup.md):
 
@@ -71,125 +194,217 @@ sudo k3s ctr images list -q | grep rescue-ai/online
 ls scripts/security/out/
 ```
 
-`rpi-server.{crt,key}` нужно отдельно перенести на Pi
-(см. runbook про mTLS), здесь они нужны только для контекста.
+`rpi-server.crt` и `rpi-server.key` перенеси на Raspberry Pi. Клиентские
+файлы станции будут записаны в Vault, а не в Kubernetes Secret.
 
-## Шаг 4. Создать namespace и базовые ресурсы
+## 8. Bootstrap Vault
+
+Оставь port-forward открытым на время bootstrap:
 
 ```bash
-kubectl create namespace rescue-ai
-
-# init-скрипты Postgres (включая 000-app-schema-bootstrap.sql,
-# который создаёт схему `app` — иначе репозитории читают пустой public).
-kubectl -n rescue-ai create configmap pg-init \
-    --from-file=infra/postgres/init/
-
-# материал mTLS — клиентская сторона для api
-kubectl -n rescue-ai create secret generic rpi-mtls \
-    --from-file=ca.crt=scripts/security/out/station-root-ca.crt \
-    --from-file=client.crt=scripts/security/out/gcs-client.crt \
-    --from-file=client.key=scripts/security/out/gcs-client.key
+kubectl -n vault port-forward svc/rescue-ai-vault 8200:8200 &
 ```
 
-## Шаг 5. Подтянуть зависимости umbrella-чарта
+Запусти bootstrap с реальными значениями:
 
-Если на станции есть интернет (хотя бы один раз для скачивания
-chart tarball'ов):
 ```bash
-helm repo add bitnami https://charts.bitnami.com/bitnami --force-update
-helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
-helm repo add apache-airflow https://airflow.apache.org --force-update
-helm repo update
-helm dependency update infra/k8s/charts/rescue-ai
+VAULT_ADDR=http://127.0.0.1:8200 \
+VAULT_TOKEN='<initial-root-token>' \
+NAMESPACE=rescue-ai \
+VAULT_NAMESPACE=vault \
+VAULT_SERVICE_ACCOUNT=rescue-ai-vault \
+ENABLE_LOCAL_INFRA=true \
+ENABLE_PG_BACKUP=true \
+ENABLE_BATCH_EXPORTER=false \
+POSTGRES_USER=rescue \
+POSTGRES_DB=rescue_ai \
+POSTGRES_PASSWORD='<postgres-user-password>' \
+MINIO_ROOT_USER='rescueadmin' \
+MINIO_ROOT_PASSWORD='<minio-root-password>' \
+DB_DSN='postgresql://rescue:<postgres-user-password>@rescue-ai-postgresql.rescue-ai.svc.cluster.local:5432/rescue_ai' \
+ENABLE_RPI_MTLS=true \
+MTLS_CA_CERT_FILE=scripts/security/out/station-root-ca.crt \
+MTLS_CLIENT_CERT_FILE=scripts/security/out/gcs-client.crt \
+MTLS_CLIENT_KEY_FILE=scripts/security/out/gcs-client.key \
+DEPLOYMENT_REMOTE_DB_DSN='' \
+DEPLOYMENT_REMOTE_S3_ACCESS_KEY_ID='' \
+DEPLOYMENT_REMOTE_S3_SECRET_ACCESS_KEY='' \
+    ./scripts/security/vault_bootstrap.sh
 ```
 
-Если интернета нет — используй внутренний Helm/OCI registry или
-предзаполненный Helm cache на станции. Не коммить `charts/*.tgz` в Git:
-это сгенерированные dependency artifacts, а не исходники проекта.
+Для hybrid заполни `DEPLOYMENT_REMOTE_*` реальными значениями
+центрального Postgres и S3. Локальные MinIO credentials автоматически
+становятся `ARTIFACTS_S3_ACCESS_KEY_ID` /
+`ARTIFACTS_S3_SECRET_ACCESS_KEY` для API, если не переопределить их
+явно.
 
-## Шаг 6. Развернуть offline-профиль
+Остановить port-forward:
 
 ```bash
-helm install rescue-ai infra/k8s/charts/rescue-ai \
+kill %1
+```
+
+## 9. Установить umbrella-чарт Rescue-AI
+
+Для локальных тегов `local`:
+
+```bash
+helm upgrade --install rescue-ai infra/k8s/charts/rescue-ai \
     -n rescue-ai \
     -f infra/k8s/values/offline.yaml
 ```
 
-Дождаться pods ready:
+Если теги другие:
+
+```bash
+helm upgrade --install rescue-ai infra/k8s/charts/rescue-ai \
+    -n rescue-ai \
+    -f infra/k8s/values/offline.yaml \
+    --set rescue-ai-api.image.tag=<tag> \
+    --set rescue-ai-detection.image.tag=<tag> \
+    --set rescue-ai-nav-engine.image.tag=<tag> \
+    --set rescue-ai-sync-worker.image.tag=<tag>
+```
+
+Дождаться готовности:
+
 ```bash
 kubectl -n rescue-ai get pods -w
 ```
 
-Должны подняться: `rescue-ai-postgresql-0`, `rescue-ai-minio-0`,
-`rescue-ai-vault-0`, `rescue-ai-vault-agent-injector-*`,
-`rescue-ai-rescue-ai-api-*`.
+Что должно подняться:
 
-## Шаг 7. Bootstrap Vault
+- `rescue-ai-postgresql-0`
+- `rescue-ai-minio-0`
+- `rescue-ai-minio-bucket-init-*` на время создания bucket'а; после
+  успеха hook-job удаляется Helm'ом
+- `rescue-ai-rescue-ai-api-*`
+- `rescue-ai-rescue-ai-detection-*`
+- `rescue-ai-rescue-ai-nav-engine-*`
+- `rescue-ai-rescue-ai-sync-worker-*`
 
-```bash
-kubectl -n rescue-ai port-forward svc/rescue-ai-vault 8200:8200 &
-export VAULT_ADDR="http://localhost:8200"
-export VAULT_TOKEN="<vault-token>"
-export NAMESPACE="rescue-ai"
-export VAULT_NAMESPACE="rescue-ai"
-export VAULT_SERVICE_ACCOUNT="rescue-ai-vault"
-bash scripts/security/vault_bootstrap.sh
-```
-
-Скрипт включит KV v2, k8s auth, политики и засеет секреты.
-
-После этого перезапустить api, чтобы Vault Agent Injector положил
-файл с секретами в `/vault/secrets/app.env`:
-```bash
-kubectl -n rescue-ai rollout restart deployment rescue-ai-rescue-ai-api
-kubectl -n rescue-ai logs \
-    -l app.kubernetes.io/name=rescue-ai-api -c vault-agent-init --tail=20
-```
-
-## Шаг 8. Проверка
+## 10. Проверка
 
 ```bash
+kubectl -n rescue-ai get pods
+
 kubectl -n rescue-ai port-forward svc/rescue-ai-rescue-ai-api 8000:8000 &
-curl http://localhost:8000/health
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/ready
 ```
 
-Должен ответить `{"status":"ok"}`. UI открывается на `http://<station-ip>:8000`
-(если хочешь публиковать через Traefik — отредактируй `ingress.enabled`
-в `offline.yaml` и подними DNS-запись).
+Проверить, что в namespace нет наших credential Secrets:
 
-## Переключение в hybrid (когда есть интернет)
-
-Когда у станции эпизодически появляется интернет — переключить
-профиль одной командой:
 ```bash
-helm upgrade rescue-ai infra/k8s/charts/rescue-ai \
-    -n rescue-ai \
-    -f infra/k8s/values/hybrid.yaml
+kubectl -n rescue-ai get secret
 ```
 
-Это:
-- оставит Postgres + MinIO как локальные authoritative-стора;
-- запустит **дополнительный** под `rescue-ai-rescue-ai-sync-worker`,
-  который дрейнит `replication_outbox` в remote Supabase + Yandex S3.
+Не должно быть `rescue-ai-postgresql-auth`, `rescue-ai-minio-auth`,
+`rpi-mtls`, `rescue-ai-api-secret`, `rescue-ai-sync-worker-secret`.
 
-Logs:
+Проверить Postgres:
+
+```bash
+kubectl -n rescue-ai exec rescue-ai-postgresql-0 -- \
+    psql -U rescue -d rescue_ai \
+    -c "SELECT count(*) FROM app.replication_outbox;"
+```
+
+Проверить Vault-rendered files:
+
+```bash
+kubectl -n rescue-ai exec deploy/rescue-ai-rescue-ai-api -c api -- \
+    sh -c 'test -f /vault/secrets/app.env && test -f /vault/secrets/gcs-client.key'
+
+kubectl -n rescue-ai exec statefulset/rescue-ai-postgresql -c postgresql -- \
+    sh -c 'test -f /vault/secrets/postgres-password'
+
+kubectl -n rescue-ai exec statefulset/rescue-ai-minio -c minio -- \
+    sh -c 'test -f /vault/secrets/minio-root-password'
+```
+
+Проверить sync-worker:
+
 ```bash
 kubectl -n rescue-ai logs \
-    -l app.kubernetes.io/component=sync-worker -f
+    -l app.kubernetes.io/component=sync-worker \
+    --tail=100
 ```
 
-## Обновление образа
+## Публикация UI
 
-Когда привозишь новый билд (tar):
+Базовая проверка выполняется через port-forward. Если нужно открыть UI
+в локальной сети станции через Traefik, включи ingress в отдельном
+site-specific values-файле, например `infra/k8s/values/station.yaml`.
+
+```yaml
+rescue-ai-api:
+  ingress:
+    enabled: true
+    className: traefik
+    hosts:
+      - host: rescue-ai.station.local
+        paths:
+          - path: /
+            pathType: Prefix
+```
+
+Применение:
+
 ```bash
-sudo k3s ctr images import rescue-ai-online-<tag>.tar
 helm upgrade rescue-ai infra/k8s/charts/rescue-ai \
     -n rescue-ai \
     -f infra/k8s/values/offline.yaml \
-    --set rescue-ai-api.image.tag=<tag>
+    -f infra/k8s/values/station.yaml
 ```
 
-k3s автоматически перезапустит api-pod с новым тегом.
+## Ротация секретов
+
+Ротация делается в Vault, затем перезапускаются затронутые workloads.
+Например для MinIO:
+
+```bash
+kubectl -n vault port-forward svc/rescue-ai-vault 8200:8200 &
+export VAULT_ADDR=http://127.0.0.1:8200
+export VAULT_TOKEN='<operator-token>'
+
+vault kv put secret/rescue-ai/minio \
+    MINIO_ROOT_USER='rescueadmin' \
+    MINIO_ROOT_PASSWORD='<new-minio-root-password>'
+
+vault kv patch secret/rescue-ai/api \
+    ARTIFACTS_S3_ACCESS_KEY_ID='rescueadmin' \
+    ARTIFACTS_S3_SECRET_ACCESS_KEY='<new-minio-root-password>'
+
+kubectl -n rescue-ai rollout restart statefulset rescue-ai-minio
+kubectl -n rescue-ai rollout restart deployment rescue-ai-rescue-ai-api
+```
+
+Для Postgres пароль надо менять и в самой БД (`ALTER USER`), и в Vault
+`secret/rescue-ai/postgresql` / `secret/rescue-ai/api` /
+`secret/rescue-ai/sync-worker`, затем делать rollout.
+
+## Обновление образов
+
+```bash
+for svc in api detection nav-engine sync-worker; do
+    sudo k3s ctr images import "rescue-ai-$svc-<tag>.tar"
+done
+
+helm upgrade rescue-ai infra/k8s/charts/rescue-ai \
+    -n rescue-ai \
+    -f infra/k8s/values/offline.yaml \
+    --set rescue-ai-api.image.tag=<tag> \
+    --set rescue-ai-detection.image.tag=<tag> \
+    --set rescue-ai-nav-engine.image.tag=<tag> \
+    --set rescue-ai-sync-worker.image.tag=<tag>
+```
+
+## Vault после перезапуска станции
+
+После reboot или пересоздания `rescue-ai-vault-0` Vault снова будет
+`Sealed: true`. Выполни unseal тремя ключами. Пока Vault sealed,
+workloads с Vault Agent не смогут стартовать или обновить секреты.
 
 ## Откат
 
@@ -198,27 +413,41 @@ helm history rescue-ai -n rescue-ai
 helm rollback rescue-ai <REVISION> -n rescue-ai
 ```
 
+Если откат возвращает старый тег образа, этот образ должен уже быть в
+containerd k3s.
+
 ## Полная очистка
 
 ```bash
 helm uninstall rescue-ai -n rescue-ai
+helm uninstall rescue-ai-vault -n vault
 kubectl delete namespace rescue-ai
-sudo /usr/local/bin/k3s-uninstall.sh   # если хочешь снести и k3s
+kubectl delete namespace vault
+sudo /usr/local/bin/k3s-uninstall.sh
 ```
 
-## Чек-лист «всё работает в поле»
+Удаление namespaces удалит PVC локальных Postgres / MinIO (`rescue-ai`)
+и Vault (`vault`). Перед этим сделай бэкап, если данные нужны.
 
-- [ ] `kubectl get nodes` → 1 нода `Ready`.
-- [ ] `kubectl -n rescue-ai get pods` → все `Running`/`Completed`.
-- [ ] `kubectl -n rescue-ai exec rescue-ai-postgresql-0 -- psql -U rescue -d rescue_ai -c "SELECT count(*) FROM app.replication_outbox"` → выполняется.
-- [ ] `curl http://localhost:8000/health` → 200.
-- [ ] `kubectl -n rescue-ai exec ...api... -- cat /vault/secrets/app.env` → файл есть, в нём DSN/S3-креды.
-- [ ] Запущена тестовая миссия через UI → точки в `app.auto_trajectory_points`.
-- [ ] (только hybrid) `kubectl -n rescue-ai logs ...sync-worker...` показывает успешные drain-итерации.
+## Чек-лист
+
+- [ ] `kubectl get nodes` показывает одну ноду `Ready`.
+- [ ] Vault `Initialized: true`, `Sealed: false`.
+- [ ] `kubectl -n rescue-ai get secret` не показывает credential
+      Secrets Rescue-AI.
+- [ ] `kubectl -n rescue-ai get pods` показывает все workloads
+      `Running`/`Completed`.
+- [ ] `curl http://127.0.0.1:8000/health` возвращает 200.
+- [ ] API, Postgres и MinIO имеют файлы в `/vault/secrets/*`.
+- [ ] `SELECT count(*) FROM app.replication_outbox` выполняется.
+- [ ] Тестовая миссия через UI создаёт точки в
+      `app.auto_trajectory_points`.
+- [ ] Для hybrid: sync-worker не показывает постоянных ошибок
+      подключения к remote-контуру.
 
 ## Связанные документы
 
 - [ADR-0007 — Offline / Hybrid профили](../adr/ADR-0007-autonomous-deployment-and-offline-sync.md)
 - [ADR-0008 — Kubernetes и Vault](../adr/ADR-0008-kubernetes-and-secrets.md)
-- [Локальный K8s через kind/k3d](k8s_local_kind.md)
+- [Vault setup](vault_setup.md)
 - [Настройка mTLS на Raspberry Pi](rpi_mtls_setup.md)

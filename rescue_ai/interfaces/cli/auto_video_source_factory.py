@@ -57,14 +57,16 @@ def auto_video_source_factory(
         path = Path(source_value)
         if not path.is_file():
             raise FileNotFoundError(f"video file not found: {source_value}")
-        # When the caller did not pin an FPS, FileVideoSource falls back
-        # to the file's reported metadata (or _DEFAULT_FPS). Surface the
-        # resolved value so downstream tuning uses the real frame rate.
-        file_source = FileVideoSource(
-            str(path),
-            fps_override=fps if fps and fps > 0 else None,
-            loop=demo_loop,
-        )
+        # Process EVERY native frame. Marker-mode navigation tracks an LK
+        # optical-flow target frame-to-frame, so it needs dense frames — a
+        # small inter-frame motion. Dropping frames here would multiply the
+        # per-step motion and the tracker would lose the marker, distorting the
+        # trajectory. So the source keeps the file's real (native) rate and
+        # feeds navigation every frame. The operator's ``fps`` instead throttles
+        # ONLY the detector, downstream in AutoSession (``detect_fps`` →
+        # per-frame stride) — nav rate and detector rate are decoupled.
+        _ = fps
+        file_source = FileVideoSource(str(path), loop=demo_loop)
         return file_source, str(path), float(file_source.fps)
     if source_kind == "frames":
         path = Path(source_value)
@@ -73,6 +75,39 @@ def auto_video_source_factory(
         if fps is None or fps <= 0:
             raise ValueError("frames source requires a positive fps")
         return FolderFramesSource(str(path), fps=fps), str(path), float(fps)
+    if source_kind == "s3":
+        # Re-run a mission already archived in S3. ``source_value`` is
+        # ``{ds}/{mission_id}``; frames are downloaded to a temp dir and
+        # replayed through the same pipeline as a local frames folder.
+        if fps is None or fps <= 0:
+            raise ValueError("s3 source requires a positive fps")
+        ds, _, mission_id = source_value.partition("/")
+        if not ds or not mission_id:
+            raise ValueError("s3 source_value must be '{ds}/{mission_id}'")
+        from rescue_ai.infrastructure.artifact_storage import (  # noqa: PLC0415
+            S3ArtifactBackendSettings,
+        )
+        from rescue_ai.infrastructure.s3_mission_source import (  # noqa: PLC0415
+            download_mission_frames,
+        )
+
+        settings = get_settings()
+        s3_settings = S3ArtifactBackendSettings(
+            endpoint=settings.storage.s3_endpoint,
+            region=settings.storage.s3_region,
+            access_key_id=settings.storage.s3_access_key_id,
+            secret_access_key=settings.storage.s3_secret_access_key,
+            bucket=settings.storage.s3_bucket,
+            prefix=settings.storage.s3_prefix,
+        )
+        frames_dir = download_mission_frames(
+            s3_settings,
+            source_prefix=settings.storage.s3_prefix,
+            ds=ds,
+            mission_id=mission_id,
+            fps=fps,
+        )
+        return FolderFramesSource(str(frames_dir), fps=fps), source_value, float(fps)
     if source_kind == "rtsp":
         if not source_value:
             raise ValueError("rtsp url must be non-empty")

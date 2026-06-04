@@ -52,42 +52,32 @@ tests/
 
 ### Шаги запуска
 
-1. Создайте `.env` из шаблона:
+1. Создайте локальный `.env` из шаблона и заполните только локальные пароли
+   (Postgres и MinIO встроены в стек; Raspberry Pi — опционально, для
+   операторского режима):
 
 ```bash
 cp .env.example .env
 ```
 
-2. Настройте подключение к БД, S3 и Raspberry Pi source-service:
-
-```env
-DB_DSN=postgresql:...
-
-ARTIFACTS_S3_ENDPOINT=...
-ARTIFACTS_S3_REGION=...
-ARTIFACTS_S3_ACCESS_KEY_ID=...
-ARTIFACTS_S3_SECRET_ACCESS_KEY=...
-ARTIFACTS_S3_BUCKET=...
-
-RPI_BASE_URL=http://<rpi-host>:<port>
-RPI_MISSIONS_DIR=/home/<user>/missions
-RPI_RTSP_PORT=<rtsp-port>
-```
-
-3. Поднимите сервис:
+2. Поднимите весь стек одной командой (флаги/доп. env-файлы не нужны):
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
-4. Проверьте health/readiness:
+Поднимутся: `postgres`, `minio`, `detection`, `nav-engine`, `api`,
+`batch-exporter`, `airflow`, `prometheus`/`grafana`.
+
+3. Проверьте, что api готов:
 
 ```bash
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/ready
-curl http://127.0.0.1:8000/rpi/status
-# {"status":"ok"}
+curl http://127.0.0.1:8000/health   # {"status":"ok"}
+curl http://127.0.0.1:8000/ready    # database/storage/rpi: true
 ```
+
+Адреса: UI `http://localhost:8000` · Grafana `:3000` · MinIO `:9001` ·
+Airflow `:8080`.
 
 ### Сценарий работы в UI
 
@@ -99,18 +89,8 @@ curl http://127.0.0.1:8000/rpi/status
 
 ## Batch-сервис (Airflow)
 
-Batch-сервис запускается как отдельный Docker-контейнер через Airflow DockerOperator.
-
-### Запуск Airflow-контура
-
-```bash
-cd infra
-cp platform.env.example platform.env
-# Заполните обязательные поля в platform.env (DSN, S3, Airflow)
-
-# Запустите платформу
-docker compose -f docker-compose.platform.yml up -d
-```
+Airflow поднимается вместе с основным стеком (`docker compose up -d`) —
+сервисы `airflow-init`, `airflow-webserver`, `airflow-scheduler`.
 
 Airflow UI: `http://localhost:8080`
 
@@ -142,7 +122,7 @@ done
 ### Установка зависимостей
 
 ```bash
-uv sync --extra dev --extra batch
+uv sync --extra dev
 ```
 
 ### Команды

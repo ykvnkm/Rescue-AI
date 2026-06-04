@@ -36,6 +36,43 @@ from rescue_ai.domain.value_objects import NavMode
 
 logger = logging.getLogger(__name__)
 
+
+def _draw_detection_boxes(frame_bgr: Any, detections: Sequence[Any]) -> Any:
+    """Return a copy of *frame_bgr* with green detection boxes + labels.
+
+    Returns the frame unchanged (no copy) when there are no detections, so the
+    common no-detection path stays cheap. Used for both the live WebSocket
+    preview and the recorded video so the operator sees what fired.
+    """
+    if not detections:
+        return frame_bgr
+    try:
+        import cv2  # noqa: WPS433
+    except ImportError:  # pragma: no cover
+        return frame_bgr
+    annotated = frame_bgr.copy()
+    for det in detections:
+        bbox = getattr(det, "bbox", None)
+        if not bbox or len(bbox) < 4:
+            continue
+        x1, y1, x2, y2 = (int(float(v)) for v in bbox[:4])
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        label = getattr(det, "label", "") or ""
+        score = float(getattr(det, "score", 0.0))
+        caption = f"{label} {score:.2f}" if label else f"{score:.2f}"
+        cv2.putText(
+            annotated,
+            caption,
+            (x1, max(0, y1 - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 0),
+            1,
+            cv2.LINE_AA,
+        )
+    return annotated
+
+
 Subscriber = Callable[[Mapping[str, Any]], None]
 
 
@@ -99,6 +136,11 @@ class AutoSessionInit:
     nav_mode: NavMode
     detector_name: str
     detect_enabled: bool = True
+    # Target detector FPS. Navigation ALWAYS runs on every frame (marker-LK
+    # tracking needs dense frames); only the expensive detector is throttled —
+    # to ~this rate via a frame stride derived from the source's real FPS.
+    # 0 means "detect on every frame" (no throttle).
+    detect_fps: float = 0.0
     save_video: bool = False
     save_video_dir: str | None = None
 
@@ -123,7 +165,24 @@ class StartSessionRequest:
     total_frames: int = 0
     config_json: Mapping[str, object] | None = None
     detect_enabled: bool = True
+    # Operator's target detector FPS. Throttles ONLY detection (every Nth
+    # frame); navigation still runs on every frame. 0 = detect every frame.
+    detect_fps: float = 0.0
     save_video: bool = False
+    # Stable, content-derived identity for the mission. When set, it drives
+    # ``mission_id`` instead of the (possibly volatile) ``source_value`` so
+    # re-feeding the same content reuses the same mission and overwrites in
+    # place. ``source_value`` keeps pointing at the concrete cv2 source for
+    # display/debug only. ``None`` preserves the legacy ``kind:value`` key.
+    mission_key: str | None = None
+    # Explicit mission_id override. Set when replaying a known mission (e.g.
+    # an S3 re-run) so the existing mission is reopened/overwritten in place
+    # regardless of ``mission_key``. ``None`` derives the id from identity.
+    mission_id: str | None = None
+    # Ground-truth labels (labels.json) shipped inside an uploaded ZIP mission
+    # package. Stored to S3 alongside the frames so the archived mission keeps
+    # the same shape as a cloud mission. ``None`` when no labels were provided.
+    labels_payload: Mapping[str, object] | None = None
 
 
 @dataclass
@@ -199,6 +258,18 @@ class AutoSession:
         self.nav_mode = init.nav_mode
         self.detector_name = init.detector_name
         self._detect_enabled = bool(init.detect_enabled)
+        # Decouple detector rate from navigation rate. Nav runs on every frame
+        # (dense frames are required for marker-LK tracking); the detector — the
+        # expensive part — runs on every ``_detect_stride``-th frame so it
+        # approximates the operator's chosen ``detect_fps`` regardless of the
+        # source's real frame rate (e.g. a 30 fps file detected at 6 fps →
+        # stride 5, but all 30 fps still feed navigation).
+        detect_fps = float(init.detect_fps)
+        src_fps = float(getattr(init.mission, "fps", 0.0) or 0.0)
+        if 0.0 < detect_fps < src_fps:
+            self._detect_stride = max(1, round(src_fps / detect_fps))
+        else:
+            self._detect_stride = 1
         self._save_video = bool(init.save_video)
         self._save_video_dir = init.save_video_dir
         self._service = service
@@ -312,34 +383,54 @@ class AutoSession:
             return
 
         try:
-            for frame_bgr, ts_sec, frame_id in iterator:
+            for frame_bgr, ts_sec, _source_frame_id in iterator:
                 if self._stop_event.is_set():
                     break
                 self._stats.frames_consumed += 1
                 now = time.monotonic()
 
-                image_uri = f"session://{self.session_id}/{frame_id}"
+                # Navigation needs a clean, monotonic video-time line with a
+                # uniform dt = 1/fps — exactly what a local file yields. Stream
+                # sources (RTSP/MJPEG) instead report wall-clock arrival time,
+                # which carries the connect latency, frame jitter, and — on a
+                # transport fallback — a per-source ``t0`` reset that makes dt
+                # jump backwards and tears the trajectory. Derive both ts and
+                # the frame index from a gap-free session counter so every
+                # source feeds navigation identically (and frame_id never
+                # collides across a fallback).
+                nav_index = self._stats.frames_consumed - 1
+                nav_fps = float(self.mission.fps)
+                nav_ts = nav_index / nav_fps if nav_fps > 0.0 else float(ts_sec)
+
+                # Navigation runs every frame; detection only every stride-th
+                # frame (operator's target rate). Both go through ingest_frame —
+                # the ``run_detect`` flag gates just the detector.
+                run_detect = self._detect_enabled and (
+                    nav_index % self._detect_stride == 0
+                )
+
+                image_uri = f"session://{self.session_id}/{nav_index}"
                 try:
                     outcome = self._service.ingest_frame(
                         mission_id=self.mission.mission_id,
                         frame_bgr=frame_bgr,
-                        ts_sec=float(ts_sec),
-                        frame_id=int(frame_id),
+                        ts_sec=nav_ts,
+                        frame_id=nav_index,
                         image_uri=image_uri,
-                        detect_enabled=self._detect_enabled,
+                        detect_enabled=run_detect,
                     )
                 except (RuntimeError, ValueError, TypeError) as error:
                     logger.exception(
                         "auto-session %s: ingest_frame failed at frame_id=%s",
                         self.session_id,
-                        frame_id,
+                        nav_index,
                     )
                     self._stats.last_error = str(error)
                     self._emit(
                         {
                             "type": "error",
                             "session_id": self.session_id,
-                            "frame_id": int(frame_id),
+                            "frame_id": nav_index,
                             "message": str(error),
                         }
                     )
@@ -362,10 +453,11 @@ class AutoSession:
 
                 self._refresh_stream_stats(now)
 
-                jpeg_b64 = self._encoder.encode(frame_bgr)
+                annotated = _draw_detection_boxes(frame_bgr, outcome.detections)
+                jpeg_b64 = self._encoder.encode(annotated)
                 event = self._build_frame_event(
-                    frame_id=int(frame_id),
-                    ts_sec=float(ts_sec),
+                    frame_id=nav_index,
+                    ts_sec=nav_ts,
                     jpeg_b64=jpeg_b64,
                     outcome=outcome,
                 )
@@ -573,28 +665,7 @@ class AutoSession:
                 fps,
             )
 
-        annotated = frame
-        if detections:
-            annotated = frame.copy()
-            for det in detections:
-                bbox = getattr(det, "bbox", None)
-                if not bbox or len(bbox) < 4:
-                    continue
-                x1, y1, x2, y2 = (int(float(v)) for v in bbox[:4])
-                cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                label = getattr(det, "label", "") or ""
-                score = float(getattr(det, "score", 0.0))
-                caption = f"{label} {score:.2f}" if label else f"{score:.2f}"
-                cv2.putText(
-                    annotated,
-                    caption,
-                    (x1, max(0, y1 - 6)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 255, 0),
-                    1,
-                    cv2.LINE_AA,
-                )
+        annotated = _draw_detection_boxes(frame, detections)
 
         try:
             self._video_writer.write(annotated)
@@ -694,13 +765,18 @@ class AutoSessionManager:
                     f"{self._active.session_id}"
                 )
 
+            source_name = request.mission_key or (
+                f"{request.source_kind}:{request.source_value}"
+            )
             mission = self._service.start_auto_mission(
-                source_name=f"{request.source_kind}:{request.source_value}",
+                source_name=source_name,
                 total_frames=int(request.total_frames),
                 fps=float(request.fps),
                 nav_mode=request.nav_mode,
                 detector_name=request.detector_name,
                 config_json=request.config_json,
+                mission_id=request.mission_id,
+                labels_payload=request.labels_payload,
             )
             session = AutoSession(
                 init=AutoSessionInit(
@@ -712,6 +788,7 @@ class AutoSessionManager:
                     nav_mode=request.nav_mode,
                     detector_name=request.detector_name,
                     detect_enabled=request.detect_enabled,
+                    detect_fps=request.detect_fps,
                     save_video=request.save_video,
                     save_video_dir=self._save_video_dir,
                 ),

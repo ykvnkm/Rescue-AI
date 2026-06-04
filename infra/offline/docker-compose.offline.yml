@@ -52,14 +52,42 @@ services:
       mc mb -p local/${OFFLINE_S3_BUCKET:-rescue-artifacts} || true"
     restart: "no"
 
+  detection:
+    image: ${DETECTION_IMAGE:-rescue-ai-detection:local}
+    restart: unless-stopped
+    command: ["python", "-m", "rescue_ai.interfaces.detection.run_service"]
+    environment:
+      APP_LOG_LEVEL: INFO
+      DETECTION_HOST: "0.0.0.0"
+      DETECTION_PORT: "8002"
+    volumes:
+      - model_cache:/app/runtime/models
+    ports:
+      - "8002:8002"
+
+  nav-engine:
+    image: ${NAV_ENGINE_IMAGE:-rescue-ai-nav-engine:local}
+    restart: unless-stopped
+    command: ["python", "-m", "rescue_ai.interfaces.nav_engine.run_service"]
+    environment:
+      APP_LOG_LEVEL: INFO
+      NAV_ENGINE_HOST: "0.0.0.0"
+      NAV_ENGINE_PORT: "8001"
+    ports:
+      - "8001:8001"
+
   api:
-    image: ${ONLINE_IMAGE:-rescue-ai-online:local}
+    image: ${API_IMAGE:-rescue-ai-api:local}
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
+      detection:
+        condition: service_started
+      nav-engine:
+        condition: service_started
     env_file:
       - .env.offline
     environment:
@@ -72,8 +100,13 @@ services:
       ARTIFACTS_S3_ACCESS_KEY_ID: ${OFFLINE_S3_ACCESS_KEY:-rescueadmin}
       ARTIFACTS_S3_SECRET_ACCESS_KEY: ${OFFLINE_S3_SECRET_KEY:-rescueadmin}
       ARTIFACTS_S3_BUCKET: ${OFFLINE_S3_BUCKET:-rescue-artifacts}
+      DETECTOR_URL: "http://detection:8002"
+      NAV_ENGINE_URL: "http://nav-engine:8001"
+      # Access guards (see docs/runbooks/public_demo_access.md). Empty token =
+      # open; rate limit caps requests/min/IP (0 disables, default off offline).
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
+      APP_RATE_LIMIT_PER_MIN: ${APP_RATE_LIMIT_PER_MIN:-0}
     volumes:
-      - model_cache:/app/runtime/models
       - ../../scripts/security/out:/app/certs:ro
     ports:
       - "${APP_PORT:-8000}:8000"
@@ -82,7 +115,7 @@ services:
   # connectivity returns. Disabled by default — start it with
   # `--profile hybrid` once DEPLOYMENT_MODE=hybrid is set in .env.offline.
   sync-worker:
-    image: ${ONLINE_IMAGE:-rescue-ai-online:local}
+    image: ${SYNC_WORKER_IMAGE:-rescue-ai-sync-worker:local}
     restart: unless-stopped
     profiles: ["hybrid"]
     depends_on:

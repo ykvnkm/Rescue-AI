@@ -21,11 +21,21 @@ from rescue_ai.domain.value_objects import AlertStatus, ArtifactBlob, NavMode
 class OutboxRecord:
     """One pending replication entry, ADR-0007 §3.
 
-    Carries either a JSON payload (DB UPSERT) or an S3 artifact pointer
-    (``local_path`` → ``s3_bucket/s3_key``) — never both. The local
-    transaction that writes to the domain table also writes one of these
-    rows; the sync-worker drains them at-least-once with idempotency
-    enforced via ``idempotency_key``.
+    Поддерживает два независимых сценария репликации:
+
+    * **DB upsert** — ``payload_json`` содержит данные сущности;
+      sync-worker делает ``INSERT ... ON CONFLICT (idempotency_key)
+      DO UPDATE`` в удалённую Postgres. Поля ``*_s3_*`` остаются
+      ``None``.
+    * **S3 artifact copy** — ``source_s3_bucket/source_s3_key``
+      указывают на объект в локальном MinIO, ``s3_bucket/s3_key`` —
+      координаты в удалённом S3. Sync-worker делает GET из локального
+      хранилища → PUT в удалённое; идемпотентность —
+      ``idempotency_key`` (одинаков при повторах того же объекта).
+
+    Поле ``local_path`` оставлено для совместимости с историческим
+    сценарием «файл с диска пода»; новым кодом репликации не
+    используется (его заменяет пара ``source_s3_*``).
     """
 
     entity_type: str
@@ -36,6 +46,8 @@ class OutboxRecord:
     local_path: str | None = None
     s3_bucket: str | None = None
     s3_key: str | None = None
+    source_s3_bucket: str | None = None
+    source_s3_key: str | None = None
 
 
 class SyncOutbox(Protocol):
@@ -71,8 +83,25 @@ class OutboxRow:
     local_path: str | None
     s3_bucket: str | None
     s3_key: str | None
+    source_s3_bucket: str | None
+    source_s3_key: str | None
     idempotency_key: str
     attempts: int
+
+
+class RemoteUnavailableError(Exception):
+    """The remote contour (Postgres/S3) is unreachable.
+
+    Signals a *connectivity* failure — no route, connection refused, DNS or
+    TCP timeout — as opposed to a per-row rejection (bad payload, missing
+    handler, auth error). The sync-worker treats it as "no connectivity":
+    it aborts the current batch and retries later WITHOUT consuming a row's
+    delivery-attempt budget. This is the offline-first guarantee from
+    ADR-0007 §3 — a station that loses its uplink keeps running idle and
+    drains the backlog intact once the link returns, instead of burning
+    through ``max_attempts`` and dead-lettering rows that were never even
+    delivered.
+    """
 
 
 class RemoteSyncTarget(Protocol):
@@ -83,7 +112,12 @@ class RemoteSyncTarget(Protocol):
     """
 
     def deliver(self, row: OutboxRow) -> None:
-        """Deliver one row idempotently. Raises on transport failure."""
+        """Deliver one row idempotently.
+
+        Raises :class:`RemoteUnavailableError` when the remote contour is
+        unreachable (connectivity), or another exception for a permanent
+        per-row failure.
+        """
 
 
 class AlertReviewPayload(TypedDict):
@@ -198,8 +232,23 @@ class ArtifactStorage(Protocol):
     """
 
     def store_frame(
-        self, mission_id: str, frame_id: int, source_uri: str, ds: str
-    ) -> str: ...
+        self,
+        mission_id: str,
+        frame_id: int,
+        source_uri: str,
+        ds: str,
+        *,
+        frame_bgr: object | None = None,
+    ) -> str:
+        """Archive one mission frame under ``{ds}/{mission_id}/frames/``.
+
+        When ``frame_bgr`` (an in-memory BGR ``ndarray``) is provided it is
+        JPEG-encoded and stored directly — this is the path for stream/video
+        sources that never touch disk. Otherwise ``source_uri`` is treated as
+        a local file. The S3 key is deterministic (``frame_{frame_id:06d}``)
+        so reruns overwrite in place. Returns the stored URI (or ``source_uri``
+        unchanged if nothing could be archived).
+        """
 
     def load_frame(self, image_uri: str) -> ArtifactBlob | None: ...
 
@@ -220,12 +269,15 @@ class ArtifactStorage(Protocol):
         mission_id: str,
         ds: str,
         points: Sequence[TrajectoryPoint],
+        *,
+        origin: tuple[float, float] | None = None,
     ) -> str:
         """Persist a mission trajectory as CSV; return the artifact URI.
 
         Used by automatic missions (ADR-0006): layout
         ``{prefix}/{ds}/{mission_id}/trajectory.csv``. Columns are
-        ``seq,ts_sec,frame_id,x,y,z,source``.
+        ``seq,ts_sec,frame_id,x,y,z,source``; when ``origin`` (lat, lon) is
+        given, absolute ``lat,lon`` columns are appended (relative x/y kept).
         """
 
     def save_trajectory_plot(self, mission_id: str, ds: str, png_bytes: bytes) -> str:

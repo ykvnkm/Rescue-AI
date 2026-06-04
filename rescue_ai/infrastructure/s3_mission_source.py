@@ -155,6 +155,80 @@ class S3MissionSource:
         return "/".join(part.strip("/") for part in parts if part.strip("/"))
 
 
+def _build_client(settings: S3ArtifactBackendSettings) -> Any:
+    import boto3  # noqa: PLC0415
+
+    return boto3.client(
+        "s3",
+        endpoint_url=settings.endpoint,
+        region_name=settings.region,
+        aws_access_key_id=settings.access_key_id,
+        aws_secret_access_key=settings.secret_access_key,
+    )
+
+
+def download_mission_frames(
+    settings: S3ArtifactBackendSettings,
+    *,
+    source_prefix: str,
+    ds: str,
+    mission_id: str,
+    fps: float = 6.0,
+) -> Path:
+    """Download ``{prefix}/{ds}/{mission_id}/frames/*`` into a temp directory.
+
+    Reuses :class:`S3MissionSource` (same canonical layout as the batch DAG)
+    and returns the local frames directory, ready to wrap in a
+    ``FolderFramesSource`` for a re-run through the online/auto pipeline.
+    Raises ``ValueError`` if the mission has no frames in S3.
+    """
+    source = S3MissionSource(settings=settings, source_prefix=source_prefix, fps=fps)
+    mission_input = source.load(mission_id=mission_id, ds=ds)
+    return mission_input.frames[0].frame_path.parent
+
+
+def list_s3_missions(
+    settings: S3ArtifactBackendSettings,
+    *,
+    source_prefix: str,
+) -> list[dict[str, str]]:
+    """List missions stored in S3 as ``{"ds", "mission_id"}`` entries.
+
+    Walks ``{prefix}/{ds}/{mission_id}/`` and keeps only missions that have a
+    ``frames/`` folder (i.e. a re-runnable dataset). Newest ``ds`` first.
+    """
+    client = _build_client(settings)
+    bucket = settings.bucket
+    root = source_prefix.strip("/")
+    base = f"{root}/" if root else ""
+
+    missions: list[dict[str, str]] = []
+    for ds in _list_common_prefixes(client, bucket, base):
+        ds_base = f"{base}{ds}/"
+        for mission_id in _list_common_prefixes(client, bucket, ds_base):
+            frames_prefix = f"{ds_base}{mission_id}/frames/"
+            response = client.list_objects_v2(
+                Bucket=bucket, Prefix=frames_prefix, MaxKeys=1
+            )
+            if response.get("KeyCount", 0) > 0 or response.get("Contents"):
+                missions.append({"ds": ds, "mission_id": mission_id})
+    missions.sort(key=lambda item: (item["ds"], item["mission_id"]), reverse=True)
+    return missions
+
+
+def _list_common_prefixes(client: Any, bucket: str | None, prefix: str) -> list[str]:
+    """Return the immediate sub-folder names under ``prefix`` (no trailing /)."""
+    paginator = client.get_paginator("list_objects_v2")
+    names: list[str] = []
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
+        for item in page.get("CommonPrefixes", []) or []:
+            full = item.get("Prefix", "")
+            tail = full[len(prefix) :].strip("/")
+            if tail:
+                names.append(tail)
+    return names
+
+
 def _label_for(labels: dict[str, object] | None, filename: str) -> bool:
     """Return whether the labels blob marks a given frame as positive.
 
