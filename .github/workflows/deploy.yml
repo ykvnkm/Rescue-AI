@@ -114,12 +114,8 @@ jobs:
                 --docker-password="${GHCR_TOKEN}" \
                 --dry-run=client -o yaml | kubectl apply -f -
 
-            echo "==> Ensure rpi-mtls secret (server-side files in ~/secrets/)"
-            kubectl -n "${NAMESPACE}" create secret generic rpi-mtls \
-                --from-file=ca.crt="$HOME/secrets/station-root-ca.crt" \
-                --from-file=client.crt="$HOME/secrets/gcs-client.crt" \
-                --from-file=client.key="$HOME/secrets/gcs-client.key" \
-                --dry-run=client -o yaml | kubectl apply -f -
+            # rpi-mtls secret is offline/station-only (the cloud contour never
+            # talks to a drone; cloud.yaml runs tlsMode=off). Skipped here.
 
             echo "==> Ensure airflow meta-db secret (chicken-and-egg, see vault_setup.md)"
             # Airflow ещё не запущен — он не может сам прочитать
@@ -131,11 +127,12 @@ jobs:
                 --from-literal=connection="${AIRFLOW_DB_URI}" \
                 --dry-run=client -o yaml | kubectl apply -f -
 
-            echo "==> Resolve umbrella chart dependencies"
-            helm repo add bitnami https://charts.bitnami.com/bitnami --force-update
-            helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
-            helm repo add apache-airflow https://airflow.apache.org --force-update
-            helm repo update
+            echo "==> Resolve umbrella chart dependencies (local file:// subcharts only)"
+            # The umbrella depends ONLY on the four local file:// service charts
+            # (api/detection/nav-engine/sync-worker) — no bitnami/hashicorp/airflow
+            # repos are required. We must NOT `helm repo add hashicorp` here: that
+            # CDN geo-blocks the server's IP (HTTP 403) and would abort the deploy.
+            # dependency update re-packages the local subcharts with no network.
             helm dependency update infra/k8s/charts/rescue-ai
 
             echo "==> Deploy rescue-ai (Helm upgrade --install)"
@@ -145,7 +142,7 @@ jobs:
             REGISTRY="ghcr.io/${OWNER}"
             helm upgrade --install rescue-ai infra/k8s/charts/rescue-ai \
                 --namespace "${NAMESPACE}" \
-                -f infra/k8s/values/offline.yaml \
+                -f infra/k8s/values/cloud.yaml \
                 --set rescue-ai-api.image.repository="${REGISTRY}/rescue-ai-api" \
                 --set rescue-ai-api.image.tag="${GIT_SHA}" \
                 --set rescue-ai-api.image.pullPolicy="Always" \
@@ -158,10 +155,6 @@ jobs:
                 --set rescue-ai-nav-engine.image.tag="${GIT_SHA}" \
                 --set rescue-ai-nav-engine.image.pullPolicy="Always" \
                 --set-json "rescue-ai-nav-engine.imagePullSecrets=[{\"name\":\"ghcr-pull\"}]" \
-                --set rescue-ai-sync-worker.image.repository="${REGISTRY}/rescue-ai-sync-worker" \
-                --set rescue-ai-sync-worker.image.tag="${GIT_SHA}" \
-                --set rescue-ai-sync-worker.image.pullPolicy="Always" \
-                --set-json "rescue-ai-sync-worker.imagePullSecrets=[{\"name\":\"ghcr-pull\"}]" \
                 --wait --timeout 15m
 
             # ── Batch-контур (rescue-batch namespace) ─────────────────

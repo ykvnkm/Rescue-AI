@@ -75,7 +75,7 @@ rescue-ai-api:
     storage:
       s3Endpoint: "https://storage.yandexcloud.net"
       s3Region: ru-central1
-      s3Bucket: rescue-ai-mission-artifacts
+      s3Bucket: rescue-ai-artifacts
       s3Prefix: missions
     rpi:
       baseUrl: ""
@@ -100,14 +100,14 @@ rescue-ai-api:
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt-prod
     hosts:
-      - host: rescue-ai.example.com
+      - host: api.rescue-ai.ru
         paths:
           - path: /
             pathType: Prefix
     tls:
       - secretName: rescue-ai-tls
         hosts:
-          - rescue-ai.example.com
+          - api.rescue-ai.ru
   resources:
     requests:
       cpu: 250m
