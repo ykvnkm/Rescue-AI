@@ -66,8 +66,8 @@ jobs:
               "apache-airflow==2.9.3" \
               "apache-airflow-providers-cncf-kubernetes==8.3.3" \
               --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.3/constraints-3.12.txt"
-          airflow db migrate
-          python - <<'PY'
+          uv run airflow db migrate
+          uv run python - <<'PY'
           from airflow.models.dagbag import DagBag
           bag = DagBag(dag_folder="infra/airflow/dags", include_examples=False)
           assert not bag.import_errors, bag.import_errors
