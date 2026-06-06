@@ -191,6 +191,14 @@ jobs:
             echo "==> Ensure monitoring namespace"
             kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
             echo "==> Deploy observability (Prometheus / Alertmanager / Grafana)"
+            # --wait: ждём готовности мониторинга и ВАЛИМ деплой, если он не
+            # поднялся — CI обязан реально проверять, что мониторинг работает.
+            #
+            # Раньше тут случался OOM: Prometheus с лимитом 4Gi без привязки к
+            # нодам садился на 2-ядерный control-plane и убивал ноду целиком.
+            # Это устранено в observability-cloud.yaml: лимиты ужаты (1Gi) и
+            # nodeAffinity уводит мониторинг на воркеры, прочь от control-plane.
+            # Поэтому --wait теперь безопасен и оставлен как полноценная проверка.
             helm upgrade --install rescue-ai-observability \
                 infra/k8s/charts/rescue-ai-observability \
                 --namespace monitoring \

@@ -16,6 +16,21 @@ namespace: monitoring
 # деплоятся (станционные / центральные).
 contour: station
 
+# Размещение подов мониторинга (общее для prometheus/alertmanager/grafana).
+# По умолчанию пусто; в cloud-профиле задаётся affinity, уводящая
+# тяжёлый Prometheus с control-plane на воркеры (иначе 2-ядерный CP уходит
+# в OOM). См. infra/k8s/values/observability-cloud.yaml.
+scheduling:
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+# Egress на Vault для grafana/alertmanager (Vault Agent). Задай namespace,
+# где живёт Vault, чтобы NetworkPolicy разрешила доступ к нему на :8200.
+# Пусто = правило не создаётся (offline: Vault в одном ns с приложением).
+vaultEgress:
+  namespace: ""
+
 # ── Prometheus ──────────────────────────────────────────────────
 prometheus:
   enabled: true

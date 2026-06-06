@@ -39,6 +39,33 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
+{{- if .Values.vaultEgress.namespace }}
+---
+# (2b) Egress к Vault — grafana и alertmanager получают секреты (admin-пароль
+# Grafana / SMTP-creds Alertmanager) через Vault Agent. В cloud Vault живёт в
+# отдельном namespace; без этого правила default-deny блокирует
+# vault-agent-init и под висит в Init. Рендерится только если задан
+# vaultEgress.namespace (cloud=vault; offline Vault в rescue-ai — не нужно).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-allow-vault-egress
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    {{- include "obs.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.vaultEgress.namespace | quote }}
+      ports:
+        - port: 8200
+          protocol: TCP
+{{- end }}
 ---
 # (3) Prometheus → rescue-ai (api/detection/nav-engine /metrics).
 apiVersion: networking.k8s.io/v1
