@@ -16,19 +16,36 @@ createNamespace: false
 namespace: monitoring
 contour: central
 
+# Размещение мониторинга: НЕ на control-plane. CP — 2 ядра и уже несёт
+# Vault + ingress + cert-manager + сам control-plane; тяжёлый Prometheus
+# на нём уводит ноду в OOM (нода падает целиком). k3s не тейнтит CP, поэтому
+# уводим поды на воркеры через nodeAffinity по метке control-plane.
+scheduling:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: node-role.kubernetes.io/control-plane
+                operator: DoesNotExist
+
 prometheus:
   enabled: true
-  retentionTime: 30d
+  # 7d вместо 30d: на маленьком кластере 30d держит в памяти слишком много
+  # серий. Для демо/защиты недели истории достаточно.
+  retentionTime: 7d
   resources:
     requests:
-      cpu: 500m
-      memory: 1Gi
+      cpu: 200m
+      memory: 256Mi
+    # ЖЁСТКИЙ потолок: на воркере рядом крутятся api/detection. 1Gi хватает
+    # для нашего объёма метрик; 4Gi (прежний) убивал ноду.
     limits:
-      cpu: 2000m
-      memory: 4Gi
+      cpu: 1000m
+      memory: 1Gi
   persistence:
     enabled: true
-    size: 50Gi
+    size: 20Gi
   service:
     type: ClusterIP
   scrape:
@@ -62,11 +79,11 @@ grafana:
   enabled: true
   resources:
     requests:
-      cpu: 200m
-      memory: 256Mi
+      cpu: 100m
+      memory: 128Mi
     limits:
-      cpu: 1000m
-      memory: 1Gi
+      cpu: 500m
+      memory: 512Mi
   persistence:
     enabled: true
     size: 10Gi
@@ -79,11 +96,16 @@ grafana:
     ingressClassName: nginx
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt-prod
-    host: grafana.rescue-ai.example.com
+    host: grafana.rescue-ai.ru
     tls:
       - secretName: rescue-ai-grafana-tls
         hosts:
-          - grafana.rescue-ai.example.com
+          - grafana.rescue-ai.ru
 
 networkPolicy:
   enabled: true
+
+# Vault в cloud живёт в namespace `vault` → разрешаем grafana/alertmanager
+# egress к нему (Vault Agent), иначе default-deny вешает их в Init.
+vaultEgress:
+  namespace: vault
