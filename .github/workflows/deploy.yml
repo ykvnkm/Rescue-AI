@@ -37,7 +37,9 @@ jobs:
           - api
           - detection
           - nav-engine
-          - sync-worker
+          # sync-worker не нужен в cloud-профиле (облако ПРИНИМАЕТ данные от
+          # станций, само ничего не синкает) — не собираем. batch-worker и
+          # batch-exporter нужны для batch-контура (Airflow) — оставляем.
           - batch-worker
           - batch-exporter
     steps:
@@ -175,6 +177,25 @@ jobs:
             #       --set rescue-ai-batch-exporter.image.repository="${REGISTRY}/rescue-ai-batch-exporter" \
             #       --set rescue-ai-batch-exporter.image.tag="${GIT_SHA}" \
             #       --set "airflow.env[0].value=${REGISTRY}/rescue-ai-batch-worker:${GIT_SHA}"
+
+            # ── Контур наблюдаемости (namespace monitoring) ───────────
+            # Prometheus + Alertmanager + Grafana. Отдельный helm release
+            # (свой namespace, свой lifecycle — НЕ subchart rescue-ai), но
+            # ставится тем же пайплайном, чтобы развёртывание было полным и
+            # воспроизводимым, а не «доустанавливалось руками».
+            #
+            # Чарт самодостаточный (голые Deployment'ы, без community-
+            # subchart'ов) — geo-block hashicorp/prometheus CDN не мешает.
+            # admin-пароль Grafana и SMTP Alertmanager приходят из Vault
+            # (Agent Injection), поэтому секретов в namespace monitoring нет.
+            echo "==> Ensure monitoring namespace"
+            kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+            echo "==> Deploy observability (Prometheus / Alertmanager / Grafana)"
+            helm upgrade --install rescue-ai-observability \
+                infra/k8s/charts/rescue-ai-observability \
+                --namespace monitoring \
+                -f infra/k8s/values/observability-cloud.yaml \
+                --wait --timeout 10m
 
             echo "==> Check Vault Agent rendered application secrets"
             # Real secrets are provisioned outside CI/CD. The deploy job only
