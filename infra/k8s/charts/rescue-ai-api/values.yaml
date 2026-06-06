@@ -183,6 +183,10 @@ topologySpreadConstraints: []
 # kind-кластерами без CNI, поддерживающим NetworkPolicy.
 networkPolicy:
   enabled: false
+  # Extra external egress ports opened to 0.0.0.0/0 (in addition to the built-in
+  # 9100/RTSP/443). Cloud sets [18749] so the api can reach the off-cluster
+  # managed Postgres on its non-standard port. Empty in offline (local Postgres).
+  extraEgressPorts: []
 
 podSecurityContext:
   runAsNonRoot: true

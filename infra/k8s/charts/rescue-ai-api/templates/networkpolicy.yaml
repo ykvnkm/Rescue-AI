@@ -120,4 +120,11 @@ spec:
           protocol: TCP
         - port: 443              # cloudflared tunnel + Yandex S3
           protocol: TCP
+        {{- range .Values.networkPolicy.extraEgressPorts }}
+        # Extra external egress ports (cloud: managed Postgres lives off-cluster
+        # on a non-standard port, so the api needs egress to it). k8s NetworkPolicy
+        # can't match FQDN; we open the port to 0.0.0.0/0 like the others above.
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
 {{- end }}

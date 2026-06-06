@@ -1,0 +1,53 @@
+# KMS auto-unseal overlay для cloud-Vault (Yandex Cloud KMS).
+#
+# Применяется ПОВЕРХ базовых values при установке Vault из ЧАРТА YANDEX
+# (он содержит forked-бинарь Vault с поддержкой seal "yandexcloudkms" —
+# upstream hashicorp/vault такого seal не имеет). Чарт и образ публичные,
+# пуллятся с reg.ru напрямую (проверено).
+#
+# Чарт (OCI, та же база vault-helm 0.30.0, что и upstream):
+#   oci://cr.yandex/yc-marketplace/yandex-cloud/vault/chart/vault
+#   --version 0.30.0-3-yckms        (appVersion 1.19.5.1+yckms)
+#
+# Установка/обновление (одной командой):
+#   helm upgrade --install rescue-ai-vault \
+#       oci://cr.yandex/yc-marketplace/yandex-cloud/vault/chart/vault --version 0.30.0-3-yckms \
+#       -n vault \
+#       -f infra/k8s/vault/values-cloud.yaml \
+#       -f infra/k8s/vault/values-cloud-kms.yaml \
+#       --set server.extraEnvironmentVars.YANDEXCLOUD_KMS_KEY_ID="$YC_KMS_KEY_ID" \
+#       --set-file yandexKmsAuthJson=scripts/security/out/authorized_key.json
+#
+# Проще — одной командой через scripts/ops/cloud_bootstrap.sh (см. ниже).
+#
+#   `--set-file yandexKmsAuthJson=<authorized_key.json>` — чарт сам кладёт
+#   содержимое SA-ключа в Secret `kms-creds` (templates/kms-creds-secret.yaml).
+#   НЕ создавай секрет kms-creds руками — helm перетрёт его при upgrade.
+#
+# Предусловия в Yandex Cloud (создаются один раз, переживают пересоздание VPS):
+#   * симметричный KMS-ключ            → YANDEXCLOUD_KMS_KEY_ID ниже
+#   * сервис-аккаунт + роль kms.keys.encrypterDecrypter на ключ
+#   * authorized_key.json этого СА     → scripts/security/out/ (gitignored)
+#
+# Init на ЧИСТОМ кластере (rebuild): сразу с recovery-ключами, без миграции:
+#   vault operator init -recovery-shares=5 -recovery-threshold=3
+# Миграция СУЩЕСТВУЮЩЕГО shamir-Vault → KMS (как делалось на текущем кластере):
+#   после upgrade: vault operator unseal -migrate <shamir-key>  (× threshold)
+# Подробности — docs/runbooks/vault_setup.md и docs/runbooks/cloud_rebuild.md §5.
+
+server:
+  # Forked-образ Vault с yckms-seal (Vault 1.19.5). Публичный, пуллится с reg.ru.
+  image:
+    repository: cr.yandex/crpsjg1coh47p81vh2lc/yandex-cloud/vault/vault
+    tag: "1.19.5.1_yckms"
+  # Активация auto-unseal через env (seal-стенза не нужна — тип берётся из
+  # VAULT_SEAL_TYPE, креды из SA-key файла).
+  extraEnvironmentVars:
+    VAULT_SEAL_TYPE: yandexcloudkms
+    YANDEXCLOUD_KMS_KEY_ID: ""
+    YANDEXCLOUD_SERVICE_ACCOUNT_KEY_FILE: /vault/userconfig/kms-creds/credentials.json
+  # Монтируем Secret kms-creds (его наполняет чарт из --set-file yandexKmsAuthJson)
+  # в /vault/userconfig/kms-creds → файл credentials.json.
+  extraVolumes:
+    - type: secret
+      name: kms-creds

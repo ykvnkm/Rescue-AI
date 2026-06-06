@@ -83,13 +83,13 @@ server:
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt-prod
     hosts:
-      - host: vault.rescue-ai.example.com
+      - host: vault.rescue-ai.ru
         paths:
           - /
     tls:
       - secretName: vault-tls
         hosts:
-          - vault.rescue-ai.example.com
+          - vault.rescue-ai.ru
 
 ui:
   enabled: true
