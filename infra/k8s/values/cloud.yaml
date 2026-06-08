@@ -104,6 +104,24 @@ rescue-ai-api:
     className: nginx
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt-prod
+      # Загрузка миссий (видео/ZIP кадров) идёт телом POST /auto-sessions/start.
+      # Дефолт ingress-nginx — 1 МБ: без этого ingress рвёт большие аплоады
+      # (браузер видит "TypeError: Load failed"). Поднимаем лимит до 1 ГБ.
+      # Буферизацию тела НЕ отключаем: с request-buffering=off nginx стримит
+      # тело в бэкенд в реальном времени, и обрыв аплоада валит form() в
+      # ClientDisconnect. С буферизацией (дефолт) nginx сначала принимает файл
+      # целиком, потом отдаёт бэкенду — надёжно для больших загрузок.
+      nginx.ingress.kubernetes.io/proxy-body-size: "1024m"
+      # Sticky-сессии: auto-session хранит состояние в памяти КОНКРЕТНОГО пода.
+      # При 2 репликах старт сессии (POST) и WS-стрим могут уйти на разные поды
+      # → второй про сессию не знает → WS закрывается до accept → 403 → стрим не
+      # подключается. Cookie-affinity закрепляет браузер за одним подом (старт+WS
+      # на один под). Сохраняет 2 реплики/FT, чинит стрим.
+      nginx.ingress.kubernetes.io/affinity: "cookie"
+      nginx.ingress.kubernetes.io/affinity-mode: "persistent"
+      nginx.ingress.kubernetes.io/session-cookie-name: "rescue-ai-route"
+      nginx.ingress.kubernetes.io/session-cookie-max-age: "3600"
+      nginx.ingress.kubernetes.io/session-cookie-path: "/"
     hosts:
       - host: api.rescue-ai.ru
         paths:
@@ -138,6 +156,17 @@ rescue-ai-detection:
     targetCPUUtilizationPercentage: 70
   networkPolicy:
     enabled: true
+  # YOLO/NCNN-инференс — CPU-bound. Одиночная live-сессия обслуживается одним
+  # detection-подом, поэтому потолок CPU пода = потолок FPS этой сессии. На
+  # 8-ядерном воркере даём поду до 4 ядер; HPA добавляет реплики (targetCPU 70%).
+  # На 2-ядерных нодах это и было причиной дикой задержки.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 4000m
+      memory: 3Gi
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
