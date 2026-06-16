@@ -27,12 +27,12 @@
 | Актив | Где лежит | Зачем |
 |---|---|---|
 | Репозиторий (весь код, чарты, values, workflow) | GitHub `ykvnkm/rescue-ai` | источник истины деплоя |
-| **Yandex KMS-ключ** `kms_key_id = abjtkhdk0smccf1i1ink` | Yandex Cloud (KMS) | auto-unseal Vault — переживает смерть серверов |
+| **Yandex KMS-ключ** `kms_key_id = <YOUR_KMS_KEY_ID>` | Yandex Cloud (KMS) | auto-unseal Vault — переживает смерть серверов |
 | **`authorized_key.json`** (SA `ajebm4q81ar3r8iku57o`, роль `kms.keys.encrypterDecrypter`) | `scripts/security/out/authorized_key.json` (gitignored) + бэкап в 1Password | Vault логинится в Yandex KMS |
 | Домен `rescue-ai.ru` | регистратор домена | ingress + TLS |
 | GHCR pull-token | GitHub Secret `GHCR_TOKEN` + 1Password | тянуть образы из ghcr.io |
 | Yandex S3 ключи (artifacts) | Vault / 1Password | хранилище артефактов миссий |
-| SMTP app-password (`mksk8410@gmail.com`) | Vault / 1Password | алерты Alertmanager |
+| SMTP app-password (`<your-email@example.com>`) | Vault / 1Password | алерты Alertmanager |
 | Grafana admin-пароль | Vault / 1Password | доступ к дашбордам |
 
 > **Ключевой выигрыш auto-unseal через Yandex KMS:** механизм распечатки
@@ -130,7 +130,7 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: mksk8410@gmail.com
+    email: <your-email@example.com>
     privateKeySecretRef:
       name: letsencrypt-prod
     solvers:
@@ -309,10 +309,10 @@ kubectl -n monitoring get pods
 Если пересобирать будет другой человек — передать (вне публичного репо!):
 - [ ] доступ к GitHub-репо `ykvnkm/rescue-ai`;
 - [ ] `scripts/security/out/authorized_key.json` (Yandex SA для KMS);
-- [ ] `kms_key_id = abjtkhdk0smccf1i1ink`;
+- [ ] `kms_key_id = <YOUR_KMS_KEY_ID>`;
 - [ ] реквизиты managed-БД (host/port/user/pass);
 - [ ] Yandex S3 access key + secret (artifacts);
-- [ ] Gmail app-password для SMTP (`mksk8410@gmail.com`);
+- [ ] Gmail app-password для SMTP (`<your-email@example.com>`);
 - [ ] Grafana admin-пароль;
 - [ ] GHCR PAT (`GHCR_TOKEN`);
 - [ ] доступ к панели домена `rescue-ai.ru` (правка A-записей);
