@@ -46,11 +46,11 @@ rescue-ai-api:
     targetCPUUtilizationPercentage: 70
   networkPolicy:
     enabled: true
-    # Managed Postgres живёт ВНЕ кластера на нестандартном порту 18749 —
+    # Managed Postgres живёт ВНЕ кластера на нестандартном порту 15088 —
     # открываем api egress на него (k8s NetworkPolicy не умеет FQDN, поэтому
     # порт к 0.0.0.0/0, как 443 для S3). Без этого api не достучится до БД.
     extraEgressPorts:
-      - 18749
+      - 15088
   # Реплики api не должны жить на одной ноде — иначе один node-drain
   # положит весь сервис; кроме того, размазываемся по zone-меткам, если
   # managed K8s даёт их.

@@ -26,8 +26,8 @@
 #   MTLS_CA_CERT_FILE=scripts/security/out/station-root-ca.crt \
 #   MTLS_CLIENT_CERT_FILE=scripts/security/out/gcs-client.crt \
 #   MTLS_CLIENT_KEY_FILE=scripts/security/out/gcs-client.key \
-#   RPI_BASE_URL=https://192.168.0.118:9100 \   # адрес дрона ЭТОЙ станции
-#   RPI_MISSIONS_DIR=/home/ykvnkm/Documents/missions \  # корень миссий на дроне
+#   RPI_BASE_URL=https://<rpi-lan-ip>:9100 \   # адрес дрона ЭТОЙ станции
+#   RPI_MISSIONS_DIR=/home/<user>/missions \  # корень миссий на дроне
 #   DB_DSN=postgresql://… \
 #   ./scripts/security/vault_bootstrap.sh
 #

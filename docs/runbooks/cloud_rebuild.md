@@ -28,7 +28,7 @@
 |---|---|---|
 | Репозиторий (весь код, чарты, values, workflow) | GitHub `ykvnkm/rescue-ai` | источник истины деплоя |
 | **Yandex KMS-ключ** `kms_key_id = <YOUR_KMS_KEY_ID>` | Yandex Cloud (KMS) | auto-unseal Vault — переживает смерть серверов |
-| **`authorized_key.json`** (SA `ajebm4q81ar3r8iku57o`, роль `kms.keys.encrypterDecrypter`) | `scripts/security/out/authorized_key.json` (gitignored) + бэкап в 1Password | Vault логинится в Yandex KMS |
+| **`authorized_key.json`** (SA `<KMS_SA_ID>`, роль `kms.keys.encrypterDecrypter`) | `scripts/security/out/authorized_key.json` (gitignored) + бэкап в 1Password | Vault логинится в Yandex KMS |
 | Домен `rescue-ai.ru` | регистратор домена | ingress + TLS |
 | GHCR pull-token | GitHub Secret `GHCR_TOKEN` + 1Password | тянуть образы из ghcr.io |
 | Yandex S3 ключи (artifacts) | Vault / 1Password | хранилище артефактов миссий |
@@ -327,7 +327,7 @@ kubectl -n monitoring get pods
 |---|---|---|
 | `helm repo add hashicorp` → 403 | geo-block reg.ru | ставить из github static manifests (шаг 3) |
 | helm/git к CDN зависает | сломан IPv6 reg.ru | отключить IPv6 (шаг 1.3) |
-| api CrashLoop, не видит managed-БД | NetworkPolicy не пускает нестандартный порт БД | `extraEgressPorts` в `cloud.yaml` (есть для 18749; **сменить, если у новой БД другой порт**) |
+| api CrashLoop, не видит managed-БД | NetworkPolicy не пускает нестандартный порт БД | `extraEgressPorts` в `cloud.yaml` (сейчас 15088; **сменить, если у новой БД другой порт**) |
 | api 401 на `/ready` | выставлен `API_AUTH_TOKEN`, а `/ready` не в allowlist | в cloud токен пустой (открытое демо) |
 | cert не выписывается | DNS A-запись не указывает на CP / не распространилась | проверить `dig`, дождаться, ClusterIssuer letsencrypt-prod |
 | traceback в подах не виден | python буферизует stdout в контейнере | `PYTHONUNBUFFERED=1` |
