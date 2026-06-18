@@ -19,11 +19,11 @@
 #   ./scripts/ops/cloud_up.sh
 #
 # Переменные:
-#   CP_HOST    публичный IP control-plane (по умолчанию 168.222.192.28)
+#   CP_HOST    публичный IP control-plane (обязательно задать)
 #   SSH_KEY    приватный SSH-ключ для входа под rescue
 set -euo pipefail
 
-: "${CP_HOST:=168.222.192.28}"
+: "${CP_HOST:?задайте CP_HOST — публичный IP control-plane}"
 : "${SSH_KEY:=$HOME/.ssh/id_ed25519}"
 CP="rescue@${CP_HOST}"
 

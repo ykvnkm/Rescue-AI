@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import importlib
+import threading
 import time
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 _FATAL_SQLSTATES = {
@@ -121,13 +122,44 @@ class PostgresDatabase:
         self._psycopg = psycopg
         self._dsn = _ensure_compat_dsn(dsn)
         self._schema = schema
+        # One reused connection PER THREAD. Opening a fresh connection on every
+        # repository call costs a full TCP+auth round-trip — negligible against
+        # a local Postgres (~1 ms) but ~30-80 ms against a remote managed DB,
+        # which dominated per-frame auto-mode latency (2 connects/frame ≈ 80 ms
+        # while the CPU sat idle). Reusing a per-thread connection drops repeat
+        # queries to a few ms. Thread-local keeps it safe — psycopg connections
+        # are not shareable across threads, and each auto-session worker / request
+        # thread gets its own. See docs note on cloud auto-mode latency.
+        self._tls = threading.local()
 
-    def connect(self) -> Any:
-        """Open a new connection and apply search_path if configured."""
-        conn = self._psycopg.connect(self._dsn, connect_timeout=_CONNECT_TIMEOUT_SEC)
-        if self._schema:
-            conn.execute(f"SET search_path TO {self._schema}")
+    def _acquire(self) -> Any:
+        conn = getattr(self._tls, "conn", None)
+        if conn is None or conn.closed:
+            conn = self._psycopg.connect(
+                self._dsn, connect_timeout=_CONNECT_TIMEOUT_SEC
+            )
+            if self._schema:
+                conn.execute(f"SET search_path TO {self._schema}")
+            self._tls.conn = conn
         return conn
+
+    def _discard(self) -> None:
+        conn = getattr(self._tls, "conn", None)
+        self._tls.conn = None
+        if conn is not None:
+            try:
+                conn.close()
+            except (self._psycopg.Error, OSError):  # pragma: no cover - best-effort
+                pass
+
+    def connect(self) -> "_ReusedConnection":
+        """Check out this thread's reused connection (opened on first use).
+
+        Returned object is a context manager: ``with db.connect() as conn:``
+        commits on success / rolls back on error like before, but keeps the
+        connection OPEN for the next call instead of closing it.
+        """
+        return _ReusedConnection(self)
 
     def truncate_all(self) -> None:
         with self.connect() as conn:
@@ -140,3 +172,34 @@ class PostgresDatabase:
                     """
                 )
             conn.commit()
+
+
+class _ReusedConnection:
+    """Context manager that lends ``PostgresDatabase``'s per-thread connection
+    and commits/rolls back on exit WITHOUT closing it (so it can be reused)."""
+
+    def __init__(self, db: "PostgresDatabase") -> None:
+        self._db = db
+        self._conn: Any = None
+
+    def __enter__(self) -> Any:
+        self._conn = self._db._acquire()
+        return self._conn
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> Literal[False]:
+        if self._conn is None:
+            return False
+        if exc_type is not None:
+            # Roll back the failed txn; if even that fails the connection is
+            # unusable — drop it so the next call opens a fresh one.
+            try:
+                self._conn.rollback()
+            except (self._db._psycopg.Error, OSError):
+                self._db._discard()
+            return False
+        try:
+            self._conn.commit()
+        except Exception:
+            self._db._discard()
+            raise
+        return False

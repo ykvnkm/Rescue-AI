@@ -25,6 +25,7 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+.claude/
 
 # builds
 dist/
